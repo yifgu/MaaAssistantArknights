@@ -1,0 +1,154 @@
+name: Battle MCP Debug Build
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Source revision; defaults to the calling workflow's commit"
+        type: string
+        default: ""
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and test (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: win-x64
+            os: windows-2025-vs2026
+            preset: windows-x64
+            triplet: x64-windows
+            framework: "*win-x86_64*.zip"
+          - platform: linux-x64
+            os: ubuntu-latest
+            preset: linux-x64
+            triplet: x64-linux
+            framework: "*linux-x86_64*.zip"
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONIOENCODING: utf-8
+      UV_PROJECT_ENVIRONMENT: ${{ github.workspace }}/.mcp-test-venv
+      MAA_MCP_NATIVE_CORE: ${{ github.workspace }}/bundle/core
+      BUNDLE_NAME: MAAMcp-${{ matrix.platform }}-Debug
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          show-progress: false
+          persist-credentials: false
+
+      - name: Fetch submodules
+        run: bash .github/scripts/sync-optional-submodules.sh --init --depth 1 src/MaaUtils 3rdparty/EmulatorExtras
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          architecture: x64
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: false
+
+      - name: Cache MaaDeps
+        id: cache-maadeps
+        uses: actions/cache@v6
+        continue-on-error: true
+        with:
+          path: src/MaaUtils/MaaDeps
+          key: mcp-debug-${{ runner.os }}-x64-${{ hashFiles('tools/maadeps-download.py', 'src/MaaUtils/tools/maadeps_download.py') }}
+
+      - name: Bootstrap MaaDeps
+        if: steps.cache-maadeps.outputs.cache-hit != 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python tools/maadeps-download.py "${{ matrix.triplet }}"
+
+      - name: Configure, build and install Debug Core
+        run: |
+          cmake --preset "${{ matrix.preset }}" -B build-mcp \
+            -DBUILD_WPF_GUI=OFF -DBUILD_DEBUG_DEMO=OFF -DBUILD_RESOURCE_UPDATER=OFF \
+            -DINSTALL_RESOURCE=ON -DINSTALL_PYTHON=OFF -DWITH_HASH_VERSION=ON
+          cmake --build build-mcp --config Debug --target MaaCore --parallel 2
+          cmake --install build-mcp --config Debug --prefix "$PWD/bundle/core"
+
+      - name: Download MaaFramework control unit
+        uses: robinraju/release-downloader@v1
+        with:
+          repository: MaaXYZ/MaaFramework
+          tag: v5.13.0
+          fileName: ${{ matrix.framework }}
+          extract: true
+          out-file-path: mcp-framework
+
+      - name: Assemble source and wheel
+        run: |
+          cp mcp-framework/bin/*AdbControlUnit* bundle/core/
+          git archive HEAD src/MaaMcpServer docs/{zh-cn,zh-tw,en-us,ja-jp,ko-kr}/develop/mcp-server.md tools/PrepareMcpDebugRuntime.ps1 LICENSE \
+            | tar -xf - -C bundle
+          uv build --project src/MaaMcpServer --out-dir bundle/dist
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          manifest = {
+              "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+              "configuration": "Debug",
+              "bundle": os.environ["BUNDLE_NAME"],
+              "python": "3.12",
+              "run_url": f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+          }
+          Path("bundle/BUILD-INFO.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+          PY
+
+      - name: Prepare local Windows Debug CRT for testing
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tools/PrepareMcpDebugRuntime.ps1 -CoreDir bundle/core
+
+      - name: Test the bundled project against the bundled Core
+        run: |
+          uv sync --frozen --project bundle/src/MaaMcpServer
+          uv run --frozen --project bundle/src/MaaMcpServer ruff check --no-cache bundle/src/MaaMcpServer
+          uv run --frozen --project bundle/src/MaaMcpServer ruff format --check --no-cache bundle/src/MaaMcpServer
+          uv run --frozen --project bundle/src/MaaMcpServer pytest bundle/src/MaaMcpServer/tests -q -p no:cacheprovider
+          uv run --frozen --project bundle/src/MaaMcpServer maa-battle-mcp --help
+
+      - name: Remove non-redistributable Windows Debug CRT
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tools/PrepareMcpDebugRuntime.ps1 -CoreDir bundle/core -Remove
+
+      - name: Archive the tested bundle
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            python -c "import os, shutil; shutil.make_archive(os.environ['BUNDLE_NAME'], 'zip', 'bundle')"
+            sha256sum "$BUNDLE_NAME.zip" > "$BUNDLE_NAME.zip.sha256"
+          else
+            tar -czf "$BUNDLE_NAME.tar.gz" -C bundle .
+            sha256sum "$BUNDLE_NAME.tar.gz" > "$BUNDLE_NAME.tar.gz.sha256"
+          fi
+
+      - name: Upload the tested bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.BUNDLE_NAME }}
+          path: ${{ env.BUNDLE_NAME }}.*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

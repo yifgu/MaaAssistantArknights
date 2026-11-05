@@ -25,6 +25,15 @@ on:
         type: number
 
 jobs:
+  mcp:
+    name: Battle MCP Debug
+    if: github.repository_owner == 'MaaAssistantArknights'
+    uses: ./.github/workflows/mcp-build.yml
+    with:
+      ref: ${{ inputs.ref || github.sha }}
+    permissions:
+      contents: read
+
   build-win-nightly:
     name: Build Nightly for Windows (${{ matrix.arch }})
     if: github.repository_owner == 'MaaAssistantArknights'
