@@ -1582,6 +1582,9 @@ Additional task parameters. Currently used by the pixel paint task (`MiniGame@Pi
 
 </details>
 
+- `BattleControl`  
+  Experimental persistent battle session for the local MCP server. Initialize with `stage_name` and `session_id`, submit one command through `AsstSetTaskParams`, and receive its result through callbacks. See [Battle MCP Server](../develop/mcp-server.md) for builds, parameters, callbacks, and limitations.
+
 - `SingleStep`  
   Single-step task (currently only supports copilot)
 

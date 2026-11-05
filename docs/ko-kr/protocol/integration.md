@@ -1583,6 +1583,9 @@ Sarkaz 테마, Investment 모드, "연금술 분대" 또는 "지원 분대"일 �
 
 </details>
 
+- `BattleControl`  
+  로컬 MCP 서버용 실험적 지속 전투 세션입니다. `stage_name`, `session_id`로 초기화하고 `AsstSetTaskParams`로 명령 하나를 전달한 뒤 콜백으로 결과를 받습니다. 빌드, 인수, 콜백, 제한은 [전투 MCP Server](../develop/mcp-server.md)를 참고하세요.
+
 - `SingleStep`  
   단일 단계 작업 (현재 전투만 지원)
 

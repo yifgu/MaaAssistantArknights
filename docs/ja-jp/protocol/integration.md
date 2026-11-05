@@ -1581,6 +1581,9 @@ Sarkaz テーマ、Investment モード、 ｢破棘成金分隊｣ または �
 
 </details>
 
+- `BattleControl`  
+  ローカル MCP サーバー向けの実験的な持続型戦闘セッションです。`stage_name` と `session_id` で初期化し、`AsstSetTaskParams` でコマンドを 1 件送信して、結果をコールバックで受け取ります。ビルド、引数、コールバック、制限は [戦闘 MCP Server](../develop/mcp-server.md) を参照してください。
+
 - `SingleStep`  
   単一ステップ タスク（現在は戦闘のみ対応）
 

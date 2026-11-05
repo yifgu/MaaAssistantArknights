@@ -135,7 +135,8 @@ std::optional<asst::BestMatcher::Result>
 bool asst::BattleHelper::update_deployment_(
     std::vector<battle::DeploymentOper>& cur_opers,
     const std::vector<battle::DeploymentOper>& old_deployment_opers,
-    const bool analyze_unknown)
+    const bool analyze_unknown,
+    const bool allow_interaction)
 {
     LogTraceFunction;
 
@@ -185,7 +186,7 @@ bool asst::BattleHelper::update_deployment_(
             else {
                 Log.info("unknown oper", oper.index);
                 // 冷却中的未知干员不进行匹配
-                if (!analyze_unknown && !oper.cooling) {
+                if (allow_interaction && !analyze_unknown && !oper.cooling) {
                     return false;
                 }
                 unknown_opers.emplace_back(oper);
@@ -202,7 +203,8 @@ bool asst::BattleHelper::update_deployment_(
     // ————————————————————————————————————————
     // 匹配未知非冷却干员
     // ————————————————————————————————————————
-    if (std::ranges::count_if(unknown_opers, [](const DeploymentOper& it) { return !it.cooling; }) > 0) {
+    if (allow_interaction &&
+        std::ranges::count_if(unknown_opers, [](const DeploymentOper& it) { return !it.cooling; }) > 0) {
         // 一个都没匹配上的，挨个点开来看一下
         LogTraceScope("rec unknown opers");
 

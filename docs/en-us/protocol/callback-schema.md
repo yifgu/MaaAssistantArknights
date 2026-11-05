@@ -199,6 +199,8 @@ Todo
   Custom task
 - `SingleStep`  
   Single step task
+- `BattleControl`  
+  [Persistent battle session](../develop/mcp-server.md), with `BattleControlReady` and `BattleControlResult` extra callbacks
 - `VideoRecognition`  
   Video recognition task
 - `Debug`  

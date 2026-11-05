@@ -1581,6 +1581,9 @@ Tag 等级（大于等于 3）和对应的希望招募时限，单位为分钟�
 
 </details>
 
+- `BattleControl`  
+  实验性持久战斗会话，供本地 MCP 服务使用。通过 `stage_name`、`session_id` 初始化，用 `AsstSetTaskParams` 投递单个命令，并通过回调获取结果。编译、命令参数、回调及能力限制见 [战斗 MCP Server](../develop/mcp-server.md)。
+
 - `SingleStep`  
   单步任务（目前仅支持战斗）
 

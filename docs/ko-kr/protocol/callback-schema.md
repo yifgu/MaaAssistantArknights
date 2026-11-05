@@ -246,6 +246,8 @@ typedef void(ASST_CALL* AsstApiCallback)(AsstMsgId msg, const char* details_json
   사용자 정의 작업
 - `SingleStep`  
   단일 단계 작업
+- `BattleControl`  
+  [지속 전투 세션](../develop/mcp-server.md). 추가 콜백은 `BattleControlReady` 및 `BattleControlResult`
 - `VideoRecognition`  
   비디오 인식 작업
 - `Debug`  

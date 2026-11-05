@@ -53,7 +53,8 @@ protected:
     bool update_deployment_(
         std::vector<battle::DeploymentOper>& cur_opers,
         const std::vector<battle::DeploymentOper>& old_deployment_opers,
-        bool stop_on_unknown);
+        bool analyze_unknown,
+        bool allow_interaction = true);
     bool update_kills(const cv::Mat& image, const cv::Mat& image_prev = cv::Mat());
     bool update_cost(const cv::Mat& image, const cv::Mat& image_prev = cv::Mat());
 
