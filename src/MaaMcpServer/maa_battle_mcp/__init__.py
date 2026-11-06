@@ -1,0 +1,1 @@
+"""MaaCore battle MCP server."""

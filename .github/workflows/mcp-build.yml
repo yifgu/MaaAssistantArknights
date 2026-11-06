@@ -1,0 +1,208 @@
+name: Battle MCP Bundle
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Source revision; defaults to the calling workflow's commit"
+        type: string
+        default: ""
+      configuration:
+        description: "Bundle configuration; Debug is always tested first"
+        type: string
+        default: RelWithDebInfo
+      platform:
+        description: "Target platform: all, win-x64, or linux-x64"
+        type: string
+        default: all
+  workflow_dispatch:
+    inputs:
+      configuration:
+        type: choice
+        options: [RelWithDebInfo, Debug]
+        default: RelWithDebInfo
+      platform:
+        type: choice
+        options: [all, win-x64, linux-x64]
+        default: all
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and test (${{ matrix.platform }})
+    runs-on: ${{ matrix.platform == 'win-x64' && 'windows-2025-vs2026' || 'ubuntu-latest' }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(inputs.platform == 'all' && '["win-x64","linux-x64"]' || format('["{0}"]', inputs.platform)) }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONIOENCODING: utf-8
+      CONFIGURATION: ${{ inputs.configuration || 'RelWithDebInfo' }}
+      BUNDLE_NAME: MAAMcp-${{ matrix.platform }}-${{ inputs.configuration || 'RelWithDebInfo' }}
+      BUNDLE_PYTHON: "3.12.13"
+      TARGET_PLATFORM: ${{ matrix.platform }}
+      CMAKE_PRESET: ${{ matrix.platform == 'win-x64' && 'windows-x64' || 'linux-x64' }}
+      DEPS_TRIPLET: ${{ matrix.platform == 'win-x64' && 'x64-windows' || 'x64-linux' }}
+      ADB_PLATFORM: ${{ matrix.platform == 'win-x64' && 'win' || 'linux' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          show-progress: false
+          persist-credentials: false
+
+      - name: Fetch submodules
+        run: bash .github/scripts/sync-optional-submodules.sh --init --depth 1 src/MaaUtils 3rdparty/EmulatorExtras
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          architecture: x64
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: false
+
+      - name: Download Python and ADB runtimes
+        env:
+          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/mcp-python
+        run: |
+          case "$TARGET_PLATFORM" in win-x64|linux-x64) ;; *) echo "Unsupported platform: $TARGET_PLATFORM" >&2; exit 1 ;; esac
+          uv python install "$BUNDLE_PYTHON" --no-bin --no-registry
+          uv python find --managed-python "$BUNDLE_PYTHON" | tr -d '\r' > python-path.txt
+          curl --fail --location --silent --show-error --retry 3 --connect-timeout 20 --max-time 180 \
+            "https://dl.google.com/android/repository/platform-tools_r35.0.2-$ADB_PLATFORM.zip" \
+            --output platform-tools.zip
+          python -m zipfile -e platform-tools.zip adb-download
+          if [[ "$RUNNER_OS" == "Linux" ]]; then chmod +x adb-download/platform-tools/adb; fi
+
+      - name: Cache MaaDeps
+        id: cache-maadeps
+        uses: actions/cache@v6
+        continue-on-error: true
+        with:
+          path: src/MaaUtils/MaaDeps
+          key: mcp-debug-${{ runner.os }}-x64-${{ hashFiles('tools/maadeps-download.py', 'src/MaaUtils/tools/maadeps_download.py') }}
+
+      - name: Bootstrap MaaDeps
+        if: steps.cache-maadeps.outputs.cache-hit != 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python tools/maadeps-download.py "$DEPS_TRIPLET"
+
+      - name: Configure and build Debug Core
+        run: |
+          case "$CONFIGURATION" in Debug|RelWithDebInfo) ;; *) exit 1 ;; esac
+          cmake --preset "$CMAKE_PRESET" -B build-mcp \
+            -DBUILD_WPF_GUI=OFF -DBUILD_DEBUG_DEMO=OFF -DBUILD_RESOURCE_UPDATER=OFF \
+            -DINSTALL_RESOURCE=ON -DINSTALL_PYTHON=OFF -DWITH_HASH_VERSION=ON
+          cmake --build build-mcp --config Debug --target MaaCore --parallel 2
+          cmake --install build-mcp --config Debug --prefix "$PWD/debug-core"
+
+      - name: Download MaaFramework control unit
+        uses: robinraju/release-downloader@v1
+        with:
+          repository: MaaXYZ/MaaFramework
+          tag: v5.13.0
+          fileName: ${{ matrix.platform == 'win-x64' && '*win-x86_64*.zip' || '*linux-x86_64*.zip' }}
+          extract: true
+          out-file-path: mcp-framework
+
+      - name: Assemble complete Python environment
+        run: |
+          mkdir bundle
+          git archive HEAD src/MaaMcpServer docs/{zh-cn,zh-tw,en-us,ja-jp,ko-kr}/develop/mcp-server.md tools/PrepareMcpRuntime.ps1 LICENSE \
+            | tar -xf - -C bundle
+          uv build --project src/MaaMcpServer --out-dir bundle/dist
+          python tools/MaaMcpBundle/assemble.py --python "$(cat python-path.txt)" \
+            --adb adb-download/platform-tools --output bundle \
+            --configuration "$CONFIGURATION" --platform "${{ matrix.platform }}"
+
+      - name: Prepare local Windows Debug CRT for testing
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tools/PrepareMcpRuntime.ps1 -CoreDir debug-core
+
+      - name: Test installed MCP wheel against Debug Core
+        env:
+          MAA_MCP_NATIVE_CORE: ${{ github.workspace }}/debug-core
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then py=bundle/python/python.exe; else py=bundle/python/bin/python3; fi
+          "$py" -I -B -m ruff check --no-cache src/MaaMcpServer tools/MaaMcpBundle
+          "$py" -I -B -m ruff format --check --no-cache src/MaaMcpServer tools/MaaMcpBundle
+          "$py" -I -B -m pytest bundle/src/MaaMcpServer/tests tools/MaaMcpBundle/test_bundle.py -q -p no:cacheprovider
+
+      - name: Install selected Core and control unit
+        run: |
+          cmake --build build-mcp --config "$CONFIGURATION" --target MaaCore --parallel 2
+          cmake --install build-mcp --config "$CONFIGURATION" --prefix "$PWD/bundle/core"
+          if [[ "$RUNNER_OS" != "Windows" || "$CONFIGURATION" != "Debug" ]]; then
+            cp mcp-framework/bin/*AdbControlUnit* bundle/core/
+            mkdir -p bundle/licenses/MaaFramework
+            cp mcp-framework/LICENSE.md bundle/licenses/MaaFramework/
+          fi
+
+      - name: Install redistributable Windows CRT
+        if: runner.os == 'Windows' && env.CONFIGURATION == 'RelWithDebInfo'
+        shell: pwsh
+        run: ./tools/PrepareMcpRuntime.ps1 -CoreDir bundle/core -Configuration RelWithDebInfo
+
+      - name: Archive the bundle
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            python -c "import os, shutil; shutil.make_archive(os.environ['BUNDLE_NAME'], 'zip', 'bundle')"
+            sha256sum "$BUNDLE_NAME.zip" > "$BUNDLE_NAME.zip.sha256"
+          else
+            tar -czf "$BUNDLE_NAME.tar.gz" -C bundle .
+            sha256sum "$BUNDLE_NAME.tar.gz" > "$BUNDLE_NAME.tar.gz.sha256"
+          fi
+
+      - name: Extract into a different directory
+        env:
+          RELOCATED: ${{ runner.temp }}/MCP relocated
+        run: |
+          python - <<'PY'
+          import os
+          import shutil
+          from pathlib import Path
+
+          suffix = ".zip" if os.name == "nt" else ".tar.gz"
+          shutil.unpack_archive(os.environ["BUNDLE_NAME"] + suffix, os.environ["RELOCATED"])
+          Path("bundle").rename("bundle-original")
+          PY
+
+      - name: Prepare local Debug CRT for relocated Windows bundle
+        if: runner.os == 'Windows' && env.CONFIGURATION == 'Debug'
+        shell: pwsh
+        run: ./tools/PrepareMcpRuntime.ps1 -CoreDir "${{ runner.temp }}/MCP relocated/core"
+
+      - name: Verify relocated bundle without uv or system Python
+        env:
+          RELOCATED: ${{ runner.temp }}/MCP relocated
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then py="$RELOCATED/python/python.exe"; else py="$RELOCATED/python/bin/python3"; fi
+          "$py" -I -B "$RELOCATED/run_mcp.py" --check
+          "$py" -I -B "$RELOCATED/run_mcp.py" --help
+          if [[ "$CONFIGURATION" == "Debug" ]]; then
+            "$py" -I -B "$RELOCATED/run_mcp.py" --self-test
+          fi
+
+      - name: Upload the verified bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.BUNDLE_NAME }}
+          path: ${{ env.BUNDLE_NAME }}.*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

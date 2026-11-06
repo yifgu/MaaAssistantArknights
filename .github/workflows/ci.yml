@@ -8,6 +8,7 @@ on:
       - "dev-v2"
     paths:
       - ".github/workflows/ci.yml"
+      - ".github/workflows/mcp-build.yml"
       - "3rdparty/include/**"
       - "cmake/**"
       - "CMakeLists.txt"
@@ -23,6 +24,7 @@ on:
       - "dev-v2"
     paths:
       - ".github/workflows/ci.yml"
+      - ".github/workflows/mcp-build.yml"
       - "3rdparty/include/**"
       - "cmake/**"
       - "CMakeLists.txt"
@@ -34,14 +36,40 @@ on:
       - "resource_android/**"
       - "!**/*.md"
   workflow_dispatch:
+    inputs:
+      mcp_only:
+        description: "Build only complete battle MCP bundles (Windows/Linux x64)"
+        type: boolean
+        default: false
+      mcp_configuration:
+        description: "MCP bundle configuration (CI always tests Debug first)"
+        type: choice
+        options: [RelWithDebInfo, Debug]
+        default: RelWithDebInfo
+      mcp_platform:
+        description: "MCP target platform (select one to avoid rebuilding both)"
+        type: choice
+        options: [all, win-x64, linux-x64]
+        default: all
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}${{ github.ref == 'refs/heads/dev-v2' && format('-{0}', github.sha) || '' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}${{ github.ref == 'refs/heads/dev-v2' && format('-{0}', github.sha) || '' }}${{ inputs.mcp_only && '-mcp-only' || '' }}
   cancel-in-progress: true
 
 jobs:
+  mcp:
+    name: Battle MCP
+    if: inputs.mcp_only || !startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/mcp-build.yml
+    with:
+      configuration: ${{ inputs.mcp_configuration || 'RelWithDebInfo' }}
+      platform: ${{ inputs.mcp_platform || 'all' }}
+    permissions:
+      contents: read
+
   meta:
     name: Gather Meta Information
+    if: ${{ !inputs.mcp_only }}
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.set_tag.outputs.tag }}
@@ -49,7 +77,7 @@ jobs:
     steps:
       - name: Show concurrency group
         env:
-          CONCURRENCY_GROUP: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}${{ github.ref == 'refs/heads/dev-v2' && format('-{0}', github.sha) || '' }}
+          CONCURRENCY_GROUP: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}${{ github.ref == 'refs/heads/dev-v2' && format('-{0}', github.sha) || '' }}${{ inputs.mcp_only && '-mcp-only' || '' }}
         run: |
           echo "Concurrency Group: $CONCURRENCY_GROUP"
 

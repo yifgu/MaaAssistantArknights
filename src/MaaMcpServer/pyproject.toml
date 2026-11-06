@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "maa-battle-mcp"
+version = "0.1.0"
+description = "Local, stateful MaaCore battle control over MCP"
+requires-python = ">=3.11"
+dependencies = ["filelock>=3.20,<4", "mcp>=1.20,<2", "pydantic>=2.11,<3"]
+
+[project.scripts]
+maa-battle-mcp = "maa_battle_mcp.server:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=1", "ruff==0.14.10"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["maa_battle_mcp"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I"]

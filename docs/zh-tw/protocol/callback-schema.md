@@ -251,6 +251,8 @@ typedef void(ASST_CALL* AsstApiCallback)(AsstMsgId msg, const char* details_json
   自訂任務
 - `SingleStep`  
   單步任務
+- `BattleControl`  
+  [持久戰鬥會話](../develop/mcp-server.md)，額外回呼為 `BattleControlReady` 和 `BattleControlResult`
 - `VideoRecognition`  
   影片辨識任務
 - `Debug`  

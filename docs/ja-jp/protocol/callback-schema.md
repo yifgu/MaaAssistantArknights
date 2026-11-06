@@ -204,6 +204,8 @@ Todo
   カストム タスク
 - `SingleStep`  
   サブタスク
+- `BattleControl`  
+  [持続型戦闘セッション](../develop/mcp-server.md)。追加コールバックは `BattleControlReady` と `BattleControlResult`
 - `VideoRecognition`  
   ビデオ認識タスク
 - `Debug`  
