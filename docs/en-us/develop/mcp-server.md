@@ -22,6 +22,48 @@ uv sync --project src/MaaMcpServer
 
 Replace `linux-x64` with `windows-x64`, `macos-arm64`, or `macos-x64` as appropriate. Do not share a build directory between platforms. The installation must contain Core, its runtime dependencies, and `resource/`. `--resource-dir` can separately specify the parent of `resource/`.
 
+## Use GitHub Actions artifacts
+
+In your repository, open **Actions → Release Pipeline → Run workflow**, select the MCP branch, enable `mcp_only`, and choose `mcp_configuration`:
+
+- `RelWithDebInfo`: the default complete runtime bundle; no local Python, uv, ADB, or Visual Studio installation is required.
+- `Debug`: a development/test bundle. Linux runs directly; Windows requires a locally installed, non-redistributable Debug CRT.
+
+Both configurations first build Debug Core and run the full test suite, then package the selected configuration. Neither builds the GUI nor publishes a release. Equivalent command:
+
+```bash
+gh workflow run ci.yml --ref <branch> -f mcp_only=true -f mcp_configuration=RelWithDebInfo
+```
+
+Relevant PRs run the same `Battle MCP` job. `.github/workflows/mcp-build.yml` (**Battle MCP Bundle**) is shared by the regular and Nightly pipelines. Use the existing Release Pipeline to dispatch it before the new workflow reaches the default branch. Manual MCP builds have a separate concurrency group so a PR build cannot cancel them.
+
+Download `MAAMcp-win-x64-RelWithDebInfo` or `MAAMcp-linux-x64-RelWithDebInfo` from the successful run's **Artifacts** (or the corresponding `-Debug` artifact), then extract the enclosed `.zip` or `.tar.gz`. Included: `core/` (Core, native dependencies, resources, ADB ControlUnit), `python/` (standalone Python and all locked runtime/test dependencies), `adb/`, launchers, source/tests, wheel/sdist, dependency licenses, and `BUILD-INFO.json` with the source commit and run URL. SHA-256 checksums accompany the archives. The Windows runtime bundle includes the redistributable VC++ CRT. No checkout, compilation, or online Python package installation is needed. Linux still requires a compatible x64 OS and system glibc; this is not a container or an operating system.
+
+On Windows x64, run from the download directory:
+
+```powershell
+Expand-Archive .\MAAMcp-win-x64-RelWithDebInfo.zip .\mcp-test
+Set-Location .\mcp-test
+.\run-mcp.cmd --check
+.\run-mcp.cmd --address 127.0.0.1:5555
+```
+
+On Linux x64, run from the download directory:
+
+```bash
+mkdir mcp-test
+tar -xzf MAAMcp-linux-x64-RelWithDebInfo.tar.gz -C mcp-test
+cd mcp-test
+./run-mcp.sh --check
+./run-mcp.sh --address 127.0.0.1:5555
+```
+
+`--check` loads bundled ADB, Python dependencies, and Core/resources without connecting a device. Normal startup is stdio and waits for MCP input; there is no web page. Configure your client's `command` as the bundled `python/python.exe` on Windows or `python/bin/python3` on Linux, with `args`: `["-I","-B","/absolute/mcp-test/run_mcp.py","--address","127.0.0.1:5555"]`. Use absolute paths throughout. State defaults to `state/` in the bundle; override with `--user-dir` for another writable directory.
+
+For the full offline suite, use a Debug bundle with `run-mcp.cmd --self-test` or `./run-mcp.sh --self-test`. No device is connected. On Windows, install Visual Studio 2026/Build Tools with the C++ desktop workload and Windows SDK, then run `powershell -NoProfile -ExecutionPolicy Bypass -File tools/PrepareMcpRuntime.ps1 -CoreDir core`. **The Debug CRT cannot be redistributed; the normal VC++ Redistributable cannot replace it.** The script copies only local development DLLs; do not redistribute the modified directory. CI tests in a separate Debug directory and excludes Debug CRT DLLs from artifacts. `RelWithDebInfo` bundles reject `--self-test` to avoid misleading results from disabled assertions.
+
+Follow the connection and map-verification steps below for in-game use. Do not mix older Core/resources or tests from another commit. External intelligence programs and data snapshots are optional plugins, not server runtime dependencies, and require separate setup. Neither the game/emulator nor automatic cloud-model access is included.
+
 ## Local checks
 
 Offline unit tests, real MCP stdio handshakes, and a fixture intelligence server need no device:
@@ -40,6 +82,8 @@ MAA_MCP_NATIVE_CORE="$PWD/build-mcp/install" \
 ```
 
 In PowerShell, first set `$env:MAA_MCP_NATIVE_CORE="$PWD/build-mcp/install"`, then run the same pytest command. Set `MAA_MCP_RESOURCE_DIR` to the resource parent if it differs. Without the variable this test explicitly skips; passing offline checks does not establish in-game correctness.
+
+Windows Debug builds from source also require `tools/PrepareMcpRuntime.ps1 -CoreDir build-mcp/install` before testing, with the same prerequisites as the Debug bundle.
 
 ## Launch and client configuration
 

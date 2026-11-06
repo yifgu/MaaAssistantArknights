@@ -22,6 +22,48 @@ uv sync --project src/MaaMcpServer
 
 Windows x64 將 `linux-x64` 換成 `windows-x64`；macOS 使用 `macos-arm64` 或 `macos-x64`。不同平台不要共用建置目錄。安裝目錄須同時包含 Core、執行期相依項目和 `resource/`；`--resource-dir` 可另外指定包含 `resource/` 的父目錄。
 
+## 使用 GitHub Actions 產物
+
+在自己的儲存庫開啟 **Actions → Release Pipeline → Run workflow**，選擇 MCP 分支，勾選 `mcp_only` 並選擇 `mcp_configuration`：
+
+- `RelWithDebInfo`：預設的完整執行套件，不需另裝 Python、uv、ADB 或 Visual Studio。
+- `Debug`：開發測試套件。Linux 可直接自測；Windows 須由本機提供不可再散布的 Debug CRT。
+
+兩者都會先編譯 Debug Core 並執行完整測試，再打包所選設定；不編譯 GUI，也不發布 Release。等效命令：
+
+```bash
+gh workflow run ci.yml --ref <branch> -f mcp_only=true -f mcp_configuration=RelWithDebInfo
+```
+
+相關 PR 也會執行相同的 `Battle MCP` 作業。`.github/workflows/mcp-build.yml`（**Battle MCP Bundle**）由正式與 Nightly 流水線共用；尚未進入預設分支時可由既有的 Release Pipeline 手動觸發。手動 MCP 建置使用獨立並行群組，不會被同分支的 PR 建置取消。
+
+成功後從 **Artifacts** 下載 `MAAMcp-win-x64-RelWithDebInfo` 或 `MAAMcp-linux-x64-RelWithDebInfo`（Debug 設定則為 `-Debug`），再解壓同名 `.zip` 或 `.tar.gz`。內容包括 `core/`（Core、原生相依項目、資源與 ADB ControlUnit）、`python/`（獨立 Python 與鎖定的全部執行/測試相依套件）、`adb/`、啟動腳本、原始碼與測試、wheel/sdist、相依項目授權和 `BUILD-INFO.json`（原始碼提交與建置連結），另附 SHA-256。Windows 執行套件包含可再散布的 VC++ CRT。不需複製儲存庫、重新編譯或連網安裝 Python 套件。Linux 仍需相容的 x64 系統與系統 glibc；此套件不是容器或完整作業系統。
+
+Windows x64 從下載目錄執行：
+
+```powershell
+Expand-Archive .\MAAMcp-win-x64-RelWithDebInfo.zip .\mcp-test
+Set-Location .\mcp-test
+.\run-mcp.cmd --check
+.\run-mcp.cmd --address 127.0.0.1:5555
+```
+
+Linux x64 從下載目錄執行：
+
+```bash
+mkdir mcp-test
+tar -xzf MAAMcp-linux-x64-RelWithDebInfo.tar.gz -C mcp-test
+cd mcp-test
+./run-mcp.sh --check
+./run-mcp.sh --address 127.0.0.1:5555
+```
+
+`--check` 驗證內建 ADB、Python 相依項目與 Core/資源載入，不連接裝置。正常啟動是 stdio 服務，會等待 MCP 輸入，沒有網頁。用戶端的 `command` 使用包內 `python/python.exe`（Windows）或 `python/bin/python3`（Linux），`args` 為 `["-I","-B","/absolute/mcp-test/run_mcp.py","--address","127.0.0.1:5555"]`；所有路徑使用絕對路徑。狀態預設儲存於包內 `state/`，可用 `--user-dir` 指定其他可寫目錄。
+
+完整離線測試使用 Debug 包的 `run-mcp.cmd --self-test` 或 `./run-mcp.sh --self-test`，不連接裝置。Windows 須先安裝 Visual Studio 2026/Build Tools 的 C++ 桌面工作負載與 Windows SDK，再執行 `powershell -NoProfile -ExecutionPolicy Bypass -File tools/PrepareMcpRuntime.ps1 -CoreDir core`。**Debug CRT 不可再散布，一般 VC++ Redistributable 無法替代它**；腳本只複製本機開發 DLL，修改後的目錄不可再散布。CI 在獨立 Debug 目錄測試，產物不含 Debug CRT。`RelWithDebInfo` 包會拒絕 `--self-test`，避免斷言停用造成誤導。
+
+實機操作仍須依下文連接並核對地圖。不要混用舊 Core、資源或其他提交的測試。外部情報程式與資料快照是選用外掛，不屬於伺服器執行相依項目，須另行設定；套件不包含遊戲、模擬器，也不自動呼叫雲端模型。
+
 ## 本機測試
 
 不需要裝置即可執行離線單元測試、實際 MCP stdio 握手與模擬情報服務測試：
@@ -40,6 +82,8 @@ MAA_MCP_NATIVE_CORE="$PWD/build-mcp/install" \
 ```
 
 PowerShell 先設定 `$env:MAA_MCP_NATIVE_CORE="$PWD/build-mcp/install"`，再執行同一條 pytest 命令。資源不在安裝目錄時，另設 `MAA_MCP_RESOURCE_DIR` 為其父目錄。未設定環境變數時會明確跳過此測試；離線通過不代表實機行為已確認。
+
+Windows 原始碼 Debug 建置也須先執行 `tools/PrepareMcpRuntime.ps1 -CoreDir build-mcp/install`，執行期需求與上述 Debug 產物相同。
 
 ## 啟動與用戶端設定
 

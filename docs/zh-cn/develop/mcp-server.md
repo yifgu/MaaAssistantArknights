@@ -22,6 +22,48 @@ uv sync --project src/MaaMcpServer
 
 Windows x64 将配置命令的 `linux-x64` 换为 `windows-x64`；macOS 根据架构使用 `macos-arm64` 或 `macos-x64`。不要混用不同平台的构建目录。安装目录应同时包含 Core、运行时依赖和 `resource/`；`--resource-dir` 可单独指定包含 `resource/` 的父目录。
 
+## 使用 GitHub Actions 产物
+
+在自己的仓库中打开 **Actions → Release Pipeline → Run workflow**，选择包含 MCP 改动的分支，勾选 `mcp_only`，并选择 `mcp_configuration`：
+
+- `RelWithDebInfo`：默认的完整运行包，无需本地安装 Python、uv、ADB 或 Visual Studio。
+- `Debug`：开发测试包。Linux 可直接自测；Windows 需本机提供不可再分发的 Debug CRT。
+
+两种配置都会先编译 Debug Core 并运行完整测试，再打包所选配置；不编译 GUI，也不发布 Release。命令行等价操作：
+
+```bash
+gh workflow run ci.yml --ref <branch> -f mcp_only=true -f mcp_configuration=RelWithDebInfo
+```
+
+相关 PR 的 Release Pipeline 也会运行同样的 `Battle MCP` 作业。实现位于 `.github/workflows/mcp-build.yml`（**Battle MCP Bundle**），正式流水线和 Nightly 共用它；新工作流尚未进入默认分支时，仍可通过已有的 Release Pipeline 手动触发。手动 MCP 构建使用独立并发组，不会被同分支的 PR 构建取消。
+
+成功后，在该次运行的 **Artifacts** 下载 `MAAMcp-win-x64-RelWithDebInfo` 或 `MAAMcp-linux-x64-RelWithDebInfo`（Debug 配置则对应 `-Debug`），再解压其中的同名 `.zip` 或 `.tar.gz`。包内包含 `core/`（Core、原生依赖、资源和 ADB ControlUnit）、`python/`（独立 Python 及锁定的全部 Python 运行/测试依赖）、`adb/`、启动脚本、源码与测试、wheel/sdist、依赖许可证及 `BUILD-INFO.json`（实际源码提交和构建链接）。旁附 SHA-256 校验文件；Windows 运行包还包含可再分发的 VC++ CRT。无需克隆仓库、重新编译或联网安装 Python 包。Linux 仍需要兼容的 x64 系统与系统 glibc；这不是容器或完整操作系统。
+
+Windows x64 从下载目录执行：
+
+```powershell
+Expand-Archive .\MAAMcp-win-x64-RelWithDebInfo.zip .\mcp-test
+Set-Location .\mcp-test
+.\run-mcp.cmd --check
+.\run-mcp.cmd --address 127.0.0.1:5555
+```
+
+Linux x64 从下载目录执行：
+
+```bash
+mkdir mcp-test
+tar -xzf MAAMcp-linux-x64-RelWithDebInfo.tar.gz -C mcp-test
+cd mcp-test
+./run-mcp.sh --check
+./run-mcp.sh --address 127.0.0.1:5555
+```
+
+`--check` 验证内置 ADB、Python 依赖与 Core/资源加载，不连接设备。正常启动是 stdio 服务，会等待 MCP 输入，不提供网页。配置客户端时无需 uv：Windows 的 `command` 使用包内 `python/python.exe`，Linux 使用 `python/bin/python3`；`args` 为 `["-I","-B","/absolute/mcp-test/run_mcp.py","--address","127.0.0.1:5555"]`。所有路径使用绝对路径。默认状态目录是包内 `state/`，可用 `--user-dir` 指定其他可写目录。
+
+完整离线测试使用 Debug 包的 `run-mcp.cmd --self-test` 或 `./run-mcp.sh --self-test`，不连接设备。Windows Debug 包需先安装 Visual Studio 2026/Build Tools 的 C++ 桌面工作负载与 Windows SDK，再执行 `powershell -NoProfile -ExecutionPolicy Bypass -File tools/PrepareMcpRuntime.ps1 -CoreDir core`。**Debug CRT 不可再分发，普通 VC++ Redistributable 无法替代它**；脚本只复制本机开发工具的 DLL，修改后的目录不可再分发。CI 在独立 Debug 目录中完成测试，产物不会包含 Debug CRT。`RelWithDebInfo` 包拒绝 `--self-test`，避免 Release 断言关闭产生误导。
+
+实机操作仍须按下文连接并核对地图。不要混用旧 Core、资源或其他提交的测试。外部情报服务是可选插件，其程序与游戏数据快照不属于 MCP 运行依赖，须单独配置；包不会捆绑游戏或模拟器，也不自动调用云端模型。
+
 ## 本地测试
 
 无需设备即可运行离线单元测试、真实 MCP stdio 握手和模拟情报服务测试：
@@ -40,6 +82,8 @@ MAA_MCP_NATIVE_CORE="$PWD/build-mcp/install" \
 ```
 
 PowerShell 先设置 `$env:MAA_MCP_NATIVE_CORE="$PWD/build-mcp/install"`，再运行同一条 pytest 命令。资源不在安装目录时，另设 `MAA_MCP_RESOURCE_DIR` 为其父目录。未设环境变量时，这项测试会明确跳过，不代表实机验证通过。
+
+Windows 源码 Debug 构建也需要先运行 `tools/PrepareMcpRuntime.ps1 -CoreDir build-mcp/install`，运行时要求与上面的 Debug 产物一致。
 
 ## 启动与客户端配置
 

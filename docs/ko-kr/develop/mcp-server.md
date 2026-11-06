@@ -22,6 +22,48 @@ uv sync --project src/MaaMcpServer
 
 Windows x64에서는 `linux-x64`를 `windows-x64`로, macOS에서는 `macos-arm64` 또는 `macos-x64`로 바꿉니다. 플랫폼 간 빌드 디렉터리를 공유하지 마세요. 설치 경로에는 Core, 런타임 의존성, `resource/`가 함께 있어야 합니다. `--resource-dir`로 `resource/`의 부모 디렉터리를 따로 지정할 수 있습니다.
 
+## GitHub Actions 산출물 사용
+
+자신의 저장소에서 **Actions → Release Pipeline → Run workflow**를 열고 MCP 브랜치를 선택한 뒤 `mcp_only`를 켜고 `mcp_configuration`을 선택합니다.
+
+- `RelWithDebInfo`: 기본 전체 실행 패키지입니다. Python, uv, ADB, Visual Studio를 별도로 설치할 필요가 없습니다.
+- `Debug`: 개발 및 테스트용입니다. Linux는 바로 실행할 수 있지만 Windows는 재배포할 수 없는 Debug CRT를 로컬에서 준비해야 합니다.
+
+두 설정 모두 먼저 Debug Core를 빌드하고 전체 테스트를 실행한 다음 선택한 구성을 패키징합니다. GUI 빌드나 Release 게시는 하지 않습니다.
+
+```bash
+gh workflow run ci.yml --ref <branch> -f mcp_only=true -f mcp_configuration=RelWithDebInfo
+```
+
+관련 PR도 같은 `Battle MCP` 작업을 실행합니다. `.github/workflows/mcp-build.yml`(**Battle MCP Bundle**)을 일반 및 Nightly 파이프라인이 공유합니다. 기본 브랜치에 병합되기 전에는 기존 Release Pipeline에서 수동 실행할 수 있습니다. 수동 MCP 빌드는 별도 동시 실행 그룹을 사용하므로 같은 브랜치의 PR 빌드에 의해 취소되지 않습니다.
+
+성공한 실행의 **Artifacts**에서 `MAAMcp-win-x64-RelWithDebInfo` 또는 `MAAMcp-linux-x64-RelWithDebInfo`(Debug 선택 시 `-Debug`)를 다운로드하고 내부 `.zip` 또는 `.tar.gz`를 풉니다. `core/`(Core, 네이티브 의존성, 리소스, ADB ControlUnit), `python/`(독립 Python 및 잠긴 전체 실행/테스트 의존성), `adb/`, 시작 스크립트, 소스와 테스트, wheel/sdist, 의존성 라이선스, 소스 커밋과 실행 URL이 있는 `BUILD-INFO.json` 및 SHA-256을 제공합니다. Windows 실행 패키지에는 재배포 가능한 VC++ CRT도 포함됩니다. 저장소 복제, 재빌드, 온라인 Python 패키지 설치가 필요 없습니다. Linux는 호환 x64 OS와 시스템 glibc가 필요하며 컨테이너나 운영체제 자체는 포함하지 않습니다.
+
+Windows x64에서는 다운로드 디렉터리에서 실행하세요:
+
+```powershell
+Expand-Archive .\MAAMcp-win-x64-RelWithDebInfo.zip .\mcp-test
+Set-Location .\mcp-test
+.\run-mcp.cmd --check
+.\run-mcp.cmd --address 127.0.0.1:5555
+```
+
+Linux x64에서는 다운로드 디렉터리에서 실행합니다:
+
+```bash
+mkdir mcp-test
+tar -xzf MAAMcp-linux-x64-RelWithDebInfo.tar.gz -C mcp-test
+cd mcp-test
+./run-mcp.sh --check
+./run-mcp.sh --address 127.0.0.1:5555
+```
+
+`--check`는 내장 ADB, Python 의존성, Core 및 리소스 로딩을 확인하며 기기에 연결하지 않습니다. 일반 실행은 MCP 입력을 기다리는 stdio 서비스이며 웹 페이지가 없습니다. 클라이언트의 `command`에는 내장 `python/python.exe`(Windows) 또는 `python/bin/python3`(Linux), `args`에는 `["-I","-B","/absolute/mcp-test/run_mcp.py","--address","127.0.0.1:5555"]`를 지정합니다. 모든 경로는 절대 경로여야 합니다. 상태는 기본적으로 패키지의 `state/`에 저장하며 `--user-dir`로 다른 쓰기 가능한 디렉터리를 지정할 수 있습니다.
+
+전체 오프라인 테스트는 Debug 패키지의 `run-mcp.cmd --self-test` 또는 `./run-mcp.sh --self-test`로 실행하며 기기에 연결하지 않습니다. Windows에서는 Visual Studio 2026/Build Tools의 C++ 데스크톱 워크로드와 Windows SDK를 설치하고 먼저 `powershell -NoProfile -ExecutionPolicy Bypass -File tools/PrepareMcpRuntime.ps1 -CoreDir core`를 실행합니다. **Debug CRT는 재배포할 수 없고 일반 VC++ Redistributable로 대체할 수 없습니다.** 스크립트는 로컬 개발 DLL만 복사하며 수정된 디렉터리는 재배포하면 안 됩니다. CI는 별도 Debug 디렉터리에서 테스트하고 산출물에서 Debug CRT를 제외합니다. `RelWithDebInfo`는 비활성화된 단언으로 인한 오해를 방지하기 위해 `--self-test`를 거부합니다.
+
+실제 게임에서는 아래 연결 및 맵 확인 절차가 필요합니다. 이전 Core/리소스나 다른 커밋의 테스트를 섞지 마세요. 외부 정보 프로그램과 데이터 스냅샷은 선택적 플러그인이며 별도 설정이 필요합니다. 게임, 에뮬레이터, 자동 클라우드 모델 호출은 포함되지 않습니다.
+
 ## 로컬 테스트
 
 오프라인 단위 테스트, 실제 MCP stdio 연결, 모의 정보 서버 테스트에는 기기가 필요하지 않습니다.
@@ -40,6 +82,8 @@ MAA_MCP_NATIVE_CORE="$PWD/build-mcp/install" \
 ```
 
 PowerShell에서는 먼저 `$env:MAA_MCP_NATIVE_CORE="$PWD/build-mcp/install"`을 설정한 뒤 같은 pytest 명령을 실행합니다. 리소스 경로가 다르면 그 부모를 `MAA_MCP_RESOURCE_DIR`로 지정합니다. 환경 변수가 없으면 이 테스트는 명시적으로 건너뜁니다. 오프라인 통과가 실제 게임 동작의 검증을 의미하지는 않습니다.
+
+Windows 소스 Debug 빌드도 먼저 `tools/PrepareMcpRuntime.ps1 -CoreDir build-mcp/install`을 실행해야 하며 요구 사항은 Debug 패키지와 같습니다.
 
 ## 실행 및 클라이언트 설정
 

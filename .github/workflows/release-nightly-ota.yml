@@ -26,7 +26,7 @@ on:
 
 jobs:
   mcp:
-    name: Battle MCP Debug
+    name: Battle MCP
     if: github.repository_owner == 'MaaAssistantArknights'
     uses: ./.github/workflows/mcp-build.yml
     with:
