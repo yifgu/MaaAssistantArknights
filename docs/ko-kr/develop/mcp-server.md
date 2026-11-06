@@ -64,6 +64,8 @@ cd mcp-test
 
 실제 게임에서는 아래 연결 및 맵 확인 절차가 필요합니다. 이전 Core/리소스나 다른 커밋의 테스트를 섞지 마세요. 외부 정보 프로그램과 데이터 스냅샷은 선택적 플러그인이며 별도 설정이 필요합니다. 게임, 에뮬레이터, 자동 클라우드 모델 호출은 포함되지 않습니다.
 
+Windows Debug와 MaaFramework Release ControlUnit은 ABI가 호환되지 않으므로 Debug 패키지에서 해당 선택적 DLL을 제외하고 `--touch-mode MaaFwAdb`를 거부합니다. 기본 `maatouch`, `adb`, `minitouch` 또는 전체 `RelWithDebInfo` 패키지를 사용하세요.
+
 ## 로컬 테스트
 
 오프라인 단위 테스트, 실제 MCP stdio 연결, 모의 정보 서버 테스트에는 기기가 필요하지 않습니다.

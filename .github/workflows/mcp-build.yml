@@ -140,13 +140,17 @@ jobs:
           if [[ "$RUNNER_OS" == "Windows" ]]; then py=bundle/python/python.exe; else py=bundle/python/bin/python3; fi
           "$py" -I -B -m ruff check --no-cache src/MaaMcpServer tools/MaaMcpBundle
           "$py" -I -B -m ruff format --check --no-cache src/MaaMcpServer tools/MaaMcpBundle
-          "$py" -I -B -m pytest bundle/src/MaaMcpServer/tests -q -p no:cacheprovider
+          "$py" -I -B -m pytest bundle/src/MaaMcpServer/tests tools/MaaMcpBundle/test_bundle.py -q -p no:cacheprovider
 
       - name: Install selected Core and control unit
         run: |
           cmake --build build-mcp --config "$CONFIGURATION" --target MaaCore --parallel 2
           cmake --install build-mcp --config "$CONFIGURATION" --prefix "$PWD/bundle/core"
-          cp mcp-framework/bin/*AdbControlUnit* bundle/core/
+          if [[ "$RUNNER_OS" != "Windows" || "$CONFIGURATION" != "Debug" ]]; then
+            cp mcp-framework/bin/*AdbControlUnit* bundle/core/
+            mkdir -p bundle/licenses/MaaFramework
+            cp mcp-framework/LICENSE.md bundle/licenses/MaaFramework/
+          fi
 
       - name: Install redistributable Windows CRT
         if: runner.os == 'Windows' && env.CONFIGURATION == 'RelWithDebInfo'

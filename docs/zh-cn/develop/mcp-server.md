@@ -64,6 +64,8 @@ cd mcp-test
 
 实机操作仍须按下文连接并核对地图。不要混用旧 Core、资源或其他提交的测试。外部情报服务是可选插件，其程序与游戏数据快照不属于 MCP 运行依赖，须单独配置；包不会捆绑游戏或模拟器，也不自动调用云端模型。
 
+Windows Debug 与 MaaFramework 的 Release ControlUnit ABI 不兼容，因此 Debug 包不包含该可选 DLL，并拒绝 `--touch-mode MaaFwAdb`；使用默认 `maatouch`、`adb` 或 `minitouch`，或改用完整的 `RelWithDebInfo` 包。
+
 ## 本地测试
 
 无需设备即可运行离线单元测试、真实 MCP stdio 握手和模拟情报服务测试：

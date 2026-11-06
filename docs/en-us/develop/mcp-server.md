@@ -64,6 +64,8 @@ For the full offline suite, use a Debug bundle with `run-mcp.cmd --self-test` or
 
 Follow the connection and map-verification steps below for in-game use. Do not mix older Core/resources or tests from another commit. External intelligence programs and data snapshots are optional plugins, not server runtime dependencies, and require separate setup. Neither the game/emulator nor automatic cloud-model access is included.
 
+Windows Debug is ABI-incompatible with MaaFramework's Release ControlUnit, so that optional DLL is excluded and `--touch-mode MaaFwAdb` is rejected. Use the default `maatouch`, `adb`, or `minitouch`, or choose the complete `RelWithDebInfo` bundle.
+
 ## Local checks
 
 Offline unit tests, real MCP stdio handshakes, and a fixture intelligence server need no device:

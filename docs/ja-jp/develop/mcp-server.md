@@ -64,6 +64,8 @@ cd mcp-test
 
 実機では下記の接続・マップ確認が必要です。古い Core、リソース、別コミットのテストを混在させないでください。外部情報プログラムとデータは任意のプラグインで、別途設定します。ゲームやエミュレーター、クラウドモデルの自動呼び出しは含まれません。
 
+Windows Debug と MaaFramework の Release ControlUnit は ABI が互換ではないため、Debug パッケージにはこの任意 DLL を含めず、`--touch-mode MaaFwAdb` を拒否します。既定の `maatouch`、`adb`、`minitouch`、または完全な `RelWithDebInfo` パッケージを使用してください。
+
 ## ローカルテスト
 
 オフラインの単体テスト、実際の MCP stdio ハンドシェイク、模擬情報サーバーのテストに端末は不要です。

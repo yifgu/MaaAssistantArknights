@@ -1,3 +1,5 @@
+import argparse
+import ctypes
 import json
 import os
 import subprocess
@@ -8,11 +10,11 @@ from pathlib import Path
 
 def main() -> int:
     root = Path(__file__).resolve().parent
+    manifest = json.loads((root / "BUILD-INFO.json").read_text(encoding="utf-8"))
     core_dir = root / "core"
     adb = root / "adb" / ("adb.exe" if sys.platform == "win32" else "adb")
     args = sys.argv[1:]
     if args == ["--self-test"]:
-        manifest = json.loads((root / "BUILD-INFO.json").read_text(encoding="utf-8"))
         if manifest["configuration"] != "Debug":
             print("Use a Debug bundle for the full test suite.", file=sys.stderr)
             return 2
@@ -35,6 +37,28 @@ def main() -> int:
         from maa_battle_mcp.native import NativeBackend
 
         subprocess.run([str(adb), "version"], check=True)
+        if manifest["control_unit"]:
+            dll_directory = (
+                os.add_dll_directory(str(core_dir)) if sys.platform == "win32" else None
+            )
+            try:
+                control = ctypes.CDLL(
+                    str(
+                        core_dir
+                        / (
+                            "MaaAdbControlUnit.dll"
+                            if sys.platform == "win32"
+                            else "libMaaAdbControlUnit.so"
+                        )
+                    )
+                )
+                control.MaaAdbControlUnitGetVersion.restype = ctypes.c_char_p
+                print(
+                    "ADB ControlUnit:", control.MaaAdbControlUnitGetVersion().decode()
+                )
+            finally:
+                if dll_directory is not None:
+                    dll_directory.close()
         with tempfile.TemporaryDirectory(prefix="maa-mcp-check-") as directory:
             backend = NativeBackend(
                 Settings(
@@ -60,6 +84,12 @@ def main() -> int:
         return 0
 
     from maa_battle_mcp.server import main as serve
+
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--touch-mode")
+    options, _ = parser.parse_known_args(args)
+    if options.touch_mode == "MaaFwAdb" and not manifest["control_unit"]:
+        parser.error("MaaFwAdb requires the RelWithDebInfo bundle on Windows")
 
     sys.argv = [
         "maa-battle-mcp",

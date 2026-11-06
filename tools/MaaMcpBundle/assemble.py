@@ -37,6 +37,7 @@ def main() -> None:
             "uv",
             "export",
             "--frozen",
+            "--quiet",
             "--all-groups",
             "--no-emit-project",
             "--project",
@@ -92,6 +93,9 @@ def main() -> None:
         "source_commit": run("git", "rev-parse", "HEAD"),
         "configuration": args.configuration,
         "platform": args.platform,
+        "control_unit": not (
+            args.platform == "win-x64" and args.configuration == "Debug"
+        ),
         "python": run(str(python), "--version"),
         "adb": run(
             str(output / "adb" / ("adb.exe" if sys.platform == "win32" else "adb")),

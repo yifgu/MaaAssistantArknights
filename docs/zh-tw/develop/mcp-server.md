@@ -64,6 +64,8 @@ cd mcp-test
 
 實機操作仍須依下文連接並核對地圖。不要混用舊 Core、資源或其他提交的測試。外部情報程式與資料快照是選用外掛，不屬於伺服器執行相依項目，須另行設定；套件不包含遊戲、模擬器，也不自動呼叫雲端模型。
 
+Windows Debug 與 MaaFramework Release ControlUnit 的 ABI 不相容，因此 Debug 包不包含此選用 DLL，並拒絕 `--touch-mode MaaFwAdb`。請用預設 `maatouch`、`adb` 或 `minitouch`，或改用完整 `RelWithDebInfo` 包。
+
 ## 本機測試
 
 不需要裝置即可執行離線單元測試、實際 MCP stdio 握手與模擬情報服務測試：
