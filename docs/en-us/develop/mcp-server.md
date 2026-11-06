@@ -31,6 +31,8 @@ In your repository, open **Actions → Release Pipeline → Run workflow**, sele
 
 Both configurations first build Debug Core and run the full test suite, then package the selected configuration. Neither builds the GUI nor publishes a release. Equivalent command:
 
+`mcp_platform` defaults to `all`; select `win-x64` or `linux-x64` to build only the platform you need and avoid duplicate runner usage.
+
 ```bash
 gh workflow run ci.yml --ref <branch> -f mcp_only=true -f mcp_configuration=RelWithDebInfo
 ```

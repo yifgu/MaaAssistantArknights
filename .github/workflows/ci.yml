@@ -46,6 +46,11 @@ on:
         type: choice
         options: [RelWithDebInfo, Debug]
         default: RelWithDebInfo
+      mcp_platform:
+        description: "MCP target platform (select one to avoid rebuilding both)"
+        type: choice
+        options: [all, win-x64, linux-x64]
+        default: all
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.head_ref || github.ref_name }}${{ github.ref == 'refs/heads/dev-v2' && format('-{0}', github.sha) || '' }}${{ inputs.mcp_only && '-mcp-only' || '' }}
@@ -58,6 +63,7 @@ jobs:
     uses: ./.github/workflows/mcp-build.yml
     with:
       configuration: ${{ inputs.mcp_configuration || 'RelWithDebInfo' }}
+      platform: ${{ inputs.mcp_platform || 'all' }}
     permissions:
       contents: read
 

@@ -31,6 +31,8 @@ Windows x64 では `linux-x64` を `windows-x64` に、macOS では `macos-arm64
 
 どちらも先に Debug Core をビルドして全テストを実行し、その後に選択した構成をパッケージ化します。GUI のビルドや Release 公開は行いません。
 
+`mcp_platform` の既定値は `all` です。`win-x64` または `linux-x64` を選ぶと必要なプラットフォームだけをビルドし、runner の重複使用を避けられます。
+
 ```bash
 gh workflow run ci.yml --ref <branch> -f mcp_only=true -f mcp_configuration=RelWithDebInfo
 ```

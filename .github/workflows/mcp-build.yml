@@ -11,12 +11,20 @@ on:
         description: "Bundle configuration; Debug is always tested first"
         type: string
         default: RelWithDebInfo
+      platform:
+        description: "Target platform: all, win-x64, or linux-x64"
+        type: string
+        default: all
   workflow_dispatch:
     inputs:
       configuration:
         type: choice
         options: [RelWithDebInfo, Debug]
         default: RelWithDebInfo
+      platform:
+        type: choice
+        options: [all, win-x64, linux-x64]
+        default: all
 
 permissions:
   contents: read
@@ -24,24 +32,12 @@ permissions:
 jobs:
   build:
     name: Build and test (${{ matrix.platform }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.platform == 'win-x64' && 'windows-2025-vs2026' || 'ubuntu-latest' }}
     timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - platform: win-x64
-            os: windows-2025-vs2026
-            preset: windows-x64
-            triplet: x64-windows
-            adb: windows
-            framework: "*win-x86_64*.zip"
-          - platform: linux-x64
-            os: ubuntu-latest
-            preset: linux-x64
-            triplet: x64-linux
-            adb: linux
-            framework: "*linux-x86_64*.zip"
+        platform: ${{ fromJSON(inputs.platform == 'all' && '["win-x64","linux-x64"]' || format('["{0}"]', inputs.platform)) }}
     defaults:
       run:
         shell: bash
@@ -51,6 +47,10 @@ jobs:
       CONFIGURATION: ${{ inputs.configuration || 'RelWithDebInfo' }}
       BUNDLE_NAME: MAAMcp-${{ matrix.platform }}-${{ inputs.configuration || 'RelWithDebInfo' }}
       BUNDLE_PYTHON: "3.12.13"
+      TARGET_PLATFORM: ${{ matrix.platform }}
+      CMAKE_PRESET: ${{ matrix.platform == 'win-x64' && 'windows-x64' || 'linux-x64' }}
+      DEPS_TRIPLET: ${{ matrix.platform == 'win-x64' && 'x64-windows' || 'x64-linux' }}
+      ADB_PLATFORM: ${{ matrix.platform == 'win-x64' && 'win' || 'linux' }}
 
     steps:
       - name: Checkout repository
@@ -74,6 +74,19 @@ jobs:
         with:
           enable-cache: false
 
+      - name: Download Python and ADB runtimes
+        env:
+          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/mcp-python
+        run: |
+          case "$TARGET_PLATFORM" in win-x64|linux-x64) ;; *) echo "Unsupported platform: $TARGET_PLATFORM" >&2; exit 1 ;; esac
+          uv python install "$BUNDLE_PYTHON" --no-bin --no-registry
+          uv python find --managed-python "$BUNDLE_PYTHON" | tr -d '\r' > python-path.txt
+          curl --fail --location --silent --show-error --retry 3 --connect-timeout 20 --max-time 180 \
+            "https://dl.google.com/android/repository/platform-tools_r35.0.2-$ADB_PLATFORM.zip" \
+            --output platform-tools.zip
+          python -m zipfile -e platform-tools.zip adb-download
+          if [[ "$RUNNER_OS" == "Linux" ]]; then chmod +x adb-download/platform-tools/adb; fi
+
       - name: Cache MaaDeps
         id: cache-maadeps
         uses: actions/cache@v6
@@ -86,12 +99,12 @@ jobs:
         if: steps.cache-maadeps.outputs.cache-hit != 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: python tools/maadeps-download.py "${{ matrix.triplet }}"
+        run: python tools/maadeps-download.py "$DEPS_TRIPLET"
 
       - name: Configure and build Debug Core
         run: |
           case "$CONFIGURATION" in Debug|RelWithDebInfo) ;; *) exit 1 ;; esac
-          cmake --preset "${{ matrix.preset }}" -B build-mcp \
+          cmake --preset "$CMAKE_PRESET" -B build-mcp \
             -DBUILD_WPF_GUI=OFF -DBUILD_DEBUG_DEMO=OFF -DBUILD_RESOURCE_UPDATER=OFF \
             -DINSTALL_RESOURCE=ON -DINSTALL_PYTHON=OFF -DWITH_HASH_VERSION=ON
           cmake --build build-mcp --config Debug --target MaaCore --parallel 2
@@ -102,21 +115,9 @@ jobs:
         with:
           repository: MaaXYZ/MaaFramework
           tag: v5.13.0
-          fileName: ${{ matrix.framework }}
+          fileName: ${{ matrix.platform == 'win-x64' && '*win-x86_64*.zip' || '*linux-x86_64*.zip' }}
           extract: true
           out-file-path: mcp-framework
-
-      - name: Download Python and ADB runtimes
-        env:
-          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/mcp-python
-        run: |
-          uv python install "$BUNDLE_PYTHON" --no-bin --no-registry
-          uv python find --managed-python "$BUNDLE_PYTHON" > python-path.txt
-          curl --fail --location --silent --show-error --retry 3 --connect-timeout 20 --max-time 180 \
-            "https://dl.google.com/android/repository/platform-tools_r35.0.2-${{ matrix.adb }}.zip" \
-            --output platform-tools.zip
-          python -m zipfile -e platform-tools.zip adb-download
-          if [[ "$RUNNER_OS" == "Linux" ]]; then chmod +x adb-download/platform-tools/adb; fi
 
       - name: Assemble complete Python environment
         run: |

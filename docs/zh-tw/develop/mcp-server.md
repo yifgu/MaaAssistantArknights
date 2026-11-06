@@ -31,6 +31,8 @@ Windows x64 將 `linux-x64` 換成 `windows-x64`；macOS 使用 `macos-arm64` �
 
 兩者都會先編譯 Debug Core 並執行完整測試，再打包所選設定；不編譯 GUI，也不發布 Release。等效命令：
 
+`mcp_platform` 預設為 `all`，可選 `win-x64` 或 `linux-x64` 只建置所需平台，避免重複占用 runner。
+
 ```bash
 gh workflow run ci.yml --ref <branch> -f mcp_only=true -f mcp_configuration=RelWithDebInfo
 ```

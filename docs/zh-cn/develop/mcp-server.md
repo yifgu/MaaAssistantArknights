@@ -31,6 +31,8 @@ Windows x64 将配置命令的 `linux-x64` 换为 `windows-x64`；macOS 根据�
 
 两种配置都会先编译 Debug Core 并运行完整测试，再打包所选配置；不编译 GUI，也不发布 Release。命令行等价操作：
 
+`mcp_platform` 默认为 `all`，可选 `win-x64` 或 `linux-x64` 只构建所需平台，避免重复占用 runner。
+
 ```bash
 gh workflow run ci.yml --ref <branch> -f mcp_only=true -f mcp_configuration=RelWithDebInfo
 ```
