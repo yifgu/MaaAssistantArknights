@@ -34,6 +34,10 @@ class UnitRequest(OperationRequest):
     unit_id: Identifier
 
 
+class IdentifyRequest(OperationRequest):
+    adopt_manual_pause: bool = False
+
+
 class DeployRequest(UnitRequest):
     location: Annotated[list[Coordinate], Field(min_length=2, max_length=2)]
     direction: Literal["Right", "Down", "Left", "Up", "None"]

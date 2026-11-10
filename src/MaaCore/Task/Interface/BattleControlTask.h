@@ -34,12 +34,17 @@ private:
         std::chrono::steady_clock::time_point deadline;
     };
 
+    struct CapturedFrame
+    {
+        cv::Mat image;
+        std::chrono::system_clock::time_point captured_at;
+    };
+
     bool validate_command(const json::value& params) const;
-    json::value observe(
-        const cv::Mat& image,
-        bool active_identification = false,
-        bool include_battlefield = true);
-    json::value save_evidence(const cv::Mat& image, json::value snapshot);
+    CapturedFrame capture_frame();
+    json::value
+        observe(const CapturedFrame& frame, bool active_identification = false, bool include_battlefield = true);
+    json::value save_evidence(const CapturedFrame& frame, json::value snapshot);
     json::value execute(const Command& command);
     json::value execute_step(const Command& command, json::value snapshot);
     json::value map_info() const;

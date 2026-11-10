@@ -78,11 +78,12 @@ uv run --project src/MaaMcpServer ruff check src/MaaMcpServer
 uv run --project src/MaaMcpServer ruff format --check src/MaaMcpServer
 ```
 
-실제 Debug Core의 작업 등록, 잘못된 인수 거부, 콜백, 맵 투영 확인도 기기 없이 실행할 수 있습니다.
+실제 Debug Core의 작업 등록, 잘못된 인수 거부, 콜백, 맵 투영 확인도 기기 없이 실행할 수 있습니다. 합성 화면 테스트는 ADB 대신 로컬 모의 전송으로 실제 Core를 구동하여 정지 상태 인식, 취소, 시각 순서, PNG 대응 관계, 재전송을 확인합니다.
 
 ```bash
 MAA_MCP_NATIVE_CORE="$PWD/build-mcp/install" \
-  uv run --project src/MaaMcpServer pytest src/MaaMcpServer/tests/test_native.py -q
+  uv run --project src/MaaMcpServer pytest \
+  src/MaaMcpServer/tests/test_native.py src/MaaMcpServer/tests/test_battle_control.py -q
 ```
 
 PowerShell에서는 먼저 `$env:MAA_MCP_NATIVE_CORE="$PWD/build-mcp/install"`을 설정한 뒤 같은 pytest 명령을 실행합니다. 리소스 경로가 다르면 그 부모를 `MAA_MCP_RESOURCE_DIR`로 지정합니다. 환경 변수가 없으면 이 테스트는 명시적으로 건너뜁니다. 오프라인 통과가 실제 게임 동작의 검증을 의미하지는 않습니다.
@@ -131,6 +132,8 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 
 `battle_connect`, `battle_attach(stage_name="main_01-07")`, `battle_capture_evidence`, `battle_observe` 순서로 호출합니다. 스테이지 ID는 실제 화면과 일치해야 합니다. 맵 지정은 호출자가 제공하며 자동 인식이 아닙니다. `battle_get_map`은 정적 타일과 두 가지 화면 투영을 반환합니다. 알 수 없는 이름은 null입니다. `battle_identify`는 상세 화면을 열어 인식하며 일시 정지를 요청합니다. 이후 스크린샷을 확인하고 `battle_set_paused(paused=false)`로 명시적으로 재개하세요.
 
+수동 일시 정지된 전투에 새 세션을 연결했다면 `battle_identify`에 `request.adopt_manual_pause=true`를 지정해 재개 없이 정지 상태 인계를 명시적으로 허용할 수 있습니다. 엄격한 boolean 형식이며 기본값은 false입니다. 생략하면 서버가 관리하지 않는 정지는 계속 거부됩니다. Core는 먼저 전투 화면으로 인식되고 실행 중 일시 정지 버튼이 보이지 않는지 확인하며, 인식할 수 없는 화면은 인계하지 않습니다. 카드는 정지 상태에서만 확인하고 OCR이 불완전하거나 요청이 취소되어도 자동 재개하지 않습니다. 처리가 완료되면 부분 인식에서도 `pause_verified`, `safe_state`, 최종 동일 프레임의 `snapshot` / `image_path`와 PNG를 반환합니다. 저장 실패는 `evidence_error`로 명시하며 취소나 worker 장애 시 최종 증거를 반환하지 못할 수 있습니다. 초기 인식에 외부 ADB 탭은 필요하지 않습니다.
+
 배치 요청 예시입니다. 세션과 관측된 유닛 ID를 바꾸세요. 도구 인수에는 `request` 객체가 있습니다.
 
 ```json
@@ -165,7 +168,9 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 
 `action`은 `deploy`, `retreat`, `skill` 중 하나입니다. 배치에는 `location`과 `direction`도 필요합니다. 수동 일시 정지는 기본적으로 인계하지 않습니다. 재개하려면 `adopt_manual_pause=true`와 새로운 스크린샷으로 확인된 일시 정지가 필요합니다. 호출당 행동은 최대 하나입니다. 행동 경계 화면을 캡처하고 일시 정지를 요청한 뒤, 새로운 화면과 `pause_verified`를 반환합니다. 클라이언트 요청이 취소되어도 서비스는 준비된 일시 정리 단계가 끝날 때까지 기다립니다. worker 자체가 실패하면 일시 정지 상태를 알 수 없다고 명시합니다. `battle_step`의 `timeout_ms` 상한은 10000입니다.
 
-`battle_identify`는 `identified_count`, `unresolved_count`, `ambiguous_count`와 카드별 `identity_reason`을 반환합니다. 이름이 빈 캐시 항목은 더 이상 상세 OCR을 억제하지 않습니다. 다른 행동이 `outcome_unknown`을 반환하면 MCP `isError=true`이며 `helper_returned=true` 또는 `action_returned=true`도 게임 내 성공을 증명하지 않습니다. 새 증거를 확인하고 무작정 재시도하지 마세요. 위치 출처는 `action_history_unverified`, 적 상태는 null이며 모델의 직접 상태 덮어쓰기는 지원하지 않습니다. 별도의 일시 정지 요청은 정지 확인이 아니며 재개는 이 서버가 요청한 정지에만 허용됩니다.
+`captured_at_ms`는 이미지 획득 직후, 분석 전에 기록한 호스트의 Unix 밀리초 시각으로 기기의 렌더링 시각이 아닙니다. `capture_time_snapshot`은 `capture_image_path`(행동 경계), `return_time_snapshot`은 `return_image_path`(이후 정지 확인)와 연결됩니다. MCP 이미지는 기존처럼 반환 시점 프레임, 행동 경계 프레임 순서입니다. `observation_id`는 획득 순서가 아닌 분석 순서대로 증가하므로 행동 경계의 ID가 더 커도 시각은 더 이를 수 있습니다. 시스템 시계 조정은 시간 차이에 영향을 주며 이 시각은 실행 시간의 엄격한 상한이 아닙니다. 동일 작업 재전송은 원래 시각과 경로를 보존하고 새 캡처에는 자체 획득 시각을 기록합니다.
+
+`battle_identify`는 `identified_count`, `unresolved_count`, `ambiguous_count`와 카드별 `identity_reason`을 반환합니다. 이름이 빈 캐시 항목은 더 이상 상세 OCR을 억제하지 않습니다. 다른 행동이 `outcome_unknown`을 반환하면 MCP `isError=true`이며 `helper_returned=true` 또는 `action_returned=true`도 게임 내 성공을 증명하지 않습니다. 새 증거를 확인하고 무작정 재시도하지 마세요. 위치 출처는 `action_history_unverified`, 적 상태는 null이며 모델의 직접 상태 덮어쓰기는 지원하지 않습니다. 별도의 일시 정지 요청은 정지 확인이 아니며 재개는 이 서버가 요청하거나 명시적으로 인계한 정지에만 허용됩니다.
 
 일반 명령의 `timeout_ms`는 1–30000이고 `battle_step`은 최대 10000입니다. 일반 명령 시간 초과나 취소 시 worker를 종료하고 세션을 무효화하며 알 수 없는 결과를 저장합니다. step 취소 시 준비된 일시 정지 정리가 끝날 때까지 기다리지만, worker 장애로 일시 정지를 확인하지 못할 수 있습니다. `battle_close`는 일반 명령을 중단하며 step 실행 중에는 일시 정지 정리가 끝날 때까지 기다린 뒤 닫습니다. 단, 이 작업 자체가 게임을 일시 정지하거나 종료하지는 않습니다. `battle_get_operation`으로 저장된 결과를 조회합니다. 로그와 `operations.sqlite3`는 `--user-dir`에 있으며 전투별로 최근 명시적 캡처 128장을 보관합니다. 오래된 세션, 로그, 데이터베이스는 주기적으로 직접 정리하세요.
 
@@ -189,3 +194,5 @@ PRTS는 `{"provider":"prts","command":"prts-mcp","region":"cn"}`으로 설정할
 `AsstAppendTask(handle, "BattleControl", {"stage_name":"main_01-07","session_id":"unique-id"})`로 초기화하고 `AsstStart`를 호출한 뒤 `SubTaskExtraInfo`의 `what="BattleControlReady"`(프로토콜 버전 1)를 기다립니다. `AsstSetTaskParams`에 `session_id`, `command_id`, `action`, `args`, `timeout_ms`를 전달하고 `what="BattleControlResult"`를 기다립니다. 한 번에 명령 하나만 허용하므로 콜백을 받은 뒤 다음 명령을 전송하세요.
 
 행동 이름은 `observe`, `capture`, `map`, `identify`, `deploy`, `retreat`, `skill`, `set_paused`, `step`입니다. `step`은 사전 검사된 전술 행동 하나를 받고 즉시 캡처한 뒤 일시 정지를 요청하고, 확인 후 새 일시 정지 화면을 반환합니다. 기기 I/O 또는 MCP 프로세스 자체가 실패하는 경우에는 일시 정지를 보장할 수 없습니다. 인수 갱신은 큐에 추가만 하며 기기 조작은 Core 작업 스레드에서 실행합니다. C ABI만으로는 하위 I/O의 반환 기한을 보장할 수 없어 네이티브 호출자는 외부 watchdog과 중복 방지를 구현해야 합니다. MCP 서버는 프로세스 수준 watchdog을 제공합니다. 반복 실험과 최적화는 후속 구현 범위입니다.
+
+`identify`는 선택적인 엄격한 boolean 인수 `args.adopt_manual_pause`(기본값 false)를 받습니다. 명시적 인계는 인식된 정지를 관리 대상으로 삼을 뿐 정지를 전환하거나 해당 인식 작업의 전투 재개를 허용하지 않습니다.

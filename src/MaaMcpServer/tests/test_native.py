@@ -57,6 +57,14 @@ def test_debug_core_task_protocol_without_device(tmp_path):
             },
             {**command, "session_id": "other"},
             {**command, "action": "click"},
+            *(
+                {
+                    **command,
+                    "action": "identify",
+                    "args": {"adopt_manual_pause": value},
+                }
+                for value in ("true", "false", 1, 0, None)
+            ),
             {**command, "action": "deploy", "args": {"unit_id": "x"}},
             {
                 **command,

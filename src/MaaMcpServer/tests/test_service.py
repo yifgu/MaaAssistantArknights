@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from maa_battle_mcp.models import (
     BoundedStepRequest,
     DeployRequest,
+    IdentifyRequest,
     OperationRequest,
     PauseRequest,
 )
@@ -276,6 +277,20 @@ def test_unknown_fields_and_boolean_coercion_are_rejected():
         OperationRequest(session_id="s", operation_id="o", script="click")
     with pytest.raises(ValidationError):
         PauseRequest(session_id="s", operation_id="o", paused="false")
+
+
+def test_identify_requires_explicit_manual_pause_authorization():
+    request = IdentifyRequest(session_id="s", operation_id="o")
+    assert request.adopt_manual_pause is False
+    assert IdentifyRequest(
+        session_id="s", operation_id="o", adopt_manual_pause=True
+    ).adopt_manual_pause
+
+
+@pytest.mark.parametrize("value", ["false", "true", 0, 1, None])
+def test_identify_rejects_non_boolean_authorization(value):
+    with pytest.raises(ValidationError):
+        IdentifyRequest(session_id="s", operation_id="o", adopt_manual_pause=value)
 
 
 def test_bounded_step_requires_complete_action_arguments():
