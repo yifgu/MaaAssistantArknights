@@ -89,6 +89,12 @@ PowerShell 先設定 `$env:MAA_MCP_NATIVE_CORE="$PWD/build-mcp/install"`，再�
 
 Windows 原始碼 Debug 建置也須先執行 `tools/PrepareMcpRuntime.ps1 -CoreDir build-mcp/install`，執行期需求與上述 Debug 產物相同。
 
+worker 使用獨立子程序與專用 stdin/stdout 管道，不繼承 MCP 的輸入輸出串流。stderr 記錄 PID 以及 `worker_started`、`core_load`、`resource_load`、`core_create`、`ready` 與請求階段；啟動或連線逾時會指出最後階段，不會誤稱戰鬥結果未知。逾時或取消仍會終止 worker 並釋放控制鎖；戰鬥命令中斷仍按 `outcome_unknown` 處理，不自動重試。
+
+`battle_status` 與 `battle_connect` 分別回傳 `project_version`、`build`（包內 `BUILD-INFO.json`）與 `resources`（設定的資源根目錄及地圖索引 SHA-256）；缺少清單或索引時對應值為 null，不以 MCP SDK 版本代替專案版本。連線成功後另有 `core_version`。綁定前依唯一 stage/level ID 檢查索引與檔案，拒絕顯示編號（如 `TL-EX-1`）；缺圖會明確指出請求 ID 與資源根目錄，不自動下載或回退綁定。結果的 `map_source` 另含地圖檔案 SHA-256；這不代表畫面已驗證或跨版本相容。
+
+選用實機冒煙測試須明確設定 `MAA_MCP_NATIVE_CORE`、`MAA_MCP_LIVE_ADDRESS` 與 `MAA_MCP_LIVE_STAGE`，再執行 `uv run --project src/MaaMcpServer pytest src/MaaMcpServer/tests/test_stdio.py -k real_device`。資源、ADB 與連線設定可分別用 `MAA_MCP_RESOURCE_DIR`、`MAA_MCP_ADB_PATH`、`MAA_MCP_CONNECTION_CONFIG` 指定。先停止其他控制器，手動進入唯一 ID 對應的固定地圖戰鬥；測試只連線、綁定、截圖與關閉，不恢復、部署或退出戰鬥。條件不足會明確跳過；模擬 worker 的離線通過不等於 Windows 實機通過。
+
 ## 啟動與用戶端設定
 
 先關閉其他控制同一裝置的 MAA/GUI 任務，手動進入固定地圖戰鬥。首版不支援自動選詞條、進入關卡、識別結算、多階段鏡頭或重建接管前已部署的幹員。

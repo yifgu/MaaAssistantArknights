@@ -89,6 +89,12 @@ PowerShell では先に `$env:MAA_MCP_NATIVE_CORE="$PWD/build-mcp/install"` を�
 
 Windows のソースからの Debug ビルドでも、先に `tools/PrepareMcpRuntime.ps1 -CoreDir build-mcp/install` を実行します。前提条件は Debug パッケージと同じです。
 
+worker は MCP の入出力を継承せず、専用 stdin/stdout パイプを持つ別プロセスで動作します。stderr に PID と `worker_started`、`core_load`、`resource_load`、`core_create`、`ready`、各リクエストの段階を記録します。起動・接続のタイムアウトは最後の段階を示し、戦闘結果不明とは表示しません。タイムアウトやキャンセル時は worker を終了し制御ロックを解放します。戦闘コマンドの中断は引き続き `outcome_unknown` とし、自動再試行しません。
+
+`battle_status` と `battle_connect` は `project_version`、`build`（隣接する `BUILD-INFO.json`）、`resources`（設定されたリソースルートとマップ索引の SHA-256）を別々に返します。マニフェストや索引がなければ該当値は null です。MCP SDK のバージョンをプロジェクトのバージョンとして使いません。接続成功後は `core_version` も返します。紐付け前に一意の stage/level ID で索引とファイルを確認し、`TL-EX-1` などの表示コードを拒否します。不足時は要求 ID とリソースルートを示し、自動ダウンロードや代替マップへの紐付けはしません。結果の `map_source` はマップファイルの SHA-256 も含みますが、画面の検証済み判定や異なるバージョン間の互換性を保証しません。
+
+任意の実機スモークテストは `MAA_MCP_NATIVE_CORE`、`MAA_MCP_LIVE_ADDRESS`、`MAA_MCP_LIVE_STAGE` を明示してから `uv run --project src/MaaMcpServer pytest src/MaaMcpServer/tests/test_stdio.py -k real_device` を実行します。リソース、ADB、接続設定は `MAA_MCP_RESOURCE_DIR`、`MAA_MCP_ADB_PATH`、`MAA_MCP_CONNECTION_CONFIG` で指定できます。他のコントローラーを停止し、一意 ID に一致する固定マップの戦闘を手動で開始してください。テストは接続・紐付け・撮影・切断のみで、再開・配置・戦闘放棄はしません。条件不足は明示的にスキップされます。模擬 worker のオフライン成功は Windows 実機動作の保証ではありません。
+
 ## 起動とクライアント設定
 
 同じ端末を操作する別の MAA/GUI タスクを停止し、固定マップの戦闘を手動で開始してください。初版は契約選択、ステージ開始、勝利判定、多段階マップのカメラ移動、接続前に配置済みのオペレーターの復元を行いません。

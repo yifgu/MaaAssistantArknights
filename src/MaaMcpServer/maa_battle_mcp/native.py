@@ -1,16 +1,18 @@
 """Isolate native code and its blocking calls from the MCP event loop."""
 
 import ctypes
+import json
 import logging
-import multiprocessing
 import os
 import queue
+import subprocess
 import sys
 import threading
 import time
-from multiprocessing.connection import Connection
+from collections.abc import Callable
 from typing import Any
 
+from .diagnostics import provenance, stage_data
 from .models import Settings
 
 logger = logging.getLogger(__name__)
@@ -20,8 +22,15 @@ class NativeError(RuntimeError):
     pass
 
 
+def _log_phase(phase: str) -> None:
+    logger.info("MaaCore worker phase: %s", phase)
+
+
 class NativeCore:
-    def __init__(self, settings: Settings):
+    def __init__(
+        self, settings: Settings, progress: Callable[[str], None] = _log_phase
+    ):
+        progress("core_load")
         names = {
             "win32": "MaaCore.dll",
             "linux": "libMaaCore.so",
@@ -44,6 +53,7 @@ class NativeCore:
         )
         self._callback = self._callback_type(self._on_callback)
         self._bind()
+        progress("resource_load")
         settings.user_dir.mkdir(parents=True, exist_ok=True)
         self._require(
             self.lib.AsstSetUserDir(str(settings.user_dir).encode("utf-8")),
@@ -59,6 +69,7 @@ class NativeCore:
                 self.lib.AsstLoadResource(str(overlay).encode("utf-8")),
                 "AsstLoadResource(client overlay)",
             )
+        progress("core_create")
         self.handle = self.lib.AsstCreateEx(self._callback, None)
         self._require(self.handle, "AsstCreateEx")
         for key, value in (
@@ -149,19 +160,32 @@ class NativeCore:
             )
             self._require(call_id, "AsstAsyncConnect")
             self._require(self.lib.AsstConnected(self.handle), "Device connection")
-            return {"core_version": self.lib.AsstGetVersion().decode("utf-8")}
+            return {
+                "core_version": self.lib.AsstGetVersion().decode("utf-8"),
+                **provenance(settings),
+            }
         if operation == "attach":
             if self.task_id is not None:
                 raise NativeError("A battle task is already attached")
+            try:
+                map_source = stage_data(settings, payload["stage_name"])
+            except (OSError, ValueError) as exc:
+                raise NativeError(str(exc)) from exc
             self.task_id = self.lib.AsstAppendTask(
                 self.handle, b"BattleControl", json.dumps(payload).encode("utf-8")
             )
             self._require(
                 self.task_id,
-                "BattleControl unavailable or invalid stage; build this checkout's Core",
+                "BattleControl task rejected preflighted stage; build this checkout's Core",
             )
             self._require(self.lib.AsstStart(self.handle), "AsstStart")
-            return self._wait("BattleControlReady", 30)
+            ready = self._wait("BattleControlReady", 30)
+            if ready["map"]["stage_id"] != map_source["stage_id"]:
+                raise NativeError(
+                    f"Core map binding mismatch for stage {payload['stage_name']!r} "
+                    f"under resource root {settings.resource_dir}"
+                )
+            return {**ready, "map_source": map_source}
         if operation == "command":
             if self.task_id is None:
                 raise NativeError("No battle task is attached")
@@ -187,87 +211,179 @@ class NativeCore:
             self._dll_directory.close()
 
 
-def _worker(connection: Connection, settings: Settings) -> None:
+def _worker() -> None:
+    # Keep native stdout away from both the private protocol and MCP stdout.
+    output_fd = os.dup(sys.stdout.fileno())
     os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
-    core = None
-    try:
-        core = NativeCore(settings)
-        while True:
-            operation, payload = connection.recv()
-            if operation == "close":
-                core.close()
-                core = None
-                connection.send({"ok": True, "result": {}})
-                return
-            result = core.dispatch(operation, payload, settings)
-            connection.send({"ok": True, "result": result})
-    except EOFError:
-        logger.info("MaaCore worker disconnected")
-    except Exception as exc:
-        # This is the process boundary: never let a native/FFI error look successful.
-        logger.exception("MaaCore worker failed")
+    sys.stdin.reconfigure(encoding="utf-8")
+    logging.basicConfig(level=logging.INFO)
+    with os.fdopen(output_fd, "w", encoding="utf-8", buffering=1) as output:
+
+        def send(message: dict) -> None:
+            output.write(json.dumps(message, ensure_ascii=False) + "\n")
+            output.flush()
+
+        def progress(phase: str) -> None:
+            _log_phase(phase)
+            send({"phase": phase})
+
+        core = None
         try:
-            connection.send({"ok": False, "error": str(exc)})
-        except (OSError, EOFError):
-            logger.error("Unable to deliver worker failure")
-    finally:
-        if core is not None:
-            core.close()
-        connection.close()
+            progress("worker_started")
+            settings = Settings.model_validate_json(sys.stdin.readline())
+            core = NativeCore(settings, progress)
+            progress("ready")
+            for line in sys.stdin:
+                operation, payload = json.loads(line)
+                progress(operation)
+                if operation == "close":
+                    core.close()
+                    core = None
+                    send({"ok": True, "result": {}})
+                    return
+                result = core.dispatch(operation, payload, settings)
+                send({"ok": True, "result": result})
+        except Exception as exc:
+            # This is the process boundary: never let a native/FFI error look successful.
+            logger.exception("MaaCore worker failed")
+            try:
+                send({"ok": False, "error": str(exc)})
+            except (OSError, ValueError):
+                logger.exception("Unable to deliver worker failure")
+        finally:
+            if core is not None:
+                core.close()
 
 
 class NativeBackend:
     def __init__(self, settings: Settings):
-        context = multiprocessing.get_context("spawn")
-        self.connection, child = context.Pipe()
-        self.process = context.Process(
-            target=_worker,
-            args=(child, settings),
-            name="maa-battle-worker",
-            daemon=True,
-        )
         self.lock = threading.Lock()
         self.abort_lock = threading.Lock()
         self.aborted = False
-        self.process.start()
-        child.close()
+        self.ready = False
+        self.phase = "process_start"
+        self.responses: queue.Queue[dict | NativeError] = queue.Queue()
+        command = [sys.executable]
+        if sys.flags.isolated:
+            command.append("-I")
+        command.extend(["-B", "-u", "-m", "maa_battle_mcp.native"])
+        self.process = subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=None,
+            text=True,
+            encoding="utf-8",
+            bufsize=1,
+        )
+        self.reader = threading.Thread(
+            target=self._read_responses, name="maa-battle-worker-reader", daemon=True
+        )
+        self.reader.start()
+        try:
+            self._send(settings.model_dump_json())
+        except NativeError:
+            self.abort()
+            raise
+
+    def _send(self, message: str) -> None:
+        try:
+            self.process.stdin.write(message + "\n")
+            self.process.stdin.flush()
+        except (OSError, ValueError) as exc:
+            raise NativeError(f"Worker pipe closed during {self.phase}") from exc
+
+    def _read_responses(self) -> None:
+        try:
+            for line in self.process.stdout:
+                response = json.loads(line)
+                if not isinstance(response, dict):
+                    raise ValueError("Worker response must be an object")
+                if "phase" in response:
+                    if not isinstance(response["phase"], str):
+                        raise ValueError("Worker phase must be a string")
+                elif response.get("ok") is True:
+                    if not isinstance(response.get("result"), dict):
+                        raise ValueError("Worker result must be an object")
+                elif response.get("ok") is not False or not isinstance(
+                    response.get("error"), str
+                ):
+                    raise ValueError("Invalid worker response envelope")
+                self.responses.put(response)
+        except (OSError, ValueError) as exc:
+            self.responses.put(NativeError(f"Invalid worker response: {exc}"))
+        finally:
+            self.responses.put(NativeError("Worker response pipe closed"))
+
+    def _receive(self, deadline: float, operation: str) -> dict:
+        try:
+            response = self.responses.get(timeout=max(0, deadline - time.monotonic()))
+        except queue.Empty as exc:
+            suffix = (
+                "; battle outcome unknown"
+                if operation == "command" and self.ready
+                else "; no battle command submitted"
+            )
+            raise NativeError(
+                f"Worker deadline exceeded during {self.phase}{suffix}"
+            ) from exc
+        if isinstance(response, NativeError):
+            raise NativeError(
+                f"{response} during {self.phase} (exit code {self.process.poll()})"
+            )
+        if "phase" in response:
+            self.phase = response["phase"]
+            logger.info("MaaCore worker pid=%s phase=%s", self.process.pid, self.phase)
+        elif response.get("ok") is False:
+            raise NativeError(f"Worker failed during {self.phase}: {response['error']}")
+        return response
 
     def request(self, operation: str, payload: dict, timeout: float) -> dict:
         with self.lock:
             try:
-                self.connection.send((operation, payload))
-                if not self.connection.poll(timeout):
-                    raise NativeError(
-                        "Worker deadline exceeded; battle outcome unknown"
-                    )
-                response = self.connection.recv()
-                if not response["ok"]:
-                    raise NativeError(response["error"])
-                return response["result"]
-            except (OSError, EOFError) as exc:
-                raise NativeError(
-                    "MaaCore worker exited; battle outcome unknown"
-                ) from exc
-            finally:
-                if not self.process.is_alive():
-                    self.process.join(timeout=1)
+                deadline = time.monotonic() + timeout
+                while not self.ready:
+                    response = self._receive(deadline, operation)
+                    if "phase" not in response:
+                        raise NativeError("Worker returned a result before readiness")
+                    self.ready = response.get("phase") == "ready"
+                self.phase = operation
+                self._send(json.dumps([operation, payload], ensure_ascii=False))
+                while True:
+                    response = self._receive(deadline, operation)
+                    if "phase" in response:
+                        continue
+                    if response.get("ok") is not True:
+                        raise NativeError(f"Invalid worker result during {self.phase}")
+                    return response["result"]
+            except NativeError:
+                self.abort()
+                raise
 
     def abort(self) -> None:
         with self.abort_lock:
             if self.aborted:
                 return
-            if self.process.is_alive():
+            if self.process.poll() is None:
                 self.process.terminate()
-                self.process.join(timeout=2)
-            if self.process.is_alive():
-                self.process.kill()
-                self.process.join(timeout=2)
-            self.connection.close()
+                try:
+                    self.process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    self.process.kill()
+                    self.process.wait(timeout=2)
+            self.process.stdin.close()
+            self.reader.join(timeout=2)
+            if not self.reader.is_alive():
+                self.process.stdout.close()
             self.aborted = True
 
     def close(self) -> None:
         try:
-            if self.process.is_alive():
+            if self.process.poll() is None and not self.aborted:
                 self.request("close", {}, 5)
         finally:
             self.abort()
+
+
+if __name__ == "__main__":
+    _worker()

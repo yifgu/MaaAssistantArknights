@@ -106,4 +106,4 @@ def test_native_worker_process_protocol(tmp_path):
         assert result["map"] == ready["map"]
     finally:
         backend.close()
-    assert not backend.process.is_alive()
+    assert backend.process.poll() is not None

@@ -89,6 +89,12 @@ In PowerShell, first set `$env:MAA_MCP_NATIVE_CORE="$PWD/build-mcp/install"`, th
 
 Windows Debug builds from source also require `tools/PrepareMcpRuntime.ps1 -CoreDir build-mcp/install` before testing, with the same prerequisites as the Debug bundle.
 
+The worker uses a separate subprocess with private stdin/stdout pipes, not the MCP streams. stderr records its PID and `worker_started`, `core_load`, `resource_load`, `core_create`, `ready`, and request phases. Startup/connection timeouts name the last phase rather than claiming an unknown battle outcome. Timeout or cancellation still terminates the worker and releases the controller lease; interrupted battle commands remain `outcome_unknown` and are never automatically retried.
+
+`battle_status` and `battle_connect` expose separate `project_version`, `build` (the adjacent `BUILD-INFO.json`), and `resources` (configured resource root and map-catalog SHA-256) fields. Missing manifests/catalogs are null; the MCP SDK version is not used as the project version. Successful connections also expose `core_version`. Attachment checks the catalog and map file by unique stage/level ID, rejecting display codes such as `TL-EX-1`. Missing data names the requested ID and resource root, without downloading or binding a fallback. The attachment's `map_source` includes the map-file SHA-256; provenance does not establish visual verification or cross-version compatibility.
+
+For the optional live smoke test, explicitly set `MAA_MCP_NATIVE_CORE`, `MAA_MCP_LIVE_ADDRESS`, and `MAA_MCP_LIVE_STAGE`, then run `uv run --project src/MaaMcpServer pytest src/MaaMcpServer/tests/test_stdio.py -k real_device`. Override resources, ADB, and connection configuration using `MAA_MCP_RESOURCE_DIR`, `MAA_MCP_ADB_PATH`, and `MAA_MCP_CONNECTION_CONFIG`. Stop other controllers and manually enter the fixed-map battle matching that unique ID first. The test only connects, attaches, captures, and closes; it never resumes, deploys, or abandons a battle. Missing prerequisites are explicit skips; offline fixture-worker success does not establish Windows in-game correctness.
+
 ## Launch and client configuration
 
 Stop other MAA/GUI tasks controlling the same device, then manually enter a fixed-map battle. This version does not select contracts, enter stages, recognize victory, move a multi-stage camera, or reconstruct operators already deployed before attachment.

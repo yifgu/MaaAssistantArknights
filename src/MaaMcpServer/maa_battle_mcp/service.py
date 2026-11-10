@@ -9,6 +9,7 @@ from typing import Protocol
 
 from filelock import FileLock, Timeout
 
+from .diagnostics import provenance
 from .models import OperationRequest, Settings
 from .native import NativeBackend, NativeError
 
@@ -34,6 +35,7 @@ class BattleService:
         self.settings = settings
         self.backend_factory = backend_factory
         self.backend: Backend | None = None
+        self.connection_info: dict = {}
         self.session_id: str | None = None
         self.lock = asyncio.Lock()
         settings.user_dir.mkdir(parents=True, exist_ok=True)
@@ -73,12 +75,17 @@ class BattleService:
                 result = await asyncio.to_thread(backend.request, "connect", {}, 60)
                 if self.backend is not backend:
                     raise NativeError("Connection was closed during initialization")
+                self.connection_info = result
                 return {"status": "connected", **result}
             except (NativeError, asyncio.CancelledError):
                 await asyncio.to_thread(backend.abort)
                 self.backend = None
+                self.connection_info = {}
                 self.lease.release()
                 raise
+
+    def diagnostics(self) -> dict:
+        return {**self.connection_info, **provenance(self.settings)}
 
     async def attach(self, stage_name: str) -> dict:
         async with self.lock:
@@ -106,6 +113,7 @@ class BattleService:
             except (NativeError, asyncio.CancelledError):
                 await asyncio.to_thread(backend.abort)
                 self.backend = None
+                self.connection_info = {}
                 self.lease.release()
                 raise
 
@@ -155,6 +163,7 @@ class BattleService:
                 await asyncio.to_thread(backend.abort)
                 self.backend = None
                 self.session_id = None
+                self.connection_info = {}
                 self.lease.release()
                 result = {
                     "status": "outcome_unknown",
@@ -227,6 +236,7 @@ class BattleService:
             current = self.backend
             self.backend = None
             self.session_id = None
+            self.connection_info = {}
             if current is not None:
                 try:
                     await asyncio.to_thread(current.close)
