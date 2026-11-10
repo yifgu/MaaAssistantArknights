@@ -4,7 +4,12 @@ import threading
 import pytest
 from pydantic import ValidationError
 
-from maa_battle_mcp.models import DeployRequest, OperationRequest, PauseRequest
+from maa_battle_mcp.models import (
+    BoundedStepRequest,
+    DeployRequest,
+    OperationRequest,
+    PauseRequest,
+)
 from maa_battle_mcp.native import NativeError
 from maa_battle_mcp.service import BattleError, BattleService
 
@@ -100,6 +105,55 @@ async def test_cancel_stops_native_worker(connected):
         await task
     assert backend.aborted
     assert service.operation(request.session_id, "1")["status"] == "outcome_unknown"
+
+
+async def test_cancelled_step_finishes_cleanup_before_releasing_controller(connected):
+    service, backend = connected
+    backend.block = True
+    request = OperationRequest(
+        session_id=service.session_id, operation_id="step-1", timeout_ms=10_000
+    )
+    task = asyncio.create_task(
+        service.command(
+            "step",
+            request,
+            {"action": "skill", "unit_id": "unit", "adopt_manual_pause": False},
+        )
+    )
+    assert await asyncio.to_thread(backend.entered.wait, 2)
+    task.cancel()
+    await asyncio.sleep(0)
+    assert not task.done()
+    assert not backend.aborted
+    backend.release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert service.backend is backend
+    assert service.operation(request.session_id, "step-1")["status"] == "succeeded"
+    assert backend.calls[-1][2] == 20
+
+
+async def test_close_waits_for_bounded_step_cleanup(connected):
+    service, backend = connected
+    backend.block = True
+    request = OperationRequest(
+        session_id=service.session_id, operation_id="step-close", timeout_ms=10_000
+    )
+    task = asyncio.create_task(
+        service.command(
+            "step",
+            request,
+            {"action": "skill", "unit_id": "unit", "adopt_manual_pause": False},
+        )
+    )
+    assert await asyncio.to_thread(backend.entered.wait, 2)
+    closing = asyncio.create_task(service.close())
+    await asyncio.sleep(0)
+    assert not backend.aborted
+    backend.release.set()
+    assert (await task)["status"] == "succeeded"
+    assert (await closing)["status"] == "closed"
+    assert backend.aborted
 
 
 async def test_busy_rejects_and_close_interrupts(connected):
@@ -222,3 +276,27 @@ def test_unknown_fields_and_boolean_coercion_are_rejected():
         OperationRequest(session_id="s", operation_id="o", script="click")
     with pytest.raises(ValidationError):
         PauseRequest(session_id="s", operation_id="o", paused="false")
+
+
+def test_bounded_step_requires_complete_action_arguments():
+    with pytest.raises(ValidationError, match="requires location and direction"):
+        BoundedStepRequest(
+            session_id="s", operation_id="o", action="deploy", unit_id="u"
+        )
+    with pytest.raises(ValidationError, match="only valid for deploy"):
+        BoundedStepRequest(
+            session_id="s",
+            operation_id="o",
+            action="skill",
+            unit_id="u",
+            location=[1, 2],
+            direction="Left",
+        )
+    with pytest.raises(ValidationError):
+        BoundedStepRequest(
+            session_id="s",
+            operation_id="o",
+            timeout_ms=10_001,
+            action="skill",
+            unit_id="u",
+        )

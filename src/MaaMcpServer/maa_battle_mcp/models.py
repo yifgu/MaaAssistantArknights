@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Identifier = Annotated[str, Field(min_length=1, max_length=128)]
 Timeout = Annotated[int, Field(ge=1, le=30_000)]
@@ -41,6 +41,26 @@ class DeployRequest(UnitRequest):
 
 class PauseRequest(OperationRequest):
     paused: bool
+
+
+class BoundedStepRequest(OperationRequest):
+    timeout_ms: Annotated[int, Field(ge=1, le=10_000)] = 10_000
+    action: Literal["deploy", "retreat", "skill"]
+    unit_id: Identifier
+    adopt_manual_pause: bool = False
+    location: Annotated[list[Coordinate], Field(min_length=2, max_length=2)] | None = (
+        None
+    )
+    direction: Literal["Right", "Down", "Left", "Up", "None"] | None = None
+
+    @model_validator(mode="after")
+    def validate_action_args(self):
+        if self.action == "deploy":
+            if self.location is None or self.direction is None:
+                raise ValueError("deploy requires location and direction")
+        elif self.location is not None or self.direction is not None:
+            raise ValueError("location and direction are only valid for deploy")
+        return self
 
 
 class IntelligenceConfig(StrictModel):

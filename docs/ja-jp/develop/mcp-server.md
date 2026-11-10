@@ -148,9 +148,26 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 
 `battle_retreat` と `battle_use_skill` は `location` と `direction` を省いた同じ形式です。新しい操作には新しい `operation_id` を使います。同一リクエストの再送は保存済み結果を返し、同じ ID で引数を変えると拒否されます。コスト不足や再配置待ちは即座に失敗し、無期限には待機しません。画像ツールは同じフレームの PNG と観測をクライアントのマルチモーダルモデルに返します。サーバー自身がクラウドモデルを呼び出すことはありません。
 
-`outcome_unknown` は MCP の `isError=true` になります。`helper_returned=true` でもゲーム内での成功は保証されません。再撮影して確認し、無条件に再試行しないでください。配置位置の情報源は `action_history_unverified`、敵の状態は null です。モデルによる状態の直接上書きには対応しません。一時停止要求は停止確認と同じではなく、再開は本サーバーが要求した停止に限定されます。
+単一の戦術操作には、事前検証、必要な再開、操作、操作直後の撮影、一時停止確認を 1 つの Core コマンドで行う `battle_step` を優先してください。
 
-`timeout_ms` は 1–30000 です。期限切れやキャンセル時は worker を終了し、セッションを無効化して不明な結果を保存します。`battle_close` は操作を中断しますが、**ゲームを一時停止・終了しません**。`battle_get_operation` で永続化された結果を取得できます。ログと `operations.sqlite3` は `--user-dir` に保存され、明示的な撮影画像は各戦闘につき直近 128 枚を保持します。古いセッション、ログ、データベースは定期的に整理してください。
+```json
+{
+  "request": {
+    "session_id": "replace-with-session-id",
+    "operation_id": "step-001",
+    "action": "skill",
+    "unit_id": "replace-with-observed-unit-id",
+    "adopt_manual_pause": false,
+    "timeout_ms": 10000
+  }
+}
+```
+
+`action` は `deploy`、`retreat`、`skill` のいずれかです。配置には `location` と `direction` も必要です。手動一時停止は既定では引き継ぎません。再開するには `adopt_manual_pause=true` と新しい画像による一時停止確認が必要です。1 回の呼び出しで実行する操作は 1 つだけです。操作境界の画像を取得してから一時停止を要求し、新しい画像と `pause_verified` を返します。クライアント要求がキャンセルされても、サービスは準備済みの一時停止処理が終わるまで待機します。worker 自体が失敗した場合は、一時停止状態が不明であることを明示します。`battle_step` の `timeout_ms` 上限は 10000 です。
+
+`battle_identify` は `identified_count`、`unresolved_count`、`ambiguous_count` とカードごとの `identity_reason` を返します。空の名前を持つキャッシュ項目が詳細 OCR を抑制することはなくなりました。その他の操作が `outcome_unknown` を返すと MCP の `isError=true` になります。`helper_returned=true` や `action_returned=true` でもゲーム内の成功は保証されません。再撮影して確認し、無条件に再試行しないでください。配置位置の情報源は `action_history_unverified`、敵の状態は null です。モデルによる状態の直接上書きには対応しません。単独の一時停止要求は停止確認と同じではなく、再開は本サーバーが要求した停止に限定されます。
+
+通常コマンドの `timeout_ms` は 1–30000、`battle_step` は最大 10000 です。通常コマンドの期限切れやキャンセル時は worker を終了し、セッションを無効化して不明な結果を保存します。step のキャンセル時は準備済みの一時停止処理を待ちますが、worker の障害時には一時停止を確認できない場合があります。`battle_close` は通常コマンドを中断し、step の実行中は一時停止処理の完了を待ってから閉じます。ただし、それ自体がゲームを一時停止・終了させるわけではありません。`battle_get_operation` で永続化された結果を取得できます。ログと `operations.sqlite3` は `--user-dir` に保存され、明示的な撮影画像は各戦闘につき直近 128 枚を保持します。古いセッション、ログ、データベースは定期的に整理してください。
 
 ## 任意の情報サーバー
 
@@ -171,4 +188,4 @@ PRTS には `{"provider":"prts","command":"prts-mcp","region":"cn"}` を使用�
 
 `AsstAppendTask(handle, "BattleControl", {"stage_name":"main_01-07","session_id":"unique-id"})` で初期化し、`AsstStart` の後に `SubTaskExtraInfo` の `what="BattleControlReady"`（プロトコルバージョン 1）を待ちます。`AsstSetTaskParams` で `session_id`、`command_id`、`action`、`args`、`timeout_ms` を送信し、`what="BattleControlResult"` を待ちます。同時に受け付けるコマンドは 1 件だけです。
 
-アクションは `observe`、`capture`、`map`、`identify`、`deploy`、`retreat`、`skill`、`set_paused` です。引数更新はキューへの追加のみで、端末操作は Core のタスクスレッドで実行します。C ABI 単体では低レベル I/O の終了期限を保証できないため、ネイティブクライアントには外部 watchdog と重複排除が必要です。MCP サーバーはプロセス単位の watchdog を提供します。操作後の自動成功確認、反復実験、最適化は今後の対応です。
+アクションは `observe`、`capture`、`map`、`identify`、`deploy`、`retreat`、`skill`、`set_paused`、`step` です。`step` は事前検証済みの戦術操作を 1 つ受け付け、直後に撮影して一時停止を要求し、確認後に新しい一時停止画像を返します。端末 I/O または MCP プロセス自体が失敗した場合の一時停止は保証できません。引数更新はキューへの追加のみで、端末操作は Core のタスクスレッドで実行します。C ABI 単体では低レベル I/O の終了期限を保証できないため、ネイティブクライアントには外部 watchdog と重複排除が必要です。MCP サーバーはプロセス単位の watchdog を提供します。反復実験と最適化は今後の対応です。

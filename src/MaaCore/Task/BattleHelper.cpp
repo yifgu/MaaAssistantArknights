@@ -122,6 +122,9 @@ std::optional<asst::BestMatcher::Result>
     }
 
     for (const auto& [name, avatar] : avatar_cache) {
+        if (BattleData.is_name_invalid(oper.role, name)) {
+            continue;
+        }
         avatar_analyzer.append_templ(name, avatar);
     }
 
@@ -163,14 +166,15 @@ bool asst::BattleHelper::update_deployment_(
     for (auto& oper : cur_opers) {
         bool is_analyzed = false;
         if (!old_deployment_opers.empty()) {
-            auto avatar = old_deployment_opers | std::views::filter([&](const battle::DeploymentOper& temp_oper) {
-                              return temp_oper.role == oper.role;
-                          }) |
-                          std::views::transform([&](const battle::DeploymentOper& temp_oper) {
-                              return std::make_pair(temp_oper.name, temp_oper.avatar);
-                          });
+            auto avatar =
+                old_deployment_opers | std::views::filter([&](const battle::DeploymentOper& temp_oper) {
+                    return temp_oper.role == oper.role && !BattleData.is_name_invalid(temp_oper.role, temp_oper.name);
+                }) |
+                std::views::transform([&](const battle::DeploymentOper& temp_oper) {
+                    return std::make_pair(temp_oper.name, temp_oper.avatar);
+                });
             const auto& result = analyze_oper_with_cache(oper, avatar);
-            if (result) {
+            if (result && !BattleData.is_name_invalid(oper.role, result->templ_info.name)) {
                 set_oper_name(oper, result->templ_info.name);
                 remove_cooling_from_battlefield(oper);
                 is_analyzed = true;
@@ -179,7 +183,7 @@ bool asst::BattleHelper::update_deployment_(
         if (!is_analyzed) {
             // 之前的干员都没匹配上，那就把所有的干员都加进去
             const auto& result2 = analyze_oper_with_cache(oper, AvatarCache.get_avatars(oper.role));
-            if (result2) {
+            if (result2 && !BattleData.is_name_invalid(oper.role, result2->templ_info.name)) {
                 set_oper_name(oper, result2->templ_info.name);
                 remove_cooling_from_battlefield(oper);
             }

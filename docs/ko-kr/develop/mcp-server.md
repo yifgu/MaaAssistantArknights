@@ -148,9 +148,26 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 
 `battle_retreat`와 `battle_use_skill`은 `location`, `direction`을 제외한 같은 형식입니다. 새로운 행동마다 새 `operation_id`를 사용합니다. 같은 요청을 재전송하면 저장된 결과만 반환하며 동일 ID의 인수가 달라지면 거부됩니다. 비용 부족이나 재배치 대기는 즉시 실패하며 무한히 기다리지 않습니다. 증거 도구는 같은 프레임의 PNG와 관측을 클라이언트의 멀티모달 모델에 반환합니다. 서버가 클라우드 모델을 자동 호출하지는 않습니다.
 
-`outcome_unknown`은 MCP `isError=true`로 반환됩니다. `helper_returned=true`여도 실제 게임 내 성공을 뜻하지 않습니다. 새 스크린샷으로 확인하고 무작정 재시도하지 마세요. 위치 출처는 `action_history_unverified`, 적 상태는 null이며 모델의 직접 상태 덮어쓰기는 지원하지 않습니다. 일시 정지 요청은 정지 확인과 다르며 재개는 이 서버가 요청한 정지에만 허용됩니다.
+단일 전술 행동은 사전 검사, 필요한 재개, 행동, 직후 캡처, 일시 정지 검증을 하나의 Core 명령으로 처리하는 `battle_step`을 우선 사용하세요.
 
-`timeout_ms`는 1–30000입니다. 시간 초과나 취소 시 worker를 종료하고 세션을 무효화하며 알 수 없는 결과를 저장합니다. `battle_close`는 제어를 중단하지만 **게임을 일시 정지하거나 종료하지 않습니다**. `battle_get_operation`으로 저장된 결과를 조회합니다. 로그와 `operations.sqlite3`는 `--user-dir`에 있으며 전투별로 최근 명시적 캡처 128장을 보관합니다. 오래된 세션, 로그, 데이터베이스는 주기적으로 직접 정리하세요.
+```json
+{
+  "request": {
+    "session_id": "replace-with-session-id",
+    "operation_id": "step-001",
+    "action": "skill",
+    "unit_id": "replace-with-observed-unit-id",
+    "adopt_manual_pause": false,
+    "timeout_ms": 10000
+  }
+}
+```
+
+`action`은 `deploy`, `retreat`, `skill` 중 하나입니다. 배치에는 `location`과 `direction`도 필요합니다. 수동 일시 정지는 기본적으로 인계하지 않습니다. 재개하려면 `adopt_manual_pause=true`와 새로운 스크린샷으로 확인된 일시 정지가 필요합니다. 호출당 행동은 최대 하나입니다. 행동 경계 화면을 캡처하고 일시 정지를 요청한 뒤, 새로운 화면과 `pause_verified`를 반환합니다. 클라이언트 요청이 취소되어도 서비스는 준비된 일시 정리 단계가 끝날 때까지 기다립니다. worker 자체가 실패하면 일시 정지 상태를 알 수 없다고 명시합니다. `battle_step`의 `timeout_ms` 상한은 10000입니다.
+
+`battle_identify`는 `identified_count`, `unresolved_count`, `ambiguous_count`와 카드별 `identity_reason`을 반환합니다. 이름이 빈 캐시 항목은 더 이상 상세 OCR을 억제하지 않습니다. 다른 행동이 `outcome_unknown`을 반환하면 MCP `isError=true`이며 `helper_returned=true` 또는 `action_returned=true`도 게임 내 성공을 증명하지 않습니다. 새 증거를 확인하고 무작정 재시도하지 마세요. 위치 출처는 `action_history_unverified`, 적 상태는 null이며 모델의 직접 상태 덮어쓰기는 지원하지 않습니다. 별도의 일시 정지 요청은 정지 확인이 아니며 재개는 이 서버가 요청한 정지에만 허용됩니다.
+
+일반 명령의 `timeout_ms`는 1–30000이고 `battle_step`은 최대 10000입니다. 일반 명령 시간 초과나 취소 시 worker를 종료하고 세션을 무효화하며 알 수 없는 결과를 저장합니다. step 취소 시 준비된 일시 정지 정리가 끝날 때까지 기다리지만, worker 장애로 일시 정지를 확인하지 못할 수 있습니다. `battle_close`는 일반 명령을 중단하며 step 실행 중에는 일시 정지 정리가 끝날 때까지 기다린 뒤 닫습니다. 단, 이 작업 자체가 게임을 일시 정지하거나 종료하지는 않습니다. `battle_get_operation`으로 저장된 결과를 조회합니다. 로그와 `operations.sqlite3`는 `--user-dir`에 있으며 전투별로 최근 명시적 캡처 128장을 보관합니다. 오래된 세션, 로그, 데이터베이스는 주기적으로 직접 정리하세요.
 
 ## 선택적 정보 서버
 
@@ -171,4 +188,4 @@ PRTS는 `{"provider":"prts","command":"prts-mcp","region":"cn"}`으로 설정할
 
 `AsstAppendTask(handle, "BattleControl", {"stage_name":"main_01-07","session_id":"unique-id"})`로 초기화하고 `AsstStart`를 호출한 뒤 `SubTaskExtraInfo`의 `what="BattleControlReady"`(프로토콜 버전 1)를 기다립니다. `AsstSetTaskParams`에 `session_id`, `command_id`, `action`, `args`, `timeout_ms`를 전달하고 `what="BattleControlResult"`를 기다립니다. 한 번에 명령 하나만 허용하므로 콜백을 받은 뒤 다음 명령을 전송하세요.
 
-행동 이름은 `observe`, `capture`, `map`, `identify`, `deploy`, `retreat`, `skill`, `set_paused`입니다. 인수 갱신은 큐에 추가만 하며 기기 조작은 Core 작업 스레드에서 실행합니다. C ABI만으로는 하위 I/O의 반환 기한을 보장할 수 없어 네이티브 호출자는 외부 watchdog과 중복 방지를 구현해야 합니다. MCP 서버는 프로세스 수준 watchdog을 제공합니다. 행동 후 자동 성공 확인, 반복 실험, 최적화는 후속 구현 범위입니다.
+행동 이름은 `observe`, `capture`, `map`, `identify`, `deploy`, `retreat`, `skill`, `set_paused`, `step`입니다. `step`은 사전 검사된 전술 행동 하나를 받고 즉시 캡처한 뒤 일시 정지를 요청하고, 확인 후 새 일시 정지 화면을 반환합니다. 기기 I/O 또는 MCP 프로세스 자체가 실패하는 경우에는 일시 정지를 보장할 수 없습니다. 인수 갱신은 큐에 추가만 하며 기기 조작은 Core 작업 스레드에서 실행합니다. C ABI만으로는 하위 I/O의 반환 기한을 보장할 수 없어 네이티브 호출자는 외부 watchdog과 중복 방지를 구현해야 합니다. MCP 서버는 프로세스 수준 watchdog을 제공합니다. 반복 실험과 최적화는 후속 구현 범위입니다.

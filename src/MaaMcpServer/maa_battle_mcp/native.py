@@ -195,9 +195,12 @@ class NativeCore:
                 ),
                 "BattleControl command submission",
             )
+            callback_timeout = payload["timeout_ms"] / 1000
+            if payload["action"] == "step":
+                callback_timeout += 10
             return self._wait(
                 "BattleControlResult",
-                payload["timeout_ms"] / 1000,
+                callback_timeout,
                 payload["command_id"],
             )
         raise NativeError(f"Unsupported worker operation: {operation}")

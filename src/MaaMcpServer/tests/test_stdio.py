@@ -29,9 +29,10 @@ async def test_stdio_handshake_tools_and_errors(tmp_path):
         async with ClientSession(read, write) as session:
             await session.initialize()
             tools = {tool.name: tool for tool in (await session.list_tools()).tools}
-            assert len(tools) == 14
+            assert len(tools) == 15
             assert tools["battle_observe"].annotations.readOnlyHint is True
             assert tools["battle_identify"].annotations.readOnlyHint is False
+            assert tools["battle_step"].annotations.readOnlyHint is False
             status = await session.call_tool("battle_status")
             assert status.structuredContent["connected"] is False
             observe = await session.call_tool(
@@ -51,6 +52,18 @@ async def test_stdio_handshake_tools_and_errors(tmp_path):
                 },
             )
             assert invalid.isError
+            invalid_step = await session.call_tool(
+                "battle_step",
+                {
+                    "request": {
+                        "session_id": "s",
+                        "operation_id": "o",
+                        "action": "deploy",
+                        "unit_id": "u",
+                    }
+                },
+            )
+            assert invalid_step.isError
             missing_intel = await session.call_tool(
                 "intel_query", {"kind": "stage", "identifier": "main_01-07"}
             )
