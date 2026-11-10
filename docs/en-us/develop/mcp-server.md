@@ -78,11 +78,12 @@ uv run --project src/MaaMcpServer ruff check src/MaaMcpServer
 uv run --project src/MaaMcpServer ruff format --check src/MaaMcpServer
 ```
 
-The actual Debug Core task-registration, input-validation, callback, and map-projection smoke test also needs no device:
+The actual Debug Core task-registration, input-validation, callback, and map-projection smoke tests also need no device. Synthetic-frame tests run the real Core with a local fixture transport instead of ADB to cover paused identification, cancellation, timestamp order, PNG association, and replay:
 
 ```bash
 MAA_MCP_NATIVE_CORE="$PWD/build-mcp/install" \
-  uv run --project src/MaaMcpServer pytest src/MaaMcpServer/tests/test_native.py -q
+  uv run --project src/MaaMcpServer pytest \
+  src/MaaMcpServer/tests/test_native.py src/MaaMcpServer/tests/test_battle_control.py -q
 ```
 
 In PowerShell, first set `$env:MAA_MCP_NATIVE_CORE="$PWD/build-mcp/install"`, then run the same pytest command. Set `MAA_MCP_RESOURCE_DIR` to the resource parent if it differs. Without the variable this test explicitly skips; passing offline checks does not establish in-game correctness.
@@ -131,6 +132,8 @@ The process waits for an MCP client; it does not serve a web page or automatical
 
 Call `battle_connect`, `battle_attach(stage_name="main_01-07")`, `battle_capture_evidence`, then `battle_observe`. The stage ID must match the screen: binding is caller-supplied, not recognized. `battle_get_map` returns static tiles and both screen projections. Unknown names are null. `battle_identify` actively opens details and requests a pause; inspect evidence afterward and explicitly resume with `battle_set_paused(paused=false)`.
 
+For a fresh session attached to a manually paused battle, call `battle_identify` with `request.adopt_manual_pause=true` to explicitly authorize adoption without resuming. This strict boolean defaults to false; omission still rejects an unowned pause. Core first requires a recognized battle frame with no running button; unrecognized screens cannot be adopted. Identification only inspects cards while paused and never resumes, including partial OCR or cancellation. A completed identification returns `pause_verified`, `safe_state`, and a final same-frame `snapshot`/`image_path` with PNG content, even for partial identification. Evidence-write failures are explicit in `evidence_error`; cancellation or worker failure can prevent final evidence. No external ADB tap is needed for cold initialization.
+
 Deployment request, substituting the returned session and observed unit IDs; tool arguments contain a `request` object:
 
 ```json
@@ -165,7 +168,9 @@ For a single tactical action, prefer `battle_step`, which performs preflight, an
 
 `action` can be `deploy`, `retreat`, or `skill`; deployment also requires `location` and `direction`. Manual pauses are not adopted by default; resuming one requires `adopt_manual_pause=true` and fresh screenshot confirmation. Each call executes at most one action. It captures the action boundary, requests a pause, then returns a fresh frame and `pause_verified`. If the client request is cancelled, the service waits for this prepared cleanup to finish. If the worker itself fails, the result explicitly reports an unknown pause state. `battle_step` limits `timeout_ms` to 10000.
 
-`battle_identify` returns `identified_count`, `unresolved_count`, `ambiguous_count`, and per-card `identity_reason`; blank-name cache entries no longer suppress detail OCR. For other actions, `outcome_unknown` sets MCP `isError=true`; neither `helper_returned=true` nor `action_returned=true` proves in-game success. Inspect evidence instead of blindly retrying. Positions have `action_history_unverified` provenance, enemies are null, and model-supplied state overwrites are not supported. A standalone pause request is not confirmation; resume is guarded to pauses requested by this server.
+`captured_at_ms` records the host's Unix time in milliseconds immediately after image acquisition, before analysis; it is not the device's render time. `capture_time_snapshot` stays paired with `capture_image_path` (action boundary), and `return_time_snapshot` with `return_image_path` (later pause verification). MCP image content remains return frame first, boundary frame second. `observation_id` counts analyses, not captures, so the boundary observation can have the larger ID despite the earlier timestamp. Wall-clock adjustments can affect time differences; these timestamps are not a hard running-time budget. An identical operation replay preserves the original timestamps and paths; a fresh capture gets its own acquisition timestamp.
+
+`battle_identify` returns `identified_count`, `unresolved_count`, `ambiguous_count`, and per-card `identity_reason`; blank-name cache entries no longer suppress detail OCR. For other actions, `outcome_unknown` sets MCP `isError=true`; neither `helper_returned=true` nor `action_returned=true` proves in-game success. Inspect evidence instead of blindly retrying. Positions have `action_history_unverified` provenance, enemies are null, and model-supplied state overwrites are not supported. A standalone pause request is not confirmation; resume is guarded to pauses requested or explicitly adopted by this server.
 
 Ordinary commands allow `timeout_ms` 1–30000; `battle_step` is capped at 10000. An ordinary timeout or cancellation terminates the worker, invalidates the session, and persists an unknown outcome. A cancelled step waits for its prepared pause cleanup, but worker failure can still prevent pause verification. `battle_close` interrupts ordinary commands; during a step it waits for pause cleanup before closing, but does not itself pause or exit the game. Query durable results with `battle_get_operation`. Logs and `operations.sqlite3` live in `--user-dir`; each battle retains its latest 128 explicit captures. Periodically clean old sessions, logs, and the database yourself.
 
@@ -189,3 +194,5 @@ For PRTS use `{"provider":"prts","command":"prts-mcp","region":"cn"}`; the adapt
 Initialize with `AsstAppendTask(handle, "BattleControl", {"stage_name":"main_01-07","session_id":"unique-id"})`, call `AsstStart`, and await `SubTaskExtraInfo` with `what="BattleControlReady"` (protocol version 1). Submit `session_id`, `command_id`, `action`, `args`, and `timeout_ms` through `AsstSetTaskParams`; await `what="BattleControlResult"`. Only one command is accepted at a time; wait for its callback before submitting another.
 
 Actions are `observe`, `capture`, `map`, `identify`, `deploy`, `retreat`, `skill`, `set_paused`, and `step`. `step` accepts one preflighted tactical action, captures immediately afterward, requests a pause, then verifies and returns a fresh paused frame; it cannot guarantee a pause if device I/O or the MCP process itself fails. Parameter updates only enqueue work; device access stays on the Core task thread. Native clients must supply their own external watchdog and deduplication: the C ABI alone cannot guarantee a blocking I/O deadline. The MCP server supplies that process-level watchdog. Experiments and optimization are future work.
+
+`identify` accepts the optional strict boolean `args.adopt_manual_pause` (default false). Explicit adoption claims the recognized pause without toggling it; it does not authorize resume.

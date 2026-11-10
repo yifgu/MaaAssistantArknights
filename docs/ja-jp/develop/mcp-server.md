@@ -78,11 +78,12 @@ uv run --project src/MaaMcpServer ruff check src/MaaMcpServer
 uv run --project src/MaaMcpServer ruff format --check src/MaaMcpServer
 ```
 
-実際の Debug Core によるタスク登録、引数の拒否、コールバック、マップ投影の確認も端末なしで実行できます。
+実際の Debug Core によるタスク登録、引数の拒否、コールバック、マップ投影の確認も端末なしで実行できます。合成画像テストは ADB の代わりにローカルの模擬通信で実際の Core を動かし、停止中の認識、キャンセル、時刻順序、PNG の対応関係、再送を確認します。
 
 ```bash
 MAA_MCP_NATIVE_CORE="$PWD/build-mcp/install" \
-  uv run --project src/MaaMcpServer pytest src/MaaMcpServer/tests/test_native.py -q
+  uv run --project src/MaaMcpServer pytest \
+  src/MaaMcpServer/tests/test_native.py src/MaaMcpServer/tests/test_battle_control.py -q
 ```
 
 PowerShell では先に `$env:MAA_MCP_NATIVE_CORE="$PWD/build-mcp/install"` を設定し、同じ pytest コマンドを実行します。リソースが別の場所にある場合は、その親を `MAA_MCP_RESOURCE_DIR` に設定します。環境変数がなければ明示的にスキップされます。オフラインテストの成功は実機動作の保証ではありません。
@@ -131,6 +132,8 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 
 `battle_connect`、`battle_attach(stage_name="main_01-07")`、`battle_capture_evidence`、`battle_observe` の順で呼び出します。ステージ ID は画面と一致している必要があります。マップの指定は呼び出し側の責任で、自動認識ではありません。`battle_get_map` は静的なマスと 2 種類の画面投影を返します。不明な名前は null です。`battle_identify` は詳細画面を開いて認識し、一時停止を要求します。実行後に画像を確認してから `battle_set_paused(paused=false)` で明示的に再開してください。
 
+手動一時停止中の戦闘に新しいセッションを接続した場合、`battle_identify` に `request.adopt_manual_pause=true` を指定すると、再開せずに停止状態の引き継ぎを明示的に許可できます。厳密な boolean 型で、既定値は false です。省略すると管理下にない停止は引き続き拒否されます。Core はまず戦闘画面であり、実行中の一時停止ボタンが見えないことを確認します。認識できない画面は引き継げません。カードの確認は停止中に行い、OCR が不完全な場合やキャンセル時も自動再開しません。処理完了時は部分認識でも `pause_verified`、`safe_state`、最後の同一フレームの `snapshot` / `image_path` と PNG を返します。保存失敗は `evidence_error` で明示され、キャンセルや worker 障害では最終画像を返せない場合があります。初回認識のための外部 ADB タップは不要です。
+
 配置リクエストの例です。セッション ID と観測されたユニット ID を置き換えます。ツール引数には `request` オブジェクトが必要です。
 
 ```json
@@ -165,7 +168,9 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 
 `action` は `deploy`、`retreat`、`skill` のいずれかです。配置には `location` と `direction` も必要です。手動一時停止は既定では引き継ぎません。再開するには `adopt_manual_pause=true` と新しい画像による一時停止確認が必要です。1 回の呼び出しで実行する操作は 1 つだけです。操作境界の画像を取得してから一時停止を要求し、新しい画像と `pause_verified` を返します。クライアント要求がキャンセルされても、サービスは準備済みの一時停止処理が終わるまで待機します。worker 自体が失敗した場合は、一時停止状態が不明であることを明示します。`battle_step` の `timeout_ms` 上限は 10000 です。
 
-`battle_identify` は `identified_count`、`unresolved_count`、`ambiguous_count` とカードごとの `identity_reason` を返します。空の名前を持つキャッシュ項目が詳細 OCR を抑制することはなくなりました。その他の操作が `outcome_unknown` を返すと MCP の `isError=true` になります。`helper_returned=true` や `action_returned=true` でもゲーム内の成功は保証されません。再撮影して確認し、無条件に再試行しないでください。配置位置の情報源は `action_history_unverified`、敵の状態は null です。モデルによる状態の直接上書きには対応しません。単独の一時停止要求は停止確認と同じではなく、再開は本サーバーが要求した停止に限定されます。
+`captured_at_ms` は画像取得直後、解析前に記録したホストの Unix ミリ秒時刻で、端末の描画時刻ではありません。`capture_time_snapshot` は `capture_image_path`（操作境界）、`return_time_snapshot` は `return_image_path`（その後の停止確認）に対応します。MCP 画像は従来どおり返却時の画像、操作境界の画像の順です。`observation_id` は取得順ではなく解析順に増加するため、操作境界の ID が大きくても時刻は早い場合があります。システム時計の調整は時間差に影響し、これらの時刻は実行時間の厳密な上限ではありません。同一操作の再送は元の時刻とパスを保持し、新しい撮影にはその取得時刻を記録します。
+
+`battle_identify` は `identified_count`、`unresolved_count`、`ambiguous_count` とカードごとの `identity_reason` を返します。空の名前を持つキャッシュ項目が詳細 OCR を抑制することはなくなりました。その他の操作が `outcome_unknown` を返すと MCP の `isError=true` になります。`helper_returned=true` や `action_returned=true` でもゲーム内の成功は保証されません。再撮影して確認し、無条件に再試行しないでください。配置位置の情報源は `action_history_unverified`、敵の状態は null です。モデルによる状態の直接上書きには対応しません。単独の一時停止要求は停止確認と同じではなく、再開は本サーバーが要求または明示的に引き継いだ停止に限定されます。
 
 通常コマンドの `timeout_ms` は 1–30000、`battle_step` は最大 10000 です。通常コマンドの期限切れやキャンセル時は worker を終了し、セッションを無効化して不明な結果を保存します。step のキャンセル時は準備済みの一時停止処理を待ちますが、worker の障害時には一時停止を確認できない場合があります。`battle_close` は通常コマンドを中断し、step の実行中は一時停止処理の完了を待ってから閉じます。ただし、それ自体がゲームを一時停止・終了させるわけではありません。`battle_get_operation` で永続化された結果を取得できます。ログと `operations.sqlite3` は `--user-dir` に保存され、明示的な撮影画像は各戦闘につき直近 128 枚を保持します。古いセッション、ログ、データベースは定期的に整理してください。
 
@@ -189,3 +194,5 @@ PRTS には `{"provider":"prts","command":"prts-mcp","region":"cn"}` を使用�
 `AsstAppendTask(handle, "BattleControl", {"stage_name":"main_01-07","session_id":"unique-id"})` で初期化し、`AsstStart` の後に `SubTaskExtraInfo` の `what="BattleControlReady"`（プロトコルバージョン 1）を待ちます。`AsstSetTaskParams` で `session_id`、`command_id`、`action`、`args`、`timeout_ms` を送信し、`what="BattleControlResult"` を待ちます。同時に受け付けるコマンドは 1 件だけです。
 
 アクションは `observe`、`capture`、`map`、`identify`、`deploy`、`retreat`、`skill`、`set_paused`、`step` です。`step` は事前検証済みの戦術操作を 1 つ受け付け、直後に撮影して一時停止を要求し、確認後に新しい一時停止画像を返します。端末 I/O または MCP プロセス自体が失敗した場合の一時停止は保証できません。引数更新はキューへの追加のみで、端末操作は Core のタスクスレッドで実行します。C ABI 単体では低レベル I/O の終了期限を保証できないため、ネイティブクライアントには外部 watchdog と重複排除が必要です。MCP サーバーはプロセス単位の watchdog を提供します。反復実験と最適化は今後の対応です。
+
+`identify` は省略可能な厳密な boolean 引数 `args.adopt_manual_pause`（既定値 false）を受け付けます。明示的な引き継ぎは認識済みの停止を管理下に置くだけで、停止を切り替えたり、この認識操作による再開を許可したりするものではありません。

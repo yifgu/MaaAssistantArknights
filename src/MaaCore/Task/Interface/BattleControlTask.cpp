@@ -34,7 +34,10 @@ bool asst::BattleControlTask::validate_command(const json::value& params) const
         return false;
     }
     const auto& args = params.at("args");
-    if (action == "observe" || action == "identify" || action == "capture" || action == "map") {
+    if (action == "identify") {
+        return !args.contains("adopt_manual_pause") || args.find<bool>("adopt_manual_pause").has_value();
+    }
+    if (action == "observe" || action == "capture" || action == "map") {
         return true;
     }
     if (action == "step") {
@@ -215,14 +218,22 @@ json::value asst::BattleControlTask::map_info() const
     };
 }
 
-json::value asst::BattleControlTask::observe(const cv::Mat& image, bool active_identification, bool include_battlefield)
+asst::BattleControlTask::CapturedFrame asst::BattleControlTask::capture_frame()
 {
+    auto image = ctrler()->get_image();
+    const auto captured_at = std::chrono::system_clock::now();
+    return { std::move(image), captured_at };
+}
+
+json::value
+    asst::BattleControlTask::observe(const CapturedFrame& frame, bool active_identification, bool include_battlefield)
+{
+    const auto& image = frame.image;
     json::value snapshot = json::object {
         { "observation_id", std::to_string(++m_observation_id) },
         { "stage_id", m_map_data.key.stageId },
         { "captured_at_ms",
-          std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
-              .count() },
+          std::chrono::duration_cast<std::chrono::milliseconds>(frame.captured_at.time_since_epoch()).count() },
         { "in_battle", false },
         { "running_button_visible", false },
         { "pause_requested", m_pause_requested },
@@ -338,8 +349,9 @@ json::value asst::BattleControlTask::observe(const cv::Mat& image, bool active_i
     return snapshot;
 }
 
-json::value asst::BattleControlTask::save_evidence(const cv::Mat& image, json::value snapshot)
+json::value asst::BattleControlTask::save_evidence(const CapturedFrame& frame, json::value snapshot)
 {
+    const auto& image = frame.image;
     if (image.empty()) {
         return failure("screenshot_failed", "No image available");
     }
@@ -386,16 +398,16 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
             return result;
         }
 
-        cv::Mat final_image;
+        CapturedFrame final_frame;
         json::value final_snapshot;
         bool pause_verified = false;
-        final_image = ctrler()->get_image();
-        if (!final_image.empty() && check_pause_button(final_image)) {
+        final_frame = capture_frame();
+        if (!final_frame.image.empty() && check_pause_button(final_frame.image)) {
             pause();
         }
         for (int attempt = 0; attempt < 2; ++attempt) {
-            final_image = ctrler()->get_image();
-            final_snapshot = observe(final_image, false, false);
+            final_frame = capture_frame();
+            final_snapshot = observe(final_frame, false, false);
             if (!final_snapshot.at("in_battle").as_boolean()) {
                 break;
             }
@@ -411,7 +423,7 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
         result["pause_verified"] = pause_verified;
         result["safe_state"] = pause_verified ? "paused" : "unknown";
         result["snapshot"] = final_snapshot;
-        auto evidence = save_evidence(final_image, final_snapshot);
+        auto evidence = save_evidence(final_frame, final_snapshot);
         if (evidence.at("status").as_string() == "succeeded") {
             result["return_image_path"] = evidence.at("image_path");
         }
@@ -475,10 +487,10 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
         }
         m_pause_requested = true;
         pause();
-        const auto resumed_image = ctrler()->get_image();
-        const bool resumed_running = !resumed_image.empty() && check_pause_button(resumed_image);
+        const auto resumed_frame = capture_frame();
+        const bool resumed_running = !resumed_frame.image.empty() && check_pause_button(resumed_frame.image);
         if (!resumed_running) {
-            const auto resumed_snapshot = observe(resumed_image, false, false);
+            const auto resumed_snapshot = observe(resumed_frame, false, false);
             const bool pause_verified = resumed_snapshot.at("in_battle").as_boolean() &&
                                         !resumed_snapshot.at("running_button_visible").as_boolean();
             m_pause_requested = pause_verified;
@@ -512,18 +524,18 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
         }
     }
 
-    const auto capture_image = ctrler()->get_image();
-    const bool capture_running = !capture_image.empty() && check_pause_button(capture_image);
+    const auto boundary_frame = capture_frame();
+    const bool capture_running = !boundary_frame.image.empty() && check_pause_button(boundary_frame.image);
     if (capture_running) {
         pause();
     }
 
-    cv::Mat return_image;
+    CapturedFrame return_frame;
     json::value return_snapshot;
     bool pause_verified = false;
     for (int attempt = 0; attempt < 2; ++attempt) {
-        return_image = ctrler()->get_image();
-        return_snapshot = observe(return_image);
+        return_frame = capture_frame();
+        return_snapshot = observe(return_frame);
         if (!return_snapshot.at("in_battle").as_boolean()) {
             break;
         }
@@ -536,14 +548,14 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
         }
     }
     m_pause_requested = pause_verified;
-    auto capture_snapshot = observe(capture_image);
+    auto capture_snapshot = observe(boundary_frame);
     capture_snapshot["running_button_visible"] = capture_running;
     capture_snapshot["pause_requested"] = false;
-    auto capture_result = save_evidence(capture_image, capture_snapshot);
+    auto capture_result = save_evidence(boundary_frame, capture_snapshot);
     if (pause_verified) {
         return_snapshot["pause_requested"] = true;
     }
-    auto return_result = save_evidence(return_image, return_snapshot);
+    auto return_result = save_evidence(return_frame, return_snapshot);
     json::array evidence_errors;
     if (capture_result.at("status").as_string() == "failed") {
         evidence_errors.emplace_back(capture_result.at("error"));
@@ -574,10 +586,10 @@ json::value asst::BattleControlTask::execute(const Command& command)
     if (command.action == "map") {
         return json::object { { "status", "succeeded" }, { "map", map_info() } };
     }
-    auto image = ctrler()->get_image();
-    auto snapshot = observe(image, false, command.action != "step");
+    auto frame = capture_frame();
+    auto snapshot = observe(frame, false, command.action != "step");
     if (command.action == "capture") {
-        return save_evidence(image, std::move(snapshot));
+        return save_evidence(frame, std::move(snapshot));
     }
     if (command.action == "observe") {
         return json::object { { "status", "succeeded" }, { "snapshot", std::move(snapshot) } };
@@ -608,37 +620,42 @@ json::value asst::BattleControlTask::execute(const Command& command)
         }
     }
     else if (command.action == "identify") {
-        if (!running && !m_pause_requested) {
-            return failure("pause_state_unknown", "Identify requires a running battle or a server-requested pause");
+        if (!running && !m_pause_requested && !command.args.get("adopt_manual_pause", false)) {
+            return failure("pause_state_unknown", "Adopting a manual pause requires explicit authorization");
         }
+        auto finish_identification = [&](json::value result, bool pause_verified) {
+            m_pause_requested = pause_verified;
+            snapshot["pause_requested"] = m_pause_requested;
+            result["pause_verified"] = pause_verified;
+            result["safe_state"] = pause_verified ? "paused" : "unknown";
+            result["snapshot"] = snapshot;
+            auto evidence = save_evidence(frame, snapshot);
+            if (evidence.at("status").as_string() == "succeeded") {
+                result["image_path"] = evidence.at("image_path");
+            }
+            else {
+                result["evidence_error"] = evidence.at("error");
+            }
+            return result;
+        };
         if (running) {
             pause();
-            image = ctrler()->get_image();
-            snapshot = observe(image);
+            frame = capture_frame();
+            snapshot = observe(frame);
             if (snapshot.at("in_battle").as_boolean() && snapshot.at("running_button_visible").as_boolean()) {
                 pause();
-                image = ctrler()->get_image();
-                snapshot = observe(image);
+                frame = capture_frame();
+                snapshot = observe(frame);
             }
             if (!snapshot.at("in_battle").as_boolean() || snapshot.at("running_button_visible").as_boolean()) {
-                const bool pause_verified =
-                    snapshot.at("in_battle").as_boolean() && !snapshot.at("running_button_visible").as_boolean();
-                m_pause_requested = pause_verified;
-                return json::object {
-                    { "status", "outcome_unknown" },
-                    { "error",
-                      json::object {
-                          { "code", "pause_unverified" },
-                          { "message", "Identification was not started because pause could not be verified" },
-                      } },
-                    { "snapshot", std::move(snapshot) },
-                    { "pause_verified", pause_verified },
-                };
+                auto result =
+                    failure("pause_unverified", "Identification was not started because pause could not be verified");
+                result["status"] = "outcome_unknown";
+                return finish_identification(std::move(result), false);
             }
         }
         m_pause_requested = true;
-        image = ctrler()->get_image();
-        BattlefieldMatcher matcher(image);
+        BattlefieldMatcher matcher(frame.image);
         matcher.set_object_of_interest({ .deployment = true, .oper_cost = true });
         bool identified = false;
         if (auto result = matcher.analyze()) {
@@ -651,8 +668,8 @@ json::value asst::BattleControlTask::execute(const Command& command)
         cancel_oper_selection();
         bool pause_verified = false;
         for (int attempt = 0; attempt < 2; ++attempt) {
-            image = ctrler()->get_image();
-            snapshot = observe(image, true);
+            frame = capture_frame();
+            snapshot = observe(frame, true);
             if (!snapshot.at("in_battle").as_boolean()) {
                 break;
             }
@@ -664,32 +681,24 @@ json::value asst::BattleControlTask::execute(const Command& command)
                 pause();
             }
         }
-        m_pause_requested = pause_verified;
         if (!identified) {
-            return json::object {
-                { "status", "failed" },
-                { "error",
-                  json::object {
-                      { "code", "identification_failed" },
-                      { "message", "Deployment cards could not be analyzed" },
-                  } },
-                { "snapshot", std::move(snapshot) },
-                { "pause_verified", pause_verified },
-            };
+            return finish_identification(
+                failure("identification_failed", "Deployment cards could not be analyzed"),
+                pause_verified);
         }
-        return json::object {
-            { "status", pause_verified ? "succeeded" : "outcome_unknown" },
-            { "identification_status",
-              snapshot.at("unresolved_count").as_integer() == 0 && snapshot.at("ambiguous_count").as_integer() == 0
-                  ? "complete"
-                  : "partial" },
-            { "identified_count", snapshot.at("identified_count") },
-            { "unresolved_count", snapshot.at("unresolved_count") },
-            { "ambiguous_count", snapshot.at("ambiguous_count") },
-            { "deployment", snapshot.at("deployment") },
-            { "pause_verified", pause_verified },
-            { "snapshot", std::move(snapshot) },
-        };
+        return finish_identification(
+            json::object {
+                { "status", pause_verified ? "succeeded" : "outcome_unknown" },
+                { "identification_status",
+                  snapshot.at("unresolved_count").as_integer() == 0 && snapshot.at("ambiguous_count").as_integer() == 0
+                      ? "complete"
+                      : "partial" },
+                { "identified_count", snapshot.at("identified_count") },
+                { "unresolved_count", snapshot.at("unresolved_count") },
+                { "ambiguous_count", snapshot.at("ambiguous_count") },
+                { "deployment", snapshot.at("deployment") },
+            },
+            pause_verified);
     }
     else {
         if (!running || m_pause_requested) {
@@ -748,6 +757,6 @@ json::value asst::BattleControlTask::execute(const Command& command)
         { "status", "outcome_unknown" },
         { "helper_returned", sent },
         { "message", "Input may have been sent. Inspect fresh evidence; do not blindly retry." },
-        { "snapshot", observe(ctrler()->get_image()) },
+        { "snapshot", observe(capture_frame()) },
     };
 }

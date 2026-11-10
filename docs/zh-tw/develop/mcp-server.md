@@ -78,11 +78,12 @@ uv run --project src/MaaMcpServer ruff check src/MaaMcpServer
 uv run --project src/MaaMcpServer ruff format --check src/MaaMcpServer
 ```
 
-實際 Debug Core 的任務註冊、參數拒絕、回呼與地圖投影檢查也不需要裝置：
+實際 Debug Core 的任務註冊、參數拒絕、回呼與地圖投影檢查也不需要裝置。合成畫面測試以本機模擬傳輸代替 ADB 驅動真實 Core，涵蓋暫停識別、取消、時間戳順序、PNG 對應關係與重送：
 
 ```bash
 MAA_MCP_NATIVE_CORE="$PWD/build-mcp/install" \
-  uv run --project src/MaaMcpServer pytest src/MaaMcpServer/tests/test_native.py -q
+  uv run --project src/MaaMcpServer pytest \
+  src/MaaMcpServer/tests/test_native.py src/MaaMcpServer/tests/test_battle_control.py -q
 ```
 
 PowerShell 先設定 `$env:MAA_MCP_NATIVE_CORE="$PWD/build-mcp/install"`，再執行同一條 pytest 命令。資源不在安裝目錄時，另設 `MAA_MCP_RESOURCE_DIR` 為其父目錄。未設定環境變數時會明確跳過此測試；離線通過不代表實機行為已確認。
@@ -131,6 +132,8 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 
 依序呼叫 `battle_connect`、`battle_attach(stage_name="main_01-07")`、`battle_capture_evidence` 和 `battle_observe`。關卡 ID 必須符合實際畫面；地圖綁定由呼叫者提供，不是自動識別。`battle_get_map` 回傳靜態格子與兩種螢幕投影。未知名字回傳 null。需要主動識別時呼叫 `battle_identify`，它可能點開詳情並請求暫停；之後檢查截圖，再明確呼叫 `battle_set_paused(paused=false)` 恢復。
 
+新會話接入手動暫停的戰鬥時，可在 `battle_identify` 傳入 `request.adopt_manual_pause=true`，明確授權接管而不恢復戰鬥。此參數為嚴格布林值，預設 false；省略時仍拒絕未由本服務管理的暫停。Core 首先要求畫面被識別為戰鬥且未顯示運行中的暫停按鈕，無法識別的畫面不能接管。識別只在暫停時查看卡牌，即使 OCR 不完整或操作被取消也不會主動恢復。識別完成後回傳 `pause_verified`、`safe_state`、最終同影格的 `snapshot` / `image_path` 與 PNG 內容，部分識別同樣回傳；截圖儲存失敗透過 `evidence_error` 明示，取消或 worker 故障可能無法回傳最終證據。冷啟動不再需要外部 ADB 點擊。
+
 部署範例，請替換會話和單位 ID；工具參數有一層 `request`：
 
 ```json
@@ -165,7 +168,9 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 
 `action` 可為 `deploy`、`retreat` 或 `skill`；部署還須提供 `location` 和 `direction`。手動暫停預設不會接管；只有明確設定 `adopt_manual_pause=true` 並由新截圖確認暫停後才會恢復。每次最多執行一個動作；工具先取得動作邊界截圖，再請求暫停並回傳新截圖與 `pause_verified`。取消用戶端請求時，服務會等待命令完成清理。若 worker 本身失效，結果會明確回報暫停狀態未知。`battle_step` 的 `timeout_ms` 上限為 10000。
 
-`battle_identify` 會回傳 `identified_count`、`unresolved_count`、`ambiguous_count` 和各卡牌的 `identity_reason`；空名稱快取不再抑制詳情 OCR。其他動作回傳 `outcome_unknown` 時，MCP `isError=true`；即使 `helper_returned` 或 `action_returned` 為 true，也不代表遊戲內成功。必須截圖確認，不可盲目重試。場上位置標為 `action_history_unverified`，敵人狀態為 null；首版不接受模型直接覆寫狀態。單獨的暫停請求不代表已確認暫停，恢復僅允許針對本服務請求過的暫停。
+`captured_at_ms` 是取影格完成後、分析開始前記錄的主機 Unix 毫秒時間，不是裝置渲染時間。`capture_time_snapshot` 始終對應 `capture_image_path`（動作邊界），`return_time_snapshot` 對應 `return_image_path`（稍後的暫停驗證）；MCP 圖片內容仍按回傳影格、動作邊界影格排列。`observation_id` 按分析順序遞增而非取影格順序，因此動作邊界觀測的 ID 可能較大，但時間戳較早。系統時鐘調整會影響時間差，這些時間戳不構成運行時間硬限制。完全相同的操作重送保留原始時間戳與路徑，新截圖則記錄自己的取影格時間。
+
+`battle_identify` 會回傳 `identified_count`、`unresolved_count`、`ambiguous_count` 和各卡牌的 `identity_reason`；空名稱快取不再抑制詳情 OCR。其他動作回傳 `outcome_unknown` 時，MCP `isError=true`；即使 `helper_returned` 或 `action_returned` 為 true，也不代表遊戲內成功。必須截圖確認，不可盲目重試。場上位置標為 `action_history_unverified`，敵人狀態為 null；首版不接受模型直接覆寫狀態。單獨的暫停請求不代表已確認暫停，恢復僅允許針對本服務請求過或明確接管的暫停。
 
 一般命令的 `timeout_ms` 為 1–30000；`battle_step` 上限為 10000。一般命令逾時或取消會終止獨立 worker、使會話失效並保存未知結果；step 取消時會等待已準備的暫停清理，但 worker 失效時仍可能無法確認狀態。`battle_close` 可中斷一般命令；遇到 step 時會等待其暫停清理後關閉，但本身不負責暫停或退出遊戲。`battle_get_operation` 可查詢持久結果。日誌與 `operations.sqlite3` 位於 `--user-dir`；每場保留最近 128 張主動截圖。舊場次、日誌和資料庫需自行定期清理。
 
@@ -189,3 +194,5 @@ PRTS 可使用 `{"provider":"prts","command":"prts-mcp","region":"cn"}`；配接
 初始化 `AsstAppendTask(handle, "BattleControl", {"stage_name":"main_01-07","session_id":"unique-id"})` 後呼叫 `AsstStart`，等待 `SubTaskExtraInfo` 的 `what="BattleControlReady"`（協議版本 1）。之後透過 `AsstSetTaskParams` 傳入 `session_id`、`command_id`、`action`、`args`、`timeout_ms`，等待 `what="BattleControlResult"`。每次只允許一個命令，收到回呼後才可繼續投遞。
 
 動作名稱為 `observe`、`capture`、`map`、`identify`、`deploy`、`retreat`、`skill`、`set_paused`、`step`。`step` 每次只接受一個已預檢的戰術動作，並在動作後立即取影格、請求暫停、驗證並回傳暫停影格；它無法保證裝置底層 I/O 或整個 MCP 程序故障時一定暫停。更新參數只加入佇列，裝置操作均在 Core 任務執行緒執行。原生呼叫者仍須自行實作外部 watchdog 與去重；單獨使用 C ABI 無法保證底層 I/O 在期限內返回，MCP 服務提供程序層級 watchdog。自動試驗與最佳化工具留待後續實作。
+
+`identify` 接受可選的嚴格布林參數 `args.adopt_manual_pause`，預設 false。明確接管只取得已識別暫停的控制權，不切換暫停，也不授權此次識別恢復戰鬥。

@@ -32,6 +32,12 @@ async def test_stdio_handshake_tools_and_errors(tmp_path):
             assert len(tools) == 15
             assert tools["battle_observe"].annotations.readOnlyHint is True
             assert tools["battle_identify"].annotations.readOnlyHint is False
+            identify_schema = tools["battle_identify"].inputSchema
+            identify_request = identify_schema["$defs"]["IdentifyRequest"]
+            adoption = identify_request["properties"]["adopt_manual_pause"]
+            assert adoption["type"] == "boolean"
+            assert adoption["default"] is False
+            assert "adopt_manual_pause" not in identify_request["required"]
             assert tools["battle_step"].annotations.readOnlyHint is False
             status = await session.call_tool("battle_status")
             assert status.structuredContent["connected"] is False

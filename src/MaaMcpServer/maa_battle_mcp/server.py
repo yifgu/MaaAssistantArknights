@@ -16,8 +16,8 @@ from .models import (
     BoundedStepRequest,
     DeployRequest,
     Identifier,
+    IdentifyRequest,
     IntelligenceConfig,
-    OperationRequest,
     PauseRequest,
     Settings,
     UnitRequest,
@@ -61,6 +61,7 @@ def create_server(
             "Mutations may return outcome_unknown even if input succeeded: capture evidence, "
             "never blindly retry. Reuse an operation_id only for the identical request. "
             "Prefer battle_step for a prevalidated single action followed by capture and verified pause. "
+            "battle_identify can explicitly adopt a manual pause without resuming. "
             "Manual-pause adoption must be explicit. Close does not pause the game. "
             "No automatic stage entry, spending, contract selection, victory detection or optimizer."
         ),
@@ -126,9 +127,22 @@ def create_server(
         return response
 
     @server.tool(annotations=MUTATING)
-    async def battle_identify(request: OperationRequest) -> CallToolResult:
-        """Actively inspect unknown deployment cards; returns identity counts/reasons and pause verification."""
-        return tool_result(await service.command("identify", request))
+    async def battle_identify(request: IdentifyRequest) -> CallToolResult:
+        """Inspect cards without resuming; explicitly authorize manual-pause adoption. Returns final PNG and pause verification."""
+        result = await service.command(
+            "identify", request, {"adopt_manual_pause": request.adopt_manual_pause}
+        )
+        response = tool_result(result)
+        if result.get("image_path"):
+            image = service.evidence_path(result).read_bytes()
+            response.content.append(
+                ImageContent(
+                    type="image",
+                    mimeType="image/png",
+                    data=base64.b64encode(image).decode("ascii"),
+                )
+            )
+        return response
 
     @server.tool(annotations=MUTATING)
     async def battle_step(request: BoundedStepRequest) -> CallToolResult:
@@ -190,7 +204,7 @@ def create_server(
 
     @server.tool(annotations=MUTATING)
     async def battle_set_paused(request: PauseRequest) -> CallToolResult:
-        """Request pause/resume with state guards. Resume only a server-requested pause; verify the result."""
+        """Request pause/resume with state guards. Resume only a server-requested or explicitly adopted pause."""
         return tool_result(
             await service.command("set_paused", request, {"paused": request.paused})
         )
