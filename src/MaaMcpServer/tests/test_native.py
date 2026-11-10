@@ -45,6 +45,16 @@ def test_debug_core_task_protocol_without_device(tmp_path):
             {**command, "timeout_ms": 1.5},
             {**command, "timeout_ms": True},
             {**command, "timeout_ms": 30_001},
+            {**command, "action": "step", "timeout_ms": 10_001},
+            {
+                **command,
+                "action": "step",
+                "args": {
+                    "action": "deploy",
+                    "unit_id": "unit",
+                    "adopt_manual_pause": False,
+                },
+            },
             {**command, "session_id": "other"},
             {**command, "action": "click"},
             {**command, "action": "deploy", "args": {"unit_id": "x"}},

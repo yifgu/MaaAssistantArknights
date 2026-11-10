@@ -13,6 +13,7 @@ from pydantic import Field
 
 from .intelligence import IntelligenceClient
 from .models import (
+    BoundedStepRequest,
     DeployRequest,
     Identifier,
     IntelligenceConfig,
@@ -59,7 +60,8 @@ def create_server(
             "Observe before acting. Unknown identities and enemy state are not empty state. "
             "Mutations may return outcome_unknown even if input succeeded: capture evidence, "
             "never blindly retry. Reuse an operation_id only for the identical request. "
-            "Identify and pause commands may change the UI. Close does not pause the game. "
+            "Prefer battle_step for a prevalidated single action followed by capture and verified pause. "
+            "Manual-pause adoption must be explicit. Close does not pause the game. "
             "No automatic stage entry, spending, contract selection, victory detection or optimizer."
         ),
         lifespan=lifespan,
@@ -79,6 +81,8 @@ def create_server(
                     "Battlefield positions are unverified action history; no mid-battle reconstruction.",
                     "Summon/device deployment is rejected until instance-level identity tracking is implemented.",
                     "Mutations are not automatically confirmed; inspect evidence after each action.",
+                    "battle_step bounds one action and immediately captures then requests pause; "
+                    "pause verification is returned separately.",
                     "No enemy tracking, contract automation, experiment optimizer or arbitrary clicks.",
                     "Stop other MAA/GUI controllers before connecting.",
                 ],
@@ -123,8 +127,37 @@ def create_server(
 
     @server.tool(annotations=MUTATING)
     async def battle_identify(request: OperationRequest) -> CallToolResult:
-        """Actively inspect unknown deployment cards using OCR. Leaves a requested pause; inspect evidence then resume."""
+        """Actively inspect unknown deployment cards; returns identity counts/reasons and pause verification."""
         return tool_result(await service.command("identify", request))
+
+    @server.tool(annotations=MUTATING)
+    async def battle_step(request: BoundedStepRequest) -> CallToolResult:
+        """Run one prevalidated action, capture immediately, then pause and verify before returning."""
+        result = await service.command(
+            "step",
+            request,
+            {
+                "action": request.action,
+                "unit_id": request.unit_id,
+                "adopt_manual_pause": request.adopt_manual_pause,
+                "location": request.location,
+                "direction": request.direction,
+            },
+        )
+        response = tool_result(result)
+        for key in ("return_image_path", "capture_image_path"):
+            relative = result.get(key)
+            if not isinstance(relative, str) or not relative:
+                continue
+            image = service.evidence_path({"image_path": relative}).read_bytes()
+            response.content.append(
+                ImageContent(
+                    type="image",
+                    mimeType="image/png",
+                    data=base64.b64encode(image).decode("ascii"),
+                )
+            )
+        return response
 
     @server.tool(annotations=MUTATING)
     async def battle_deploy(request: DeployRequest) -> CallToolResult:
@@ -171,7 +204,7 @@ def create_server(
 
     @server.tool(annotations=MUTATING)
     async def battle_close() -> CallToolResult:
-        """Stop/interrupt the worker and invalidate the session. Does NOT pause or abandon the running game."""
+        """Close the session; waits for an active bounded step to finish its pause cleanup."""
         return tool_result(await service.close())
 
     @server.tool(

@@ -148,9 +148,26 @@ Deployment request, substituting the returned session and observed unit IDs; too
 
 `battle_retreat` and `battle_use_skill` use the same request without `location` or `direction`. Use a new `operation_id` for each new action. Identical retries return the saved result; changed parameters under the same ID are rejected. Insufficient cost or cooldown fails immediately instead of waiting indefinitely. Evidence returns a PNG and observation from the same frame for the client's multimodal model; the server does not invoke a cloud model.
 
-`outcome_unknown` sets MCP `isError=true`; even `helper_returned=true` does not prove in-game success. Inspect a new capture instead of blindly retrying. Positions have `action_history_unverified` provenance, enemies are null, and model-supplied state overwrites are not supported. A requested pause is not a confirmed pause; resume is guarded to pauses requested by this server.
+For a single tactical action, prefer `battle_step`, which performs preflight, any necessary resume, the action, a post-action capture, and pause verification in one Core command:
 
-`timeout_ms` is 1–30000. Timeout or cancellation terminates the worker, invalidates the session, and persists an unknown outcome. `battle_close` interrupts control but **does not pause or exit the game**. Query durable results with `battle_get_operation`. Logs and `operations.sqlite3` live in `--user-dir`; each battle retains its latest 128 explicit captures. Periodically clean old sessions, logs, and the database yourself.
+```json
+{
+  "request": {
+    "session_id": "replace-with-session-id",
+    "operation_id": "step-001",
+    "action": "skill",
+    "unit_id": "replace-with-observed-unit-id",
+    "adopt_manual_pause": false,
+    "timeout_ms": 10000
+  }
+}
+```
+
+`action` can be `deploy`, `retreat`, or `skill`; deployment also requires `location` and `direction`. Manual pauses are not adopted by default; resuming one requires `adopt_manual_pause=true` and fresh screenshot confirmation. Each call executes at most one action. It captures the action boundary, requests a pause, then returns a fresh frame and `pause_verified`. If the client request is cancelled, the service waits for this prepared cleanup to finish. If the worker itself fails, the result explicitly reports an unknown pause state. `battle_step` limits `timeout_ms` to 10000.
+
+`battle_identify` returns `identified_count`, `unresolved_count`, `ambiguous_count`, and per-card `identity_reason`; blank-name cache entries no longer suppress detail OCR. For other actions, `outcome_unknown` sets MCP `isError=true`; neither `helper_returned=true` nor `action_returned=true` proves in-game success. Inspect evidence instead of blindly retrying. Positions have `action_history_unverified` provenance, enemies are null, and model-supplied state overwrites are not supported. A standalone pause request is not confirmation; resume is guarded to pauses requested by this server.
+
+Ordinary commands allow `timeout_ms` 1–30000; `battle_step` is capped at 10000. An ordinary timeout or cancellation terminates the worker, invalidates the session, and persists an unknown outcome. A cancelled step waits for its prepared pause cleanup, but worker failure can still prevent pause verification. `battle_close` interrupts ordinary commands; during a step it waits for pause cleanup before closing, but does not itself pause or exit the game. Query durable results with `battle_get_operation`. Logs and `operations.sqlite3` live in `--user-dir`; each battle retains its latest 128 explicit captures. Periodically clean old sessions, logs, and the database yourself.
 
 ## Optional intelligence
 
@@ -171,4 +188,4 @@ For PRTS use `{"provider":"prts","command":"prts-mcp","region":"cn"}`; the adapt
 
 Initialize with `AsstAppendTask(handle, "BattleControl", {"stage_name":"main_01-07","session_id":"unique-id"})`, call `AsstStart`, and await `SubTaskExtraInfo` with `what="BattleControlReady"` (protocol version 1). Submit `session_id`, `command_id`, `action`, `args`, and `timeout_ms` through `AsstSetTaskParams`; await `what="BattleControlResult"`. Only one command is accepted at a time; wait for its callback before submitting another.
 
-Actions are `observe`, `capture`, `map`, `identify`, `deploy`, `retreat`, `skill`, and `set_paused`. Parameter updates only enqueue work; device access stays on the Core task thread. Native clients must supply their own external watchdog and deduplication: the C ABI alone cannot guarantee a blocking I/O deadline. The MCP server supplies that process-level watchdog. Automatic postcondition confirmation, experiments, and optimization are future work.
+Actions are `observe`, `capture`, `map`, `identify`, `deploy`, `retreat`, `skill`, `set_paused`, and `step`. `step` accepts one preflighted tactical action, captures immediately afterward, requests a pause, then verifies and returns a fresh paused frame; it cannot guarantee a pause if device I/O or the MCP process itself fails. Parameter updates only enqueue work; device access stays on the Core task thread. Native clients must supply their own external watchdog and deduplication: the C ABI alone cannot guarantee a blocking I/O deadline. The MCP server supplies that process-level watchdog. Experiments and optimization are future work.

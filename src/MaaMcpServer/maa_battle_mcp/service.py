@@ -38,6 +38,7 @@ class BattleService:
         self.connection_info: dict = {}
         self.session_id: str | None = None
         self.lock = asyncio.Lock()
+        self.step_active = False
         settings.user_dir.mkdir(parents=True, exist_ok=True)
         self.lease = FileLock(settings.user_dir / "controller.lock", timeout=0)
         self.journal = sqlite3.connect(settings.user_dir / "operations.sqlite3")
@@ -154,10 +155,22 @@ class BattleService:
                 (request.session_id, request.operation_id, encoded),
             )
             self.journal.commit()
+            cancelled = False
+            self.step_active = action == "step"
             try:
-                result = await asyncio.to_thread(
-                    backend.request, "command", payload, request.timeout_ms / 1000
+                timeout = request.timeout_ms / 1000 + (10 if action == "step" else 0)
+                request_task = asyncio.create_task(
+                    asyncio.to_thread(backend.request, "command", payload, timeout)
                 )
+                if action == "step":
+                    try:
+                        result = await asyncio.shield(request_task)
+                    except asyncio.CancelledError:
+                        # Let Core finish its prepared capture-and-pause cleanup before releasing the lock.
+                        cancelled = True
+                        result = await asyncio.shield(request_task)
+                else:
+                    result = await request_task
             except (NativeError, asyncio.CancelledError) as exc:
                 logger.warning("Battle operation interrupted: %s", exc)
                 await asyncio.to_thread(backend.abort)
@@ -174,11 +187,18 @@ class BattleService:
                         "message": "Worker stopped. Input may have occurred; reconnect and inspect before retrying.",
                     },
                 }
+                if action == "step":
+                    result["pause_verified"] = False
+                    result["safe_state"] = "unknown"
                 self._save_result(request, result)
-                if isinstance(exc, asyncio.CancelledError):
+                if isinstance(exc, asyncio.CancelledError) or cancelled:
                     raise
                 return result
+            finally:
+                self.step_active = False
             self._save_result(request, result)
+            if cancelled:
+                raise asyncio.CancelledError
             return result
 
     def _save_result(self, request: OperationRequest, result: dict) -> None:
@@ -226,7 +246,7 @@ class BattleService:
 
     async def close(self) -> dict:
         backend = self.backend
-        if backend is not None and self.lock.locked():
+        if backend is not None and self.lock.locked() and not self.step_active:
             await asyncio.to_thread(backend.abort)
         async with self.lock:
             if self.backend is not None and self.backend is not backend:

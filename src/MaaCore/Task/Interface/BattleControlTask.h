@@ -35,8 +35,13 @@ private:
     };
 
     bool validate_command(const json::value& params) const;
-    json::value observe(const cv::Mat& image);
+    json::value observe(
+        const cv::Mat& image,
+        bool active_identification = false,
+        bool include_battlefield = true);
+    json::value save_evidence(const cv::Mat& image, json::value snapshot);
     json::value execute(const Command& command);
+    json::value execute_step(const Command& command, json::value snapshot);
     json::value map_info() const;
     json::value failure(const std::string& code, const std::string& message) const;
     void emit(const std::string& what, json::value details);

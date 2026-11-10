@@ -148,9 +148,26 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 
 `battle_retreat`、`battle_use_skill` 使用同样的请求，但不传 `location` 和 `direction`。每次新操作使用新 `operation_id`；完全相同的请求重发只读取已保存结果，同 ID 改参数会拒绝。费用不足或冷却未结束直接失败，不会无限等待。截图工具返回同一帧的 PNG 和观测，供客户端多模态模型判断，不自动调用云端模型。
 
-动作返回 `outcome_unknown` 时，MCP `isError` 为 true，即使 `helper_returned` 为 true 也不代表游戏内成功。须截图复核，不能盲目重试。场上位置标为 `action_history_unverified`，敌人状态为 null；首版不接受模型直接覆写状态。暂停请求也不等于已确认暂停，恢复只允许针对本服务请求过的暂停。
+需要执行单个战术动作时，优先使用 `battle_step`，将预检、必要的恢复、动作、动作后截图和暂停验证放在同一 Core 命令中：
 
-`timeout_ms` 为 1–30000；超时或取消会终止独立 worker、使会话失效，并保存未知结果。`battle_close` 可中断执行，但**不会暂停或退出游戏**。通过 `battle_get_operation` 查询持久结果；日志及 `operations.sqlite3` 位于 `--user-dir`，每场最多保留最近 128 张主动截图。旧场次、日志和数据库需要自行定期清理。
+```json
+{
+  "request": {
+    "session_id": "replace-with-session-id",
+    "operation_id": "step-001",
+    "action": "skill",
+    "unit_id": "replace-with-observed-unit-id",
+    "adopt_manual_pause": false,
+    "timeout_ms": 10000
+  }
+}
+```
+
+`action` 可为 `deploy`、`retreat` 或 `skill`；部署还须提供 `location` 和 `direction`。手动暂停默认不接管；只有明确设置 `adopt_manual_pause=true` 并由新截图确认暂停后才会恢复。每次动作至多执行一次，工具先返回动作边界截图，再请求暂停并返回新截图与 `pause_verified`；取消客户端请求时服务会等待该命令完成清理。若 worker 本身失效，结果会明确报告暂停状态未知。`battle_step` 的 `timeout_ms` 上限为 10000。
+
+`battle_identify` 返回 `identified_count`、`unresolved_count`、`ambiguous_count` 和逐卡 `identity_reason`；空名缓存不会再抑制详情 OCR。其他动作返回 `outcome_unknown` 时，MCP `isError` 为 true，即使 `helper_returned` 或 `action_returned` 为 true 也不代表游戏内成功。须截图复核，不能盲目重试。场上位置标为 `action_history_unverified`，敌人状态为 null；首版不接受模型直接覆写状态。单独的暂停请求不等于已确认暂停，恢复只允许针对本服务请求过的暂停。
+
+普通命令的 `timeout_ms` 为 1–30000；`battle_step` 最多 10000。普通命令超时或取消会终止独立 worker、使会话失效，并保存未知结果；step 取消会等待已准备的暂停清理，worker 失效时仍可能无法确认状态。`battle_close` 可中断普通命令；遇到 step 时会等待其暂停清理后关闭，但本身不负责暂停或退出游戏。通过 `battle_get_operation` 查询持久结果；日志及 `operations.sqlite3` 位于 `--user-dir`，每场最多保留最近 128 张主动截图。旧场次、日志和数据库需要自行定期清理。
 
 ## 可选情报服务
 
@@ -171,4 +188,4 @@ PRTS 可使用 `{"provider":"prts","command":"prts-mcp","region":"cn"}`；适配
 
 初始化 `AsstAppendTask(handle, "BattleControl", {"stage_name":"main_01-07","session_id":"unique-id"})` 后调用 `AsstStart`，等待 `SubTaskExtraInfo` 的 `what="BattleControlReady"`（协议版本 1）。之后使用 `AsstSetTaskParams` 发送 `session_id`、`command_id`、`action`、`args`、`timeout_ms`，等待 `what="BattleControlResult"`。每次只允许一个命令；读取回调前不要继续投递。
 
-动作名为 `observe`、`capture`、`map`、`identify`、`deploy`、`retreat`、`skill`、`set_paused`。更新参数只入队，设备操作均在 Core 任务线程执行。原生调用者仍须实现外部 watchdog 和去重；单独使用 C ABI 时，Core 不保证底层 I/O 在期限内返回。MCP 服务实现了该进程级 watchdog。识别后置确认、自动试验和优化器留待后续实现。
+动作名为 `observe`、`capture`、`map`、`identify`、`deploy`、`retreat`、`skill`、`set_paused`、`step`。`step` 一次只接受一个已预检的战术动作，并在动作后立即取帧、请求暂停、验证并返回暂停帧；它不能保证设备底层 I/O 或整个 MCP 进程故障时一定暂停。更新参数只入队，设备操作均在 Core 任务线程执行。原生调用者仍须实现外部 watchdog 和去重；单独使用 C ABI 时，Core 不保证底层 I/O 在期限内返回。MCP 服务实现了进程级 watchdog。自动试验和优化器留待后续实现。

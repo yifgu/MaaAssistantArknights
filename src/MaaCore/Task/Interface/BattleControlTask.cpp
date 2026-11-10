@@ -4,6 +4,7 @@
 #include <cctype>
 #include <ranges>
 #include <thread>
+#include <unordered_map>
 
 #include "Config/Miscellaneous/BattleDataConfig.h"
 #include "Controller/Controller.h"
@@ -27,13 +28,40 @@ bool asst::BattleControlTask::validate_command(const json::value& params) const
     }
     const auto id = params.at("command_id").as_string();
     const auto timeout = params.at("timeout_ms");
-    if (id.empty() || id.size() > 128 || timeout.as_integer() < 1 || timeout.as_integer() > 30'000) {
+    const auto action = params.at("action").as_string();
+    const auto max_timeout = action == "step" ? 10'000 : 30'000;
+    if (id.empty() || id.size() > 128 || timeout.as_integer() < 1 || timeout.as_integer() > max_timeout) {
         return false;
     }
-    const auto action = params.at("action").as_string();
     const auto& args = params.at("args");
     if (action == "observe" || action == "identify" || action == "capture" || action == "map") {
         return true;
+    }
+    if (action == "step") {
+        if (!args.find<std::string>("action") || !args.find<std::string>("unit_id") ||
+            !args.find<bool>("adopt_manual_pause")) {
+            return false;
+        }
+        const auto step_action = args.at("action").as_string();
+        if (step_action != "deploy" && step_action != "retreat" && step_action != "skill") {
+            return false;
+        }
+        if (args.at("unit_id").as_string().empty()) {
+            return false;
+        }
+        if (step_action != "deploy") {
+            return !args.find<json::array>("location") && !args.find<std::string>("direction");
+        }
+        if (!args.find<json::array>("location") || !args.find<std::string>("direction")) {
+            return false;
+        }
+        const auto& location = args.at("location").as_array();
+        const auto direction = args.at("direction").as_string();
+        return location.size() == 2 && location[0].is<int>() && location[1].is<int>() &&
+               location[0].as_integer() >= 0 && location[0].as_integer() <= 255 && location[1].as_integer() >= 0 &&
+               location[1].as_integer() <= 255 &&
+               (direction == "Right" || direction == "Down" || direction == "Left" || direction == "Up" ||
+                direction == "None");
     }
     if (action == "set_paused") {
         return args.find<bool>("paused").has_value();
@@ -187,7 +215,7 @@ json::value asst::BattleControlTask::map_info() const
     };
 }
 
-json::value asst::BattleControlTask::observe(const cv::Mat& image)
+json::value asst::BattleControlTask::observe(const cv::Mat& image, bool active_identification, bool include_battlefield)
 {
     json::value snapshot = json::object {
         { "observation_id", std::to_string(++m_observation_id) },
@@ -201,6 +229,9 @@ json::value asst::BattleControlTask::observe(const cv::Mat& image)
         { "cost", nullptr },
         { "kills", nullptr },
         { "total_kills", nullptr },
+        { "identified_count", 0 },
+        { "unresolved_count", 0 },
+        { "ambiguous_count", 0 },
         { "deployment", json::array() },
         { "battlefield", json::array() },
         { "enemies", nullptr },
@@ -221,19 +252,47 @@ json::value asst::BattleControlTask::observe(const cv::Mat& image)
     auto deployment = result->deployment;
     const auto old_deployment = m_cur_deployment_opers;
     update_deployment_(deployment, old_deployment, false, false);
-    matcher.set_object_of_interest({ .costs = true });
-    if (auto cost = matcher.analyze()) {
-        snapshot["cost"] = cost->costs.value;
+    if (include_battlefield) {
+        matcher.set_object_of_interest({ .costs = true });
+        if (auto cost = matcher.analyze()) {
+            snapshot["cost"] = cost->costs.value;
+        }
+        matcher.set_object_of_interest({ .kills = true });
+        if (auto kills = matcher.analyze()) {
+            snapshot["kills"] = kills->kills.value.first;
+            snapshot["total_kills"] = kills->kills.value.second;
+        }
     }
-    matcher.set_object_of_interest({ .kills = true });
-    if (auto kills = matcher.analyze()) {
-        snapshot["kills"] = kills->kills.value.first;
-        snapshot["total_kills"] = kills->kills.value.second;
+    std::unordered_map<std::string, size_t> identity_counts;
+    int identified_count = 0;
+    int unresolved_count = 0;
+    int ambiguous_count = 0;
+    for (const auto& oper : m_cur_deployment_opers) {
+        if (!oper.name.empty()) {
+            ++identity_counts[unit_id(oper.role, oper.name)];
+        }
     }
     for (const auto& oper : m_cur_deployment_opers) {
         json::array ids;
         for (const auto& id : BattleData.get_ids(oper.role, oper.name)) {
             ids.emplace_back(id);
+        }
+        std::string identity_reason = "identified";
+        if (oper.name.empty()) {
+            ++unresolved_count;
+            identity_reason = oper.cooling            ? "cooling_identity_unavailable"
+                              : active_identification ? "name_ocr_failed"
+                                                      : "not_actively_identified";
+        }
+        else {
+            ++identified_count;
+            if (identity_counts[unit_id(oper.role, oper.name)] > 1) {
+                ++ambiguous_count;
+                identity_reason = "duplicate_identity";
+            }
+            else if (oper.role == battle::Role::Drone) {
+                identity_reason = "instance_tracking_required";
+            }
         }
         snapshot["deployment"].as_array().emplace_back(
             json::object {
@@ -247,30 +306,264 @@ json::value asst::BattleControlTask::observe(const cv::Mat& image)
                 { "cooling", oper.cooling },
                 { "rect", json::array { oper.rect.x, oper.rect.y, oper.rect.width, oper.rect.height } },
                 { "source", "vision" },
+                { "identity_reason", std::move(identity_reason) },
             });
     }
-    for (const auto& [tag, loc] : m_battlefield_opers) {
-        json::value ready = nullptr;
-        if (const auto tile = m_normal_tile_info.find(loc);
-            tile != m_normal_tile_info.end() && Rect(0, 0, image.cols, image.rows).include(tile->second.pos)) {
-            BattlefieldClassifier classifier(image);
-            classifier.set_object_of_interest({ .skill_ready = true });
-            classifier.set_base_point(tile->second.pos);
-            if (auto skill = classifier.analyze()) {
-                ready = skill->skill_ready.ready;
+    snapshot["identified_count"] = identified_count;
+    snapshot["unresolved_count"] = unresolved_count;
+    snapshot["ambiguous_count"] = ambiguous_count;
+    if (include_battlefield) {
+        for (const auto& [tag, loc] : m_battlefield_opers) {
+            json::value ready = nullptr;
+            if (const auto tile = m_normal_tile_info.find(loc);
+                tile != m_normal_tile_info.end() && Rect(0, 0, image.cols, image.rows).include(tile->second.pos)) {
+                BattlefieldClassifier classifier(image);
+                classifier.set_object_of_interest({ .skill_ready = true });
+                classifier.set_base_point(tile->second.pos);
+                if (auto skill = classifier.analyze()) {
+                    ready = skill->skill_ready.ready;
+                }
             }
+            snapshot["battlefield"].as_array().emplace_back(
+                json::object {
+                    { "unit_id", unit_id(tag.role, tag.name) },
+                    { "name", tag.name },
+                    { "role", static_cast<int>(tag.role) },
+                    { "location", json::array { loc.x, loc.y } },
+                    { "position_source", "action_history_unverified" },
+                    { "skill_ready", std::move(ready) },
+                });
         }
-        snapshot["battlefield"].as_array().emplace_back(
-            json::object {
-                { "unit_id", unit_id(tag.role, tag.name) },
-                { "name", tag.name },
-                { "role", static_cast<int>(tag.role) },
-                { "location", json::array { loc.x, loc.y } },
-                { "position_source", "action_history_unverified" },
-                { "skill_ready", std::move(ready) },
-            });
     }
     return snapshot;
+}
+
+json::value asst::BattleControlTask::save_evidence(const cv::Mat& image, json::value snapshot)
+{
+    if (image.empty()) {
+        return failure("screenshot_failed", "No image available");
+    }
+    const auto relative = utils::path("battle-control") / utils::path(m_session_id) /
+                          utils::path(snapshot.at("observation_id").as_string() + ".png");
+    const auto file = UserDir.get() / relative;
+    if (!MAA_NS::imwrite(file, image)) {
+        return failure("evidence_write_failed", "Could not save screenshot");
+    }
+    m_evidence_files.emplace_back(file);
+    if (m_evidence_files.size() > 128) {
+        std::error_code ec;
+        std::filesystem::remove(m_evidence_files.front(), ec);
+        if (ec) {
+            LogWarn << __FUNCTION__ << "Failed to remove old screenshot" << ec.message();
+        }
+        m_evidence_files.pop_front();
+    }
+    return json::object {
+        { "status", "succeeded" },
+        { "snapshot", std::move(snapshot) },
+        { "image_path", relative.generic_string() },
+    };
+}
+
+json::value asst::BattleControlTask::execute_step(const Command& command, json::value snapshot)
+{
+    const auto& args = command.args;
+    const auto action = args.at("action").as_string();
+    const auto target = args.at("unit_id").as_string();
+    const bool adopt_manual_pause = args.at("adopt_manual_pause").as_boolean();
+
+    auto deployment_oper = m_cur_deployment_opers.end();
+    auto battlefield_oper = m_battlefield_opers.end();
+    Point location;
+    battle::DeployDirection direction = battle::DeployDirection::None;
+    const bool initially_running = snapshot.at("running_button_visible").as_boolean();
+    auto reject_preflight = [&](const std::string& code, const std::string& message) {
+        json::value result = failure(code, message);
+        if (!initially_running) {
+            result["pause_verified"] = true;
+            result["safe_state"] = "paused";
+            result["snapshot"] = snapshot;
+            return result;
+        }
+
+        cv::Mat final_image;
+        json::value final_snapshot;
+        bool pause_verified = false;
+        final_image = ctrler()->get_image();
+        if (!final_image.empty() && check_pause_button(final_image)) {
+            pause();
+        }
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            final_image = ctrler()->get_image();
+            final_snapshot = observe(final_image, false, false);
+            if (!final_snapshot.at("in_battle").as_boolean()) {
+                break;
+            }
+            if (!final_snapshot.at("running_button_visible").as_boolean()) {
+                pause_verified = true;
+                break;
+            }
+            if (attempt == 0) {
+                pause();
+            }
+        }
+        m_pause_requested = pause_verified;
+        result["pause_verified"] = pause_verified;
+        result["safe_state"] = pause_verified ? "paused" : "unknown";
+        result["snapshot"] = final_snapshot;
+        auto evidence = save_evidence(final_image, final_snapshot);
+        if (evidence.at("status").as_string() == "succeeded") {
+            result["return_image_path"] = evidence.at("image_path");
+        }
+        else {
+            result["evidence_error"] = evidence.at("error");
+        }
+        return result;
+    };
+
+    if (action == "deploy") {
+        deployment_oper = std::ranges::find_if(m_cur_deployment_opers, [&](const auto& oper) {
+            return unit_id(oper.role, oper.name) == target;
+        });
+        const auto matches = std::ranges::count_if(m_cur_deployment_opers, [&](const auto& oper) {
+            return unit_id(oper.role, oper.name) == target;
+        });
+        if (matches != 1 || deployment_oper == m_cur_deployment_opers.end()) {
+            return reject_preflight("unit_not_unique", "Deployment unit is missing or ambiguous; identify first");
+        }
+        if (deployment_oper->role == battle::Role::Drone) {
+            return reject_preflight("unsupported_unit", "Summons and devices require instance-level identity tracking");
+        }
+        if (!deployment_oper->available || deployment_oper->cooling) {
+            return reject_preflight("unit_unavailable", "Unit is cooling down or cannot currently be deployed");
+        }
+        const auto& requested_location = args.at("location");
+        location = { requested_location[0].as_integer(), requested_location[1].as_integer() };
+        const auto tile = m_normal_tile_info.find(location);
+        if (tile == m_normal_tile_info.end() || m_used_tiles.contains(location) ||
+            tile->second.buildable == battle::LocationType::None ||
+            tile->second.buildable == battle::LocationType::Invalid ||
+            deployment_oper->location_type == battle::LocationType::None ||
+            (tile->second.buildable != battle::LocationType::All &&
+             deployment_oper->location_type != battle::LocationType::All &&
+             tile->second.buildable != deployment_oper->location_type)) {
+            return reject_preflight("invalid_tile", "Tile is occupied, unknown or incompatible with this unit");
+        }
+        const std::map<std::string, battle::DeployDirection> directions {
+            { "Right", battle::DeployDirection::Right }, { "Down", battle::DeployDirection::Down },
+            { "Left", battle::DeployDirection::Left },   { "Up", battle::DeployDirection::Up },
+            { "None", battle::DeployDirection::None },
+        };
+        direction = directions.at(args.at("direction").as_string());
+    }
+    else {
+        battlefield_oper = std::ranges::find_if(m_battlefield_opers, [&](const auto& pair) {
+            return unit_id(pair.first.role, pair.first.name) == target;
+        });
+        if (battlefield_oper == m_battlefield_opers.end()) {
+            return reject_preflight("unit_not_tracked", "Unit has no tracked battlefield position");
+        }
+    }
+
+    if (std::chrono::steady_clock::now() >= command.deadline) {
+        return reject_preflight("deadline_exceeded", "Step expired during preflight; no action was sent");
+    }
+
+    if (!snapshot.at("running_button_visible").as_boolean()) {
+        if (!m_pause_requested && !adopt_manual_pause) {
+            return failure("pause_state_unknown", "Adopting a manual pause requires explicit authorization");
+        }
+        m_pause_requested = true;
+        pause();
+        const auto resumed_image = ctrler()->get_image();
+        const bool resumed_running = !resumed_image.empty() && check_pause_button(resumed_image);
+        if (!resumed_running) {
+            const auto resumed_snapshot = observe(resumed_image, false, false);
+            const bool pause_verified = resumed_snapshot.at("in_battle").as_boolean() &&
+                                        !resumed_snapshot.at("running_button_visible").as_boolean();
+            m_pause_requested = pause_verified;
+            return json::object {
+                { "status", pause_verified ? "failed" : "outcome_unknown" },
+                { "error",
+                  json::object {
+                      { "code", "resume_unverified" },
+                      { "message", "The requested action was not sent because resume could not be verified" },
+                  } },
+                { "pause_verified", pause_verified },
+                { "snapshot", resumed_snapshot },
+            };
+        }
+        m_pause_requested = false;
+    }
+    else {
+        m_pause_requested = false;
+    }
+
+    bool action_returned = false;
+    if (std::chrono::steady_clock::now() < command.deadline) {
+        if (action == "deploy") {
+            action_returned = deploy_oper(deployment_oper->role, deployment_oper->name, location, direction);
+        }
+        else if (action == "retreat") {
+            action_returned = retreat_oper(battlefield_oper->first.role, battlefield_oper->first.name);
+        }
+        else {
+            action_returned = use_skill(battlefield_oper->second, 0);
+        }
+    }
+
+    const auto capture_image = ctrler()->get_image();
+    const bool capture_running = !capture_image.empty() && check_pause_button(capture_image);
+    if (capture_running) {
+        pause();
+    }
+
+    cv::Mat return_image;
+    json::value return_snapshot;
+    bool pause_verified = false;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        return_image = ctrler()->get_image();
+        return_snapshot = observe(return_image);
+        if (!return_snapshot.at("in_battle").as_boolean()) {
+            break;
+        }
+        if (!return_snapshot.at("running_button_visible").as_boolean()) {
+            pause_verified = true;
+            break;
+        }
+        if (attempt == 0) {
+            pause();
+        }
+    }
+    m_pause_requested = pause_verified;
+    auto capture_snapshot = observe(capture_image);
+    capture_snapshot["running_button_visible"] = capture_running;
+    capture_snapshot["pause_requested"] = false;
+    auto capture_result = save_evidence(capture_image, capture_snapshot);
+    if (pause_verified) {
+        return_snapshot["pause_requested"] = true;
+    }
+    auto return_result = save_evidence(return_image, return_snapshot);
+    json::array evidence_errors;
+    if (capture_result.at("status").as_string() == "failed") {
+        evidence_errors.emplace_back(capture_result.at("error"));
+    }
+    if (return_result.at("status").as_string() == "failed") {
+        evidence_errors.emplace_back(return_result.at("error"));
+    }
+
+    return json::object {
+        { "status", "outcome_unknown" },
+        { "action_returned", action_returned },
+        { "message", "Action input may have occurred. Inspect both captures; never blindly retry." },
+        { "capture_time_snapshot", capture_snapshot },
+        { "return_time_snapshot", std::move(return_snapshot) },
+        { "pause_verified", pause_verified },
+        { "safe_state", pause_verified ? "paused" : "unknown" },
+        { "evidence_errors", std::move(evidence_errors) },
+        { "capture_image_path", capture_result.get("image_path", "") },
+        { "return_image_path", return_result.get("image_path", "") },
+    };
 }
 
 json::value asst::BattleControlTask::execute(const Command& command)
@@ -282,37 +575,18 @@ json::value asst::BattleControlTask::execute(const Command& command)
         return json::object { { "status", "succeeded" }, { "map", map_info() } };
     }
     auto image = ctrler()->get_image();
-    auto snapshot = observe(image);
+    auto snapshot = observe(image, false, command.action != "step");
     if (command.action == "capture") {
-        if (image.empty()) {
-            return failure("screenshot_failed", "No image available");
-        }
-        const auto relative = utils::path("battle-control") / utils::path(m_session_id) /
-                              utils::path(snapshot.at("observation_id").as_string() + ".png");
-        const auto file = UserDir.get() / relative;
-        if (!MAA_NS::imwrite(file, image)) {
-            return failure("evidence_write_failed", "Could not save screenshot");
-        }
-        m_evidence_files.emplace_back(file);
-        if (m_evidence_files.size() > 128) {
-            std::error_code ec;
-            std::filesystem::remove(m_evidence_files.front(), ec);
-            if (ec) {
-                LogWarn << __FUNCTION__ << "Failed to remove old screenshot" << ec.message();
-            }
-            m_evidence_files.pop_front();
-        }
-        return json::object {
-            { "status", "succeeded" },
-            { "snapshot", std::move(snapshot) },
-            { "image_path", relative.generic_string() },
-        };
+        return save_evidence(image, std::move(snapshot));
     }
     if (command.action == "observe") {
         return json::object { { "status", "succeeded" }, { "snapshot", std::move(snapshot) } };
     }
     if (!snapshot.at("in_battle").as_boolean()) {
         return failure("not_in_battle", "Battle not recognized; no input sent");
+    }
+    if (command.action == "step") {
+        return execute_step(command, std::move(snapshot));
     }
     if (std::chrono::steady_clock::now() >= command.deadline) {
         return failure("deadline_exceeded", "Observation exhausted command deadline; no input sent");
@@ -337,20 +611,85 @@ json::value asst::BattleControlTask::execute(const Command& command)
         if (!running && !m_pause_requested) {
             return failure("pause_state_unknown", "Identify requires a running battle or a server-requested pause");
         }
-        if (running && !pause()) {
-            return failure("pause_failed", "Could not pause for active identification");
+        if (running) {
+            pause();
+            image = ctrler()->get_image();
+            snapshot = observe(image);
+            if (snapshot.at("in_battle").as_boolean() && snapshot.at("running_button_visible").as_boolean()) {
+                pause();
+                image = ctrler()->get_image();
+                snapshot = observe(image);
+            }
+            if (!snapshot.at("in_battle").as_boolean() || snapshot.at("running_button_visible").as_boolean()) {
+                const bool pause_verified =
+                    snapshot.at("in_battle").as_boolean() && !snapshot.at("running_button_visible").as_boolean();
+                m_pause_requested = pause_verified;
+                return json::object {
+                    { "status", "outcome_unknown" },
+                    { "error",
+                      json::object {
+                          { "code", "pause_unverified" },
+                          { "message", "Identification was not started because pause could not be verified" },
+                      } },
+                    { "snapshot", std::move(snapshot) },
+                    { "pause_verified", pause_verified },
+                };
+            }
         }
         m_pause_requested = true;
         image = ctrler()->get_image();
         BattlefieldMatcher matcher(image);
         matcher.set_object_of_interest({ .deployment = true, .oper_cost = true });
+        bool identified = false;
         if (auto result = matcher.analyze()) {
             auto deployment = result->deployment;
             const auto old_deployment = m_cur_deployment_opers;
-            sent = update_deployment_(deployment, old_deployment, true);
+            update_deployment_(deployment, old_deployment, true);
+            identified = true;
         }
         // Leave the battle paused; resuming is always a separate explicit command.
         cancel_oper_selection();
+        bool pause_verified = false;
+        for (int attempt = 0; attempt < 2; ++attempt) {
+            image = ctrler()->get_image();
+            snapshot = observe(image, true);
+            if (!snapshot.at("in_battle").as_boolean()) {
+                break;
+            }
+            if (!snapshot.at("running_button_visible").as_boolean()) {
+                pause_verified = true;
+                break;
+            }
+            if (attempt == 0) {
+                pause();
+            }
+        }
+        m_pause_requested = pause_verified;
+        if (!identified) {
+            return json::object {
+                { "status", "failed" },
+                { "error",
+                  json::object {
+                      { "code", "identification_failed" },
+                      { "message", "Deployment cards could not be analyzed" },
+                  } },
+                { "snapshot", std::move(snapshot) },
+                { "pause_verified", pause_verified },
+            };
+        }
+        return json::object {
+            { "status", pause_verified ? "succeeded" : "outcome_unknown" },
+            { "identification_status",
+              snapshot.at("unresolved_count").as_integer() == 0 && snapshot.at("ambiguous_count").as_integer() == 0
+                  ? "complete"
+                  : "partial" },
+            { "identified_count", snapshot.at("identified_count") },
+            { "unresolved_count", snapshot.at("unresolved_count") },
+            { "ambiguous_count", snapshot.at("ambiguous_count") },
+            { "deployment", snapshot.at("deployment") },
+            { "pause_verified", pause_verified },
+            { "snapshot", std::move(snapshot) },
+        };
     }
     else {
         if (!running || m_pause_requested) {
