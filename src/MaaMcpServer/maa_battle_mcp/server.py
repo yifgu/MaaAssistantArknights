@@ -72,6 +72,7 @@ def create_server(
             {
                 "connected": service.backend is not None,
                 "session_id": service.session_id,
+                **service.diagnostics(),
                 "intelligence_configured": intelligence is not None,
                 "limitations": [
                     "Only a single caller-supplied fixed map; no camera movement or stage recognition.",
