@@ -316,15 +316,24 @@ json::value
     snapshot["terminal"] = terminal_info(frame, snapshot);
     const auto terminal_state = snapshot.at("terminal").at("terminal_state").as_string();
     const bool terminal = terminal_state == "victory" || terminal_state == "defeat";
-    const auto pause_evidence = !terminal && result && !snapshot.at("running_button_visible").as_boolean()
-                                    ? match_evidence(image, "BattleControlPaused")
-                                    : json::value(nullptr);
+    const bool check_paused = !terminal && result && !snapshot.at("running_button_visible").as_boolean();
+    auto pause_evidence = check_paused ? match_evidence(image, "BattleControlPaused") : json::value(nullptr);
+    json::value localized_pause_evidence = nullptr;
+    if (check_paused && (!pause_evidence.is_object() || pause_evidence.get("score", 0.0) < 0.9)) {
+        localized_pause_evidence = match_evidence(image, "BattleControlPausedLocalized");
+        if (localized_pause_evidence.is_object() && localized_pause_evidence.get("score", 0.0) >= 0.9) {
+            pause_evidence = localized_pause_evidence;
+        }
+    }
     snapshot["pause_evidence"] = pause_evidence;
     const bool paused = pause_evidence.is_object() && pause_evidence.get("score", 0.0) >= 0.9;
-    snapshot["pause_diagnostics"] =
-        !terminal && result && !snapshot.at("running_button_visible").as_boolean() && !paused
-            ? pause_diagnostics(frame, snapshot)
-            : json::value(nullptr);
+    snapshot["pause_diagnostics"] = nullptr;
+    if (check_paused && !paused) {
+        auto diagnostic = pause_diagnostics(frame, snapshot, "BattleControlPaused", pause_evidence);
+        diagnostic["localized"] =
+            pause_diagnostics(frame, snapshot, "BattleControlPausedLocalized", localized_pause_evidence);
+        snapshot["pause_diagnostics"] = std::move(diagnostic);
+    }
     snapshot["scene"] = terminal                                                                   ? "terminal"
                         : snapshot.at("terminal").get("result_source", "") == "conflicting_titles" ? "unknown"
                         : !result                                                                  ? "unknown"
@@ -604,7 +613,10 @@ json::value asst::BattleControlTask::match_evidence(const cv::Mat& image, const 
     if (!match) {
         return nullptr;
     }
-    json::value result = json::object { { "source", task }, { "score", 0.0 } };
+    const auto& rect = match->rect;
+    json::value result = json::object { { "source", task },
+                                        { "score", 0.0 },
+                                        { "rect", json::array { rect.x, rect.y, rect.width, rect.height } } };
     if (const auto* ocr = std::get_if<OCRer::Result>(&match->result)) {
         result["score"] = ocr->score;
         result["text"] = ocr->text;
@@ -644,17 +656,21 @@ void asst::BattleControlTask::update_input_state(json::value& snapshot)
                                                           : json::value(nullptr);
 }
 
-json::value asst::BattleControlTask::pause_diagnostics(const CapturedFrame& frame, const json::value& snapshot) const
+json::value asst::BattleControlTask::pause_diagnostics(
+    const CapturedFrame& frame,
+    const json::value& snapshot,
+    const std::string& task_name,
+    const json::value& match) const
 {
-    const auto task = Task.get("BattleControlPaused");
+    const auto task = Task.get(task_name);
     const auto& roi = task->roi;
     json::value diagnostic = json::object {
-        { "source", "BattleControlPaused" },
+        { "source", task_name },
         { "observation_id", snapshot.at("observation_id") },
         { "captured_at_ms", snapshot.at("captured_at_ms") },
         { "roi", json::array { roi.x, roi.y, roi.width, roi.height } },
         { "required_score", 0.9 },
-        { "match", snapshot.at("pause_evidence") },
+        { "match", match },
         { "candidates", nullptr },
     };
     const auto ocr = std::dynamic_pointer_cast<OcrTaskInfo>(task);

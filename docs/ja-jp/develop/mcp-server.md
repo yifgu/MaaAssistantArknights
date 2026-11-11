@@ -238,7 +238,9 @@ PRTS には `{"provider":"prts","command":"prts-mcp","region":"cn"}` を使用�
 
 `battle_observe`、`battle_capture_evidence`、`battle_collect_terminal(request)` は入力なしで復旧証拠を収集できます。`battle_collect_terminal.duration_ms` は 100–8000 かつ `timeout_ms` 以下です。`status=succeeded` は収集完了であり、一時停止の復旧や勝利ではありません。`pause_verified`、`session_input_blocked`、`terminal` を確認してください。ロック中に受け付けた変更命令は、その観測で復旧しても実行しません。新しい証拠を確認して新規操作を要求し、必要なら手動停止の引き継ぎを明示的に許可します。過去の操作の再実行や結果の書き換えはありません。戦闘後の不明／非戦闘画面、終局／矛盾証拠、速度読み戻し失敗は `input_block_reason=terminal_or_safety_quarantine` の恒久隔離を維持し、一時停止証拠でも解除できません。`session_terminal` は結果と画像パスを保持し、黒画面で結果を消さず、勝敗の矛盾は unknown にします。Core の追加命令は `set_speed`、`finalize`、`prepare`、`bind` です。準備は `preparation_only=true` で初期化し、同じコントローラーで紐付けます。
 
-一時停止認識に失敗した場合、`pause_diagnostics` は同一フレームの ID／時刻、設定 ROI、必要スコア、null を許す一致結果を保持します。OCR では前処理設定と、同じ画像で対象文字フィルターを外した診断候補も返しますが、候補は一時停止の証拠ではありません。null は低スコアの測定値ではありません。一時停止／速度の閾値は変更せず、配置後の実 OCR、1x／2x、戦闘全体の確認は引き続き実機で必要です。
+一時停止認識はまず `PAUSE` の完全一致を要求します。0.9 に達しない場合、`BattleControlPausedLocalized` が `[560,350,160,70]` の領域で中国版の `暂停中` を別途完全一致で確認し、同じく 0.9 以上を要求します。この領域は回帰レポートの文字枠に基づきます。`PAUSEX`、任意の前方一致、領域外の文字は代替証拠として認めず、実行中ボタンと終局の判定を優先します。`pause_evidence` は採用したタスク、文字、スコア、文字枠を記録します。隔離解除には引き続き連続する 2 フレームが必要で、一時停止の所有権は自動取得しません。
+
+一時停止認識に失敗した場合、`pause_diagnostics` は同一フレームの ID／時刻、設定 ROI、必要スコア、null を許す一致結果を保持し、`localized` は中国語ラベルの対応する診断を保持します。OCR では前処理設定と、同じ画像で対象文字フィルターを外した診断候補も返しますが、候補は一時停止の証拠ではありません。null は低スコアの測定値ではありません。合成文字の回帰テストは正式な OCR タスクを使用しますが、ゲームのフォント、エフェクトによる遮蔽、他サーバーへの対応を証明しません。配置後の実 OCR、1x／2x、戦闘全体の確認は引き続き実機で必要で、速度の閾値は変更していません。
 
 `skill_ready` は true または null で、分類器の否定を確認済みクールダウンと扱いません。`skill_evidence` は同一フレームの ID、時刻、ROI、基点、分類スコアと確率を残します。発動段階／弾薬／クールダウンは不明のままで構いません。スコアは校正済み正解率ではありません。`asst.log` の `Battle frame` / `Battle command result`、`battle-control/<session>/` の PNG、`operations.sqlite3` を保存してください。合成回帰は実 OCR、ROI、ボタンの対応確認とは別で、実機再確認が必要ですが、ローカル画像をクラウド開発の必須入力にはしません。
 

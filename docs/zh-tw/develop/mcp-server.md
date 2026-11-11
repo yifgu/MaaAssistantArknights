@@ -238,7 +238,9 @@ PRTS 可使用 `{"provider":"prts","command":"prts-mcp","region":"cn"}`；配接
 
 `battle_observe`、`battle_capture_evidence` 和 `battle_collect_terminal(request)` 可在不輸入的情況下收集恢復證據。`battle_collect_terminal.duration_ms` 為 100–8000，不能超過 `timeout_ms`；`status=succeeded` 僅表示擷取完成，不表示暫停恢復或戰鬥勝利，須檢查 `pause_verified`、`session_input_blocked` 和 `terminal`。鎖定期間接收的修改命令即使恰好在觀察時完成恢復，也不會執行；須檢查新證據後發起新操作，必要時明確授權接管手動暫停。不會重播舊動作或改寫歷史結果。戰鬥後的未知／非戰鬥畫面、終局／衝突證據、調速回讀失敗仍以 `input_block_reason=terminal_or_safety_quarantine` 永久隔離，正向暫停證據不能解鎖。`session_terminal` 保留結果與證據路徑，黑畫面不抹除已確認結果，衝突勝敗保持 unknown。Core 另有 `set_speed`、`finalize`、`prepare`、`bind` 命令；準備任務以 `preparation_only=true` 初始化，綁定沿用同一控制器。
 
-暫停識別失敗時，`pause_diagnostics` 保留同影格 ID／時間、設定 ROI、要求分數和可空匹配結果。OCR 任務另保留前處理設定及同影格取消目標文字篩選後的診斷候選；這些候選不是暫停證據。匹配為 null 不等於測得低分。暫停／速度信心閾值不變；部署後的真實 OCR、1x／2x 和完整戰鬥驗收仍須本機裝置複驗。
+暫停識別先完整匹配 `PAUSE`；未達到 0.9 時，另用 `BattleControlPausedLocalized` 在 `[560,350,160,70]` 區域完整匹配國服的 `暂停中`，同樣要求至少 0.9。該區域依據迴歸報告的文字框設定，不接受 `PAUSEX`、任意前綴或區域外文字作為替代證據；執行按鈕和終局判定仍優先。`pause_evidence` 保留實際命中任務、文字、分數和文字框，解除隔離仍須連續兩影格，不自動接管暫停。
+
+暫停識別失敗時，`pause_diagnostics` 保留同影格 ID／時間、設定 ROI、要求分數和可空匹配結果，`localized` 保留中文檢測的對應診斷。OCR 任務另保留前處理設定及同影格取消目標文字篩選後的診斷候選；這些候選不是暫停證據。匹配為 null 不等於測得低分。合成文字迴歸使用正式 OCR 任務，但不證明遊戲字型、特效遮擋或外服適配；部署後的真實 OCR、1x／2x 和完整戰鬥驗收仍須本機裝置複驗，速度閾值不變。
 
 `skill_ready` 是 true 或 null，分類器否定不再冒充已確認冷卻。`skill_evidence` 保留同影格 ID、時間、ROI、基點、類別分數和機率；技能階段／彈藥／冷卻仍可未知，分數並非校準後正確率。請保留 `asst.log` 的 `Battle frame` / `Battle command result`、`battle-control/<session>/` 的 PNG 與 `operations.sqlite3`。合成回歸不證明真實 OCR、ROI 或按鈕適配；仍須本機複驗，不要求本機圖片作為雲端開發輸入。
 

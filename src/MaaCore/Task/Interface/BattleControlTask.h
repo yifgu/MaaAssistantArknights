@@ -69,7 +69,11 @@ private:
     bool input_blocked() const { return m_terminal_seen || m_pause_unverified; }
 
     void update_input_state(json::value& snapshot);
-    json::value pause_diagnostics(const CapturedFrame& frame, const json::value& snapshot) const;
+    json::value pause_diagnostics(
+        const CapturedFrame& frame,
+        const json::value& snapshot,
+        const std::string& task_name,
+        const json::value& match) const;
     json::value terminal_info(const CapturedFrame& frame, const json::value& snapshot) const;
     json::value match_evidence(const cv::Mat& image, const std::string& task) const;
     json::value speed_info(const cv::Mat& image) const;

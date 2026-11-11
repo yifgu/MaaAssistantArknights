@@ -53,6 +53,15 @@ MARKERS = {
     "victory_overlay": (150, 160, 170),
     "conflict": (160, 170, 180),
     "paused_unknown_speed": (170, 180, 190),
+    "paused_localized": (180, 190, 200),
+    "pausex_only": (190, 200, 210),
+    "misplaced_localized": (200, 210, 220),
+    "suffixed_localized": (210, 220, 230),
+    "running_localized": (220, 230, 240),
+    "victory_localized": (230, 240, 250),
+    "paused_english": (15, 25, 35),
+    "paused_chinese": (25, 35, 45),
+    "paused_bilingual": (35, 45, 55),
 }
 
 
@@ -96,6 +105,42 @@ def prepare(settings, known):
     avatar = random.Random(5).randbytes(60 * 60 * 3)
     patches.append(("avatar", 62, 628, 60, 60, avatar))
     patches.append(("running-brightness", 1200, 40, 16, 16, b"\xff" * 16 * 16 * 3))
+    # Synthetic WenQuanYi Zen Hei labels: 64 px English / 32 px Chinese, white on black.
+    # Keep production OCR tasks for these frames; template fixtures cannot test text filtering.
+    ocr_labels = {
+        "paused_english": ("pause",),
+        "paused_chinese": ("paused-zh-cn",),
+        "paused_bilingual": ("pause", "paused-zh-cn"),
+        "paused_localized": ("pausex", "paused-zh-cn"),
+        "pausex_only": ("pausex",),
+        "misplaced_localized": ("pausex", "paused-zh-cn"),
+        "suffixed_localized": ("pausex", "paused-zh-cn-suffix"),
+        "running_localized": ("pausex", "paused-zh-cn"),
+        "victory_localized": ("pausex", "paused-zh-cn"),
+    }
+    if known == "localized_ocr":
+        from PIL import Image
+
+        del tasks["BattleControlPaused"]
+        for name, x, y in (
+            ("pause", 440, 280),
+            ("pausex", 440, 280),
+            ("paused-zh-cn", 590, 365),
+            ("paused-zh-cn-suffix", 590, 365),
+        ):
+            with Image.open(
+                Path(__file__).parent / "fixtures" / f"{name}.png"
+            ) as label:
+                patches.append(
+                    (
+                        name,
+                        x,
+                        y,
+                        label.width,
+                        label.height,
+                        label.convert("RGB").tobytes(),
+                    )
+                )
     if known:
         cache = settings.user_dir / "cache/avatars"
         cache.mkdir(parents=True)
@@ -106,6 +151,8 @@ def prepare(settings, known):
         )
         (cache / f"{game_id}.png").write_bytes(png(60, 60, avatar))
     for mode, marker in MARKERS.items():
+        if mode in ocr_labels and known != "localized_ocr":
+            continue
         for speed in (1, 2):
             image = bytearray(1280 * 720 * 3)
             image[:3] = bytes(marker)
@@ -116,6 +163,7 @@ def prepare(settings, known):
                     "victory",
                     "victory_overlay",
                     "conflict",
+                    "victory_localized",
                 ):
                     continue
                 if name == "BattleControlDefeat" and mode not in ("defeat", "conflict"):
@@ -133,11 +181,16 @@ def prepare(settings, known):
                     speed != 2 or mode == "paused_unknown_speed"
                 ):
                     continue
-                if (
-                    name in ("BattleOfficiallyBegin", "running-brightness")
-                    and mode != "running"
-                ):
+                if name in (
+                    "BattleOfficiallyBegin",
+                    "running-brightness",
+                ) and mode not in ("running", "running_localized"):
                     continue
+                if name in ("pause", "pausex", "paused-zh-cn", "paused-zh-cn-suffix"):
+                    if name not in ocr_labels.get(mode, ()):
+                        continue
+                    if name == "paused-zh-cn" and mode == "misplaced_localized":
+                        x, y = 200, 450
                 for row in range(height):
                     start = ((y + row) * 1280 + x) * 3
                     image[start : start + width * 3] = pixels[
@@ -177,7 +230,9 @@ def prepare(settings, known):
         }
     ]
     (root / "resource/config.json").write_text(json.dumps(config), encoding="utf-8")
-    (root / "mode").write_text("paused", encoding="utf-8")
+    (root / "mode").write_text(
+        "paused_localized" if known == "localized_ocr" else "paused", encoding="utf-8"
+    )
     (root / "speed").write_text("1")
     return root
 
@@ -205,8 +260,15 @@ def device(root, action, args):
         "at_ms": time.time_ns() // 10**6,
     }
     if action == "click" and 1170 <= int(args[0]) <= 1230 and 20 <= int(args[1]) <= 80:
-        event["action"] = "resume" if mode == "paused" else "pause"
-        mode = "running" if mode == "paused" else "paused"
+        paused = mode in (
+            "paused",
+            "paused_localized",
+            "paused_english",
+            "paused_chinese",
+            "paused_bilingual",
+        )
+        event["action"] = "resume" if paused else "pause"
+        mode = "running" if paused else "paused"
         (root / "mode").write_text(mode, encoding="utf-8")
         if event["action"] == "pause" and (root / "pause-sequence.json").exists():
             sequence.write_text((root / "pause-sequence.json").read_text())

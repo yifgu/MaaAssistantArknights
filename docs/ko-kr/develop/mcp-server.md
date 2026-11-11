@@ -238,7 +238,9 @@ PRTS는 `{"provider":"prts","command":"prts-mcp","region":"cn"}`으로 설정할
 
 `battle_observe`, `battle_capture_evidence`, `battle_collect_terminal(request)`은 입력 없이 복구 증거를 수집할 수 있습니다. `battle_collect_terminal.duration_ms`는 100–8000이며 `timeout_ms` 이하여야 합니다. `status=succeeded`는 수집 완료이지 정지 복구나 전투 승리가 아니므로 `pause_verified`, `session_input_blocked`, `terminal`을 확인하세요. 잠금 중 접수된 변경 명령은 해당 관측으로 복구되어도 실행되지 않습니다. 새 증거를 확인하고 새 작업을 요청하며 필요하면 수동 정지 인수를 명시적으로 허용해야 합니다. 과거 동작 재실행이나 결과 변경은 없습니다. 전투 이후 미확인/비전투 화면, 종료/충돌 증거, 속도 재확인 실패는 `input_block_reason=terminal_or_safety_quarantine`으로 영구 격리되며 정지 증거로 해제할 수 없습니다. `session_terminal`은 결과와 이미지 경로를 유지하며 검은 화면으로 확정 결과를 지우지 않고 승패 충돌은 unknown으로 유지합니다. 추가 Core 명령은 `set_speed`, `finalize`, `prepare`, `bind`입니다. 준비 작업은 `preparation_only=true`로 초기화하고 같은 컨트롤러로 연결합니다.
 
-정지 인식 실패 시 `pause_diagnostics`는 동일 프레임 ID/시각, 설정 ROI, 요구 점수와 null이 가능한 일치 결과를 보존합니다. OCR 작업은 전처리 설정과 같은 프레임에서 대상 텍스트 필터를 제외한 진단 후보도 제공하지만 후보는 정지 증거가 아닙니다. null은 낮은 점수의 측정값이 아닙니다. 정지/속도 임계값은 변경하지 않으며 배치 후 실제 OCR, 1x/2x 및 전체 전투 검증은 여전히 로컬 기기에서 해야 합니다.
+정지 인식은 먼저 `PAUSE`의 완전 일치를 요구합니다. 0.9에 도달하지 못하면 `BattleControlPausedLocalized`가 `[560,350,160,70]` 영역에서 중국 서버의 `暂停中`을 별도로 완전 일치 검사하며, 동일하게 0.9 이상을 요구합니다. 이 영역은 회귀 보고서의 텍스트 상자를 기준으로 설정되었습니다. `PAUSEX`, 임의 접두사 및 영역 밖 텍스트는 대체 증거로 인정하지 않으며 실행 중 버튼과 종결 판정이 우선합니다. `pause_evidence`는 채택된 작업, 텍스트, 점수 및 텍스트 상자를 기록합니다. 격리 해제에는 여전히 연속 두 프레임이 필요하며 정지 소유권을 자동으로 인수하지 않습니다.
+
+정지 인식 실패 시 `pause_diagnostics`는 동일 프레임 ID/시각, 설정 ROI, 요구 점수와 null이 가능한 일치 결과를 보존하며, `localized`는 중국어 라벨의 해당 진단을 보존합니다. OCR 작업은 전처리 설정과 같은 프레임에서 대상 텍스트 필터를 제외한 진단 후보도 제공하지만 후보는 정지 증거가 아닙니다. null은 낮은 점수의 측정값이 아닙니다. 합성 텍스트 회귀는 실제 OCR 작업을 사용하지만 게임 글꼴, 효과 가림 또는 다른 서버 지원을 검증하지는 않습니다. 배치 후 실제 OCR, 1x/2x 및 전체 전투 검증은 여전히 로컬 기기에서 해야 하며 속도 임계값은 변경하지 않았습니다.
 
 `skill_ready`는 true 또는 null이며 분류기 부정을 확인된 쿨다운으로 취급하지 않습니다. `skill_evidence`는 동일 프레임 ID, 시각, ROI, 기준점, 분류 점수와 확률을 보존합니다. 발동 단계/탄약/쿨다운은 미확인일 수 있고 점수는 보정된 정확도가 아닙니다. `asst.log`의 `Battle frame` / `Battle command result`, `battle-control/<session>/`의 PNG, `operations.sqlite3`를 보관하세요. 합성 회귀는 실제 OCR, ROI, 버튼 호환성 확인이 아니므로 로컬 재검증이 필요하지만 로컬 이미지를 클라우드 개발의 필수 입력으로 요구하지 않습니다.
 
