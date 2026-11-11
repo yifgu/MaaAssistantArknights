@@ -43,7 +43,13 @@ def first_pixel(image):
     return tuple(zlib.decompress(compressed)[1:4])
 
 
-MARKERS = {"paused": (10, 20, 30), "running": (40, 50, 60), "unknown": (70, 80, 90)}
+MARKERS = {
+    "paused": (10, 20, 30),
+    "running": (40, 50, 60),
+    "unknown": (70, 80, 90),
+    "victory": (100, 110, 120),
+    "defeat": (130, 140, 150),
+}
 
 
 def prepare(settings, known):
@@ -57,10 +63,19 @@ def prepare(settings, known):
         (2, "BattleOfficiallyBegin", 1180, 30),
         (3, "BattleOpersFlag", 100, 590),
         (4, "BattleOperRolePioneer", 60, 597),
+        (6, "BattleControlVictory", 400, 300),
+        (7, "BattleControlDefeat", 500, 300),
     ):
         pixels = random.Random(seed).randbytes(8 * 8 * 3)
         (templates / f"{name}.png").write_bytes(png(8, 8, pixels))
-        tasks[name] = {"templThreshold": 0.99, "maskRange": [0, 255]}
+        tasks[name] = {
+            "algorithm": "MatchTemplate",
+            "template": f"{name}.png",
+            "templThreshold": 0.99,
+            "maskRange": [0, 255],
+        }
+        if name.startswith("BattleControl"):
+            tasks[name].update(baseTask="#none", roi=[200, 180, 880, 360])
         patches.append((name, x, y, 8, 8, pixels))
     avatar = random.Random(5).randbytes(60 * 60 * 3)
     patches.append(("avatar", 62, 628, 60, 60, avatar))
@@ -73,7 +88,11 @@ def prepare(settings, known):
         image = bytearray(1280 * 720 * 3)
         image[:3] = bytes(marker)
         for name, x, y, width, height, pixels in patches:
-            if name == "BattleHpFlag" and mode == "unknown":
+            if name == "BattleHpFlag" and mode in ("unknown", "victory", "defeat"):
+                continue
+            if name == "BattleControlVictory" and mode != "victory":
+                continue
+            if name == "BattleControlDefeat" and mode != "defeat":
                 continue
             if (
                 name in ("BattleOfficiallyBegin", "running-brightness")
@@ -117,6 +136,14 @@ def prepare(settings, known):
 
 def device(root, action, args):
     mode = (root / "mode").read_text(encoding="utf-8")
+    transition = root / "transition.json"
+    if action == "capture" and mode == "running" and transition.exists():
+        state = json.loads(transition.read_text())
+        state["remaining"] -= 1
+        if state["remaining"] <= 0:
+            mode = state["target"]
+            (root / "mode").write_text(mode)
+        transition.write_text(json.dumps(state))
     event = {
         "action": action,
         "args": args,
@@ -130,7 +157,11 @@ def device(root, action, args):
     with (root / "events.jsonl").open("a", encoding="utf-8") as log:
         log.write(json.dumps(event) + "\n")
     if action == "capture":
+        if (root / "capture-delay").exists():
+            time.sleep(float((root / "capture-delay").read_text()))
         sys.stdout.buffer.write((root / f"{mode}.png").read_bytes())
+        if mode == "unknown" and (root / "return-after-unknown").exists():
+            (root / "mode").write_text("paused")
     elif action in ("click", "swipe"):
         # Make the interval between boundary acquisition and later analysis observable.
         time.sleep(0.25)

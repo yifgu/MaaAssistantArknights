@@ -150,3 +150,45 @@ async def test_connect_cancellation_reaps_worker(settings, worker_factory):
         await asyncio.gather(connecting, return_exceptions=True)
         await service.close()
         service.journal.close()
+
+
+async def test_worker_accepts_cancel_while_command_is_running(settings, worker_factory):
+    backend = worker_factory(settings)
+    try:
+        await asyncio.to_thread(backend.request, "connect", {}, 5)
+        task = asyncio.create_task(
+            asyncio.to_thread(
+                backend.request,
+                "command",
+                {"action": "step", "session_id": "s", "command_id": "c"},
+                6,
+            )
+        )
+        await asyncio.sleep(0.1)
+        backend.cancel("s", "wrong")
+        await asyncio.sleep(0.1)
+        assert not task.done()
+        backend.cancel("s", "c")
+        async with asyncio.timeout(2):
+            assert (await task)["status"] == "failed"
+        assert backend.process.poll() is None
+    finally:
+        backend.close()
+
+
+def test_cancel_before_submission_is_delivered_after_command(settings, worker_factory):
+    backend = worker_factory(settings)
+    try:
+        backend.request("connect", {}, 5)
+        backend.cancel("s", "early")
+        result = backend.request(
+            "command", {"action": "step", "session_id": "s", "command_id": "early"}, 2
+        )
+        assert result["status"] == "failed"
+        backend.cancel("s", "early")
+        result = backend.request(
+            "command", {"action": "observe", "session_id": "s", "command_id": "next"}, 2
+        )
+        assert result["status"] == "succeeded"
+    finally:
+        backend.close()

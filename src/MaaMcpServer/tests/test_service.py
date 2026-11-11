@@ -23,6 +23,7 @@ class FakeBackend:
         self.block = False
         self.entered = threading.Event()
         self.release = threading.Event()
+        self.cancellations = []
 
     def request(self, operation, payload, timeout):
         self.calls.append((operation, payload, timeout))
@@ -47,6 +48,9 @@ class FakeBackend:
     def abort(self):
         self.aborted = True
         self.release.set()
+
+    def cancel(self, session_id, command_id):
+        self.cancellations.append((session_id, command_id))
 
     def close(self):
         self.abort()
@@ -126,6 +130,7 @@ async def test_cancelled_step_finishes_cleanup_before_releasing_controller(conne
     await asyncio.sleep(0)
     assert not task.done()
     assert not backend.aborted
+    assert backend.cancellations == [(request.session_id, request.operation_id)]
     backend.release.set()
     with pytest.raises(asyncio.CancelledError):
         await task
@@ -155,6 +160,38 @@ async def test_close_waits_for_bounded_step_cleanup(connected):
     assert (await task)["status"] == "succeeded"
     assert (await closing)["status"] == "closed"
     assert backend.aborted
+
+
+@pytest.mark.parametrize("closing", [True, False])
+async def test_broken_cancel_channel_persists_unknown_and_releases_control(
+    connected, monkeypatch, closing
+):
+    service, backend = connected
+    backend.block = True
+    request = OperationRequest(
+        session_id=service.session_id, operation_id="broken-cancel"
+    )
+    task = asyncio.create_task(
+        service.command("step", request, {"action": "wait", "duration_ms": 1000})
+    )
+    assert await asyncio.to_thread(backend.entered.wait, 2)
+
+    def broken_cancel(*_):
+        raise NativeError("cancel pipe broken")
+
+    monkeypatch.setattr(backend, "cancel", broken_cancel)
+    if closing:
+        assert (await service.close())["status"] == "closed"
+        assert (await task)["status"] == "outcome_unknown"
+    else:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    assert backend.aborted
+    assert not service.lease.is_locked
+    result = service.operation(request.session_id, request.operation_id)
+    assert result["status"] == "outcome_unknown"
+    assert result["pause_verified"] is False
 
 
 async def test_busy_rejects_and_close_interrupts(connected):
@@ -315,3 +352,27 @@ def test_bounded_step_requires_complete_action_arguments():
             action="skill",
             unit_id="u",
         )
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {},
+        {"duration_ms": 0},
+        {"duration_ms": 8_001},
+        {"duration_ms": True},
+        {"duration_ms": 1_000, "timeout_ms": 1_500},
+        {"duration_ms": 1_000, "unit_id": "unit"},
+        {"duration_ms": 1_000, "location": [1, 1], "direction": "Right"},
+    ],
+)
+def test_wait_requires_a_bounded_duration_without_unit_args(extra):
+    with pytest.raises(ValidationError):
+        BoundedStepRequest(session_id="s", operation_id="o", action="wait", **extra)
+
+
+def test_wait_request_does_not_require_a_dummy_unit():
+    request = BoundedStepRequest(
+        session_id="s", operation_id="o", action="wait", duration_ms=500
+    )
+    assert request.unit_id is None

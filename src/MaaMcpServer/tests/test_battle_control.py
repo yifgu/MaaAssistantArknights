@@ -216,3 +216,188 @@ async def test_step_preserves_acquisition_time_and_original_png_on_replay(battle
         value["capture_image_path"],
         value["return_image_path"],
     )
+
+
+async def wait_step(battle, operation_id="wait", **kwargs):
+    service, server, _ = battle
+    request = {
+        "session_id": service.session_id,
+        "operation_id": operation_id,
+        "action": "wait",
+        "duration_ms": 600,
+        "adopt_manual_pause": True,
+        **kwargs,
+    }
+    return await server.call_tool("battle_step", {"request": request})
+
+
+async def test_wait_pauses_and_replay_never_advances_again(battle):
+    service, _, root = battle
+    result = await wait_step(battle)
+    value = result.structuredContent
+    assert value["status"] == "succeeded"
+    assert value["pause_verified"] is True
+    assert value["terminal"]["terminal_state"] == "still_in_battle"
+    assert value["requested_duration_ms"] == 600
+    assert value["actual_observed_envelope_ms"] >= 600
+    assert (
+        first_pixel(
+            service.evidence_path(
+                {"image_path": value["return_image_path"]}
+            ).read_bytes()
+        )
+        == MARKERS["paused"]
+    )
+    before = events(root)
+    replay = await wait_step(battle)
+    assert replay.structuredContent == value
+    assert events(root) == before
+
+
+@pytest.mark.parametrize("target", ["victory", "defeat", "unknown"])
+async def test_wait_captures_terminal_or_unknown_without_menu_clicks(battle, target):
+    service, _, root = battle
+    (root / "transition.json").write_text(
+        json.dumps({"remaining": 3, "target": target})
+    )
+    value = (await wait_step(battle, duration_ms=3_000)).structuredContent
+    assert value["terminal"]["terminal_state"] == target
+    assert value["pause_verified"] is False
+    assert value["pause_not_applicable"] is (target != "unknown")
+    assert value["status"] == (
+        "succeeded" if target != "unknown" else "outcome_unknown"
+    )
+    assert not any(
+        e["action"] in ("pause", "resume", "click") and e["mode"] == target
+        for e in events(root)
+    )
+    if target != "unknown":
+        image = service.evidence_path(
+            {"image_path": value["terminal_evidence_path"]}
+        ).read_bytes()
+        assert first_pixel(image) == MARKERS[target]
+    before = events(root)
+    denied = await wait_step(battle, "after-end")
+    assert denied.structuredContent["error"]["code"] == "battle_ended"
+    assert not any(
+        e["action"] in ("pause", "resume", "click") for e in events(root)[len(before) :]
+    )
+
+
+async def test_wait_cancel_reaches_core_and_preserves_pause(battle):
+    service, _, root = battle
+    task = asyncio.create_task(wait_step(battle, duration_ms=8_000))
+    try:
+        async with asyncio.timeout(30):
+            while not any(e["action"] == "resume" for e in events(root)):
+                assert not task.done()
+                await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        result = service.operation(service.session_id, "wait")
+        assert result["status"] == "failed"
+        assert result["error"]["code"] == "cancelled"
+        assert result["pause_verified"] is True
+        assert result["actual_observed_envelope_ms"] < 8_000
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+async def test_wait_requires_manual_pause_authorization(battle):
+    _, _, root = battle
+    value = (await wait_step(battle, adopt_manual_pause=False)).structuredContent
+    assert value["error"]["code"] == "pause_state_unknown"
+    assert value["pause_verified"] is True
+    assert not any(e["action"] in ("pause", "resume", "click") for e in events(root))
+
+
+async def test_unrecognized_transition_is_not_success_even_if_pause_returns(battle):
+    _, _, root = battle
+    (root / "transition.json").write_text(
+        json.dumps({"remaining": 3, "target": "unknown"})
+    )
+    (root / "return-after-unknown").touch()
+    value = (await wait_step(battle, duration_ms=3_000)).structuredContent
+    assert value["status"] == "outcome_unknown"
+    assert value["pause_verified"] is True
+    assert value["session_input_blocked"] is True
+    assert value["warnings"]
+
+
+async def test_external_pause_interrupts_wait_without_resuming_again(battle):
+    _, _, root = battle
+    (root / "transition.json").write_text(
+        json.dumps({"remaining": 3, "target": "paused"})
+    )
+    value = (await wait_step(battle, duration_ms=3_000)).structuredContent
+    assert value["status"] == "failed"
+    assert value["error"]["code"] == "wait_interrupted"
+    assert value["pause_verified"] is True
+    assert sum(e["action"] == "resume" for e in events(root)) == 1
+
+
+async def test_wait_deadline_failure_still_returns_paused_evidence(battle):
+    _, _, root = battle
+    (root / "capture-delay").write_text("0.7")
+    value = (
+        await wait_step(battle, duration_ms=100, timeout_ms=1_100)
+    ).structuredContent
+    assert value["status"] == "failed"
+    assert value["error"]["code"] == "deadline_exceeded"
+    assert value["pause_verified"] is True
+    assert value["return_image_path"]
+
+
+async def test_close_cancels_native_wait_before_releasing_control(battle):
+    service, _, root = battle
+    session = service.session_id
+    waiting = asyncio.create_task(wait_step(battle, duration_ms=8_000))
+    try:
+        async with asyncio.timeout(30):
+            while not any(e["action"] == "resume" for e in events(root)):
+                assert not waiting.done()
+                await asyncio.sleep(0.01)
+        assert (await service.close())["status"] == "closed"
+        result = (await waiting).structuredContent
+        assert result["error"]["code"] == "cancelled"
+        assert result["pause_verified"] is True
+        assert service.operation(session, "wait")["status"] == "failed"
+    finally:
+        if not waiting.done():
+            waiting.cancel()
+        await asyncio.gather(waiting, return_exceptions=True)
+
+
+@pytest.mark.parametrize("battle", [True], indirect=True)
+async def test_placement_tool_is_read_only_and_loadout_remains_unknown(battle):
+    service, server, root = battle
+    snapshot = (await service.read(service.session_id, "observe"))["snapshot"]
+    unit = snapshot["deployment"][0]
+    context = unit["decision_context"]
+    assert context["operator_game_id"] == "char_123_fang"
+    assert context["loadout"]["actual_elite"]["value"] is None
+    tile = next(t for t in service.map_info["tiles"] if t["buildable_type"] == 1)
+    before = events(root)
+    result = await server.call_tool(
+        "battle_evaluate_placement",
+        {
+            "session_id": service.session_id,
+            "placements": [
+                {
+                    "operator_game_id": "char_123_fang",
+                    "location": tile["location"],
+                    "direction": "Right",
+                    "assumed_elite": 1,
+                }
+            ],
+        },
+    )
+    assert not result.isError
+    assert (
+        result.structuredContent["placements"][0]["static_buildability_compatible"]
+        is True
+    )
+    assert events(root) == before

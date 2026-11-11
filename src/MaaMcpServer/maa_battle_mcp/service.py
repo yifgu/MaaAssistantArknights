@@ -9,8 +9,9 @@ from typing import Protocol
 
 from filelock import FileLock, Timeout
 
+from .decision import DecisionContext
 from .diagnostics import provenance
-from .models import OperationRequest, Settings
+from .models import BattleMode, OperationRequest, Settings
 from .native import NativeBackend, NativeError
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 class Backend(Protocol):
     def request(self, operation: str, payload: dict, timeout: float) -> dict: ...
+    def cancel(self, session_id: str, command_id: str) -> None: ...
     def abort(self) -> None: ...
     def close(self) -> None: ...
 
@@ -31,14 +33,19 @@ class BattleService:
         self,
         settings: Settings,
         backend_factory: Callable[[Settings], Backend] = NativeBackend,
+        decision: DecisionContext | None = None,
     ):
         self.settings = settings
         self.backend_factory = backend_factory
+        self.decision = decision or DecisionContext(settings)
+        self.map_info: dict | None = None
+        self.mode: BattleMode | None = None
         self.backend: Backend | None = None
         self.connection_info: dict = {}
         self.session_id: str | None = None
         self.lock = asyncio.Lock()
         self.step_active = False
+        self.active_request: OperationRequest | None = None
         settings.user_dir.mkdir(parents=True, exist_ok=True)
         self.lease = FileLock(settings.user_dir / "controller.lock", timeout=0)
         self.journal = sqlite3.connect(settings.user_dir / "operations.sqlite3")
@@ -88,7 +95,7 @@ class BattleService:
     def diagnostics(self) -> dict:
         return {**self.connection_info, **provenance(self.settings)}
 
-    async def attach(self, stage_name: str) -> dict:
+    async def attach(self, stage_name: str, mode: BattleMode | None = None) -> dict:
         async with self.lock:
             if self.backend is None:
                 raise BattleError("Connect before attaching")
@@ -96,6 +103,7 @@ class BattleService:
                 raise BattleError(
                     "A battle is already attached; close before starting another"
                 )
+            self.decision.validate_binding(stage_name, mode)
             session = str(uuid.uuid4())
             backend = self.backend
             try:
@@ -110,6 +118,10 @@ class BattleService:
                 if self.backend is not backend:
                     raise NativeError("Connection was closed during attachment")
                 self.session_id = session
+                self.map_info = result.get("map")
+                self.mode = mode
+                result["mode"] = mode
+                result["mode_source"] = "caller_supplied_not_visually_verified"
                 return result
             except (NativeError, asyncio.CancelledError):
                 await asyncio.to_thread(backend.abort)
@@ -157,25 +169,33 @@ class BattleService:
             self.journal.commit()
             cancelled = False
             self.step_active = action == "step"
+            self.active_request = request
             try:
                 timeout = request.timeout_ms / 1000 + (10 if action == "step" else 0)
                 request_task = asyncio.create_task(
                     asyncio.to_thread(backend.request, "command", payload, timeout)
                 )
                 if action == "step":
-                    try:
-                        result = await asyncio.shield(request_task)
-                    except asyncio.CancelledError:
-                        # Let Core finish its prepared capture-and-pause cleanup before releasing the lock.
-                        cancelled = True
-                        result = await asyncio.shield(request_task)
+                    while True:
+                        try:
+                            result = await asyncio.shield(request_task)
+                            break
+                        except asyncio.CancelledError:
+                            cancelled = True
+                            backend.cancel(request.session_id, request.operation_id)
                 else:
                     result = await request_task
             except (NativeError, asyncio.CancelledError) as exc:
                 logger.warning("Battle operation interrupted: %s", exc)
+                if not request_task.done():
+                    request_task.add_done_callback(
+                        lambda task: None if task.cancelled() else task.exception()
+                    )
                 await asyncio.to_thread(backend.abort)
                 self.backend = None
                 self.session_id = None
+                self.map_info = None
+                self.mode = None
                 self.connection_info = {}
                 self.lease.release()
                 result = {
@@ -191,11 +211,19 @@ class BattleService:
                     result["pause_verified"] = False
                     result["safe_state"] = "unknown"
                 self._save_result(request, result)
-                if isinstance(exc, asyncio.CancelledError) or cancelled:
+                if cancelled:
+                    raise asyncio.CancelledError from exc
+                if isinstance(exc, asyncio.CancelledError):
                     raise
                 return result
             finally:
                 self.step_active = False
+                self.active_request = None
+            for key in ("snapshot", "capture_time_snapshot", "return_time_snapshot"):
+                if isinstance(result.get(key), dict):
+                    self.decision.enrich_snapshot(result[key])
+            if isinstance(result.get("deployment"), list):
+                self.decision.enrich_snapshot(result)
             self._save_result(request, result)
             if cancelled:
                 raise asyncio.CancelledError
@@ -246,6 +274,16 @@ class BattleService:
 
     async def close(self) -> dict:
         backend = self.backend
+        if backend is not None and self.step_active and self.active_request is not None:
+            try:
+                backend.cancel(
+                    self.active_request.session_id, self.active_request.operation_id
+                )
+            except NativeError:
+                logger.exception(
+                    "Could not signal step cancellation; terminating worker with unknown pause state"
+                )
+                await asyncio.to_thread(backend.abort)
         if backend is not None and self.lock.locked() and not self.step_active:
             await asyncio.to_thread(backend.abort)
         async with self.lock:
@@ -256,6 +294,8 @@ class BattleService:
             current = self.backend
             self.backend = None
             self.session_id = None
+            self.map_info = None
+            self.mode = None
             self.connection_info = {}
             if current is not None:
                 try:

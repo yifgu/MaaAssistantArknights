@@ -98,7 +98,7 @@ For the optional live smoke test, explicitly set `MAA_MCP_NATIVE_CORE`, `MAA_MCP
 
 ## Launch and client configuration
 
-Stop other MAA/GUI tasks controlling the same device, then manually enter a fixed-map battle. This version does not select contracts, enter stages, recognize victory, move a multi-stage camera, or reconstruct operators already deployed before attachment.
+Stop other MAA/GUI tasks controlling the same device, then manually enter a fixed-map battle. This version does not select contracts, enter stages, move a multi-stage camera, or reconstruct operators already deployed before attachment. Terminal recognition is limited to the title matching described below.
 
 A cross-process control lock protects each `--user-dir`. Always use the same directory for the same device; this lock cannot prevent another directory's server or an external GUI from controlling it.
 
@@ -166,7 +166,7 @@ For a single tactical action, prefer `battle_step`, which performs preflight, an
 }
 ```
 
-`action` can be `deploy`, `retreat`, or `skill`; deployment also requires `location` and `direction`. Manual pauses are not adopted by default; resuming one requires `adopt_manual_pause=true` and fresh screenshot confirmation. Each call executes at most one action. It captures the action boundary, requests a pause, then returns a fresh frame and `pause_verified`. If the client request is cancelled, the service waits for this prepared cleanup to finish. If the worker itself fails, the result explicitly reports an unknown pause state. `battle_step` limits `timeout_ms` to 10000.
+`action` can be `deploy`, `retreat`, `skill`, or `wait` as described below; deployment also requires `location` and `direction`. Manual pauses are not adopted by default; resuming one requires `adopt_manual_pause=true` and fresh screenshot confirmation. Each call executes at most one action. It captures the action boundary, requests a pause, then returns a fresh frame and `pause_verified`. Cancellation notifies Core and waits for cleanup. If the worker itself fails, the result explicitly reports an unknown pause state. `battle_step` limits `timeout_ms` to 10000.
 
 `captured_at_ms` records the host's Unix time in milliseconds immediately after image acquisition, before analysis; it is not the device's render time. `capture_time_snapshot` stays paired with `capture_image_path` (action boundary), and `return_time_snapshot` with `return_image_path` (later pause verification). MCP image content remains return frame first, boundary frame second. `observation_id` counts analyses, not captures, so the boundary observation can have the larger ID despite the earlier timestamp. Wall-clock adjustments can affect time differences; these timestamps are not a hard running-time budget. An identical operation replay preserves the original timestamps and paths; a fresh capture gets its own acquisition timestamp.
 
@@ -189,6 +189,49 @@ Install the provider and prepare its data snapshot separately, then pass `--inte
 
 For PRTS use `{"provider":"prts","command":"prts-mcp","region":"cn"}`; the adapter requests stdio and structured output. `intel_query` supports `stage/operator/enemy`. Intelligence expects game IDs; PRTS expects stage IDs or Chinese operator/enemy names. Intelligence `routes_page` and `spawns_page` are 1-based, with 50 rows per page. Results preserve provenance, limitations, and pagination and are cached for five minutes. PRTS stage queries return enemies, not tiles/routes/waves; they never silently substitute CN data for another region. Static intelligence is not live state, and external maps are not automatically merged or calibrated.
 
+## Bounded waits and decision context
+
+Wait without separate client-side resume and pause calls:
+
+```json
+{
+  "request": {
+    "session_id": "replace-with-session-id",
+    "operation_id": "wait-001",
+    "action": "wait",
+    "duration_ms": 1000,
+    "adopt_manual_pause": true,
+    "timeout_ms": 10000
+  }
+}
+```
+
+`duration_ms` is 100–8000 and must leave at least 1000 ms within `timeout_ms`; unit, location and direction arguments are forbidden. Duration uses the host monotonic clock, not simulation time; capture/analysis adds overhead. Core samples while advancing, retaining up to eight trailing frames plus boundary/return frames. Cancellation or closure interrupts advancement and attempts pause. Cancellation, deadline expiry, evidence-write failure or unknown pause state is not a successful wait. An external pause returns `wait_interrupted` without resuming again. A non-battle frame without terminal proof still returns `outcome_unknown` and `session_input_blocked=true`, even if paused battle is subsequently recognized. Blocked device I/O or process failure can still prevent pause.
+
+`terminal` distinguishes `victory`, `defeat`, `unknown` and `still_in_battle`, with recognition source, raw match confidence and `terminal_evidence_path`. Resources currently cover explicit CN/English success/failure titles only, not verified support for every language or screen. Total kills, a black screen or leaving battle never imply victory; successful waiting is not battle success. Once a non-battle frame is observed, the session rejects further input and never toggles pause on menus. Exit evidence is exempt from the ordinary 128-image rotation and needs manual cleanup. User testimony must remain separate from image evidence.
+
+For complete static queries, explicitly attach with `battle_attach(stage_name="act55side_ex01", mode="normal")`, then call `intel_query(kind="stage", identifier="act55side_ex01", complete_stage=true, session_id="…")`. It reuses the configured provider, bypasses the page cache and bounds collection to 100 requests/120 seconds, checking region, stage, mode, cross-page provenance and duplicate IDs. The structured contract requires `game_id`, `server`, `mode`, `provenance`, pagination metadata `routes_page`/`spawns_page` with `page`, `has_more` and optional `total`, and top-level `routes`/`spawns` arrays or pagination `items`. Routes use `route_id`; spawns use `spawn_id`, `enemy_game_id`, `route_id`, `count`. Unknown provider schemas are not guessed.
+
+For `coordinate_system="public_row_col"`, conversion uses the attached height: `x=col, y=height-1-row`. Points gain `maa_location`; tile matrices reverse row order. Raw responses remain in `pages`. `maa_grid` is unchanged; other systems remain unknown. Missing fields/pages or provider partial data return `partial` with per-section `completeness`, never empty substitutes. Identity/version conflicts and provider failures raise errors. `expires_at` is Unix seconds; expiry is explicit, absence means unknown freshness, and the five-minute cache does not prove current game data. Real-provider acceptance is still required: mock success proves neither all five information categories nor dynamic summon counts.
+
+Supply per-battle configuration with `--loadout-config /absolute/loadout.json`; it is read at startup and requires a restart after edits. This example is not an observed loadout:
+
+```json
+{
+  "region": "cn",
+  "stage_id": "act55side_ex01",
+  "mode": "normal",
+  "confirmed_by_user": false,
+  "operators": [
+    {"operator_game_id": "char_4228_closur", "actual_elite": 2, "equipped_skill_id": null}
+  ]
+}
+```
+
+Region, stage and explicit mode must match. Optional fields include `actual_level`, `potential`, `module_id`, `module_level`, `skill_level` and `mastery`; omitted values are unknown. Snapshot `decision_context` preserves field sources, user confirmation and the configuration hash separately, without overwriting native observations or treating user confirmation as visual verification. SP, active phases, duration and talents remain unknown; ambiguous game IDs never silently select the first candidate.
+
+`battle_evaluate_placement(session_id, placements)` checks a candidate whole formation without device input. Each entry supplies `operator_game_id`, `location`, `direction` and optionally `assumed_elite`; otherwise elite comes from supplied configuration. Results include base cells, geometric allied coverage, static deployment compatibility and cell conflicts. Unknown elite/ranges never use profession defaults. This does not verify live occupancy, healing eligibility, survival or optimality, and excludes skill, module, talent and special terrain effects. Summon/device control and live enemy tracking remain unsupported.
+
 ## Core protocol
 
 Initialize with `AsstAppendTask(handle, "BattleControl", {"stage_name":"main_01-07","session_id":"unique-id"})`, call `AsstStart`, and await `SubTaskExtraInfo` with `what="BattleControlReady"` (protocol version 1). Submit `session_id`, `command_id`, `action`, `args`, and `timeout_ms` through `AsstSetTaskParams`; await `what="BattleControlResult"`. Only one command is accepted at a time; wait for its callback before submitting another.
@@ -196,3 +239,5 @@ Initialize with `AsstAppendTask(handle, "BattleControl", {"stage_name":"main_01-
 Actions are `observe`, `capture`, `map`, `identify`, `deploy`, `retreat`, `skill`, `set_paused`, and `step`. `step` accepts one preflighted tactical action, captures immediately afterward, requests a pause, then verifies and returns a fresh paused frame; it cannot guarantee a pause if device I/O or the MCP process itself fails. Parameter updates only enqueue work; device access stays on the Core task thread. Native clients must supply their own external watchdog and deduplication: the C ABI alone cannot guarantee a blocking I/O deadline. The MCP server supplies that process-level watchdog. Experiments and optimization are future work.
 
 `identify` accepts the optional strict boolean `args.adopt_manual_pause` (default false). Explicit adoption claims the recognized pause without toggling it; it does not authorize resume.
+
+`step` also accepts `args.action="wait"` and `args.duration_ms` without unit arguments. During execution, `AsstSetTaskParams` accepts `{"session_id":"…","cancel_command_id":"…"}`. This only signals cancellation for that command, performs no device input and creates no second result. Late cancellation cannot affect the next command. The original callback returns cleanup results, and MCP persists/deduplicates using the original `operation_id`.

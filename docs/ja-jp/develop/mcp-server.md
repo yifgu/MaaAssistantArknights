@@ -98,7 +98,7 @@ worker は MCP の入出力を継承せず、専用 stdin/stdout パイプを持
 
 ## 起動とクライアント設定
 
-同じ端末を操作する別の MAA/GUI タスクを停止し、固定マップの戦闘を手動で開始してください。初版は契約選択、ステージ開始、勝利判定、多段階マップのカメラ移動、接続前に配置済みのオペレーターの復元を行いません。
+同じ端末を操作する別の MAA/GUI タスクを停止し、固定マップの戦闘を手動で開始してください。契約選択、ステージ開始、多段階マップのカメラ移動、接続前に配置済みのオペレーターの復元には対応していません。終了判定は後述の限定的なタイトル照合のみです。
 
 同じ `--user-dir` はプロセス間ロックで保護されます。同じ端末には常に同じディレクトリを使用してください。別ディレクトリのサーバーや外部 GUI による操作は防げません。
 
@@ -166,7 +166,7 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 }
 ```
 
-`action` は `deploy`、`retreat`、`skill` のいずれかです。配置には `location` と `direction` も必要です。手動一時停止は既定では引き継ぎません。再開するには `adopt_manual_pause=true` と新しい画像による一時停止確認が必要です。1 回の呼び出しで実行する操作は 1 つだけです。操作境界の画像を取得してから一時停止を要求し、新しい画像と `pause_verified` を返します。クライアント要求がキャンセルされても、サービスは準備済みの一時停止処理が終わるまで待機します。worker 自体が失敗した場合は、一時停止状態が不明であることを明示します。`battle_step` の `timeout_ms` 上限は 10000 です。
+`action` は `deploy`、`retreat`、`skill` または後述の `wait` です。配置には `location` と `direction` も必要です。手動一時停止は既定では引き継ぎません。再開するには `adopt_manual_pause=true` と新しい画像による一時停止確認が必要です。1 回の呼び出しで実行する操作は 1 つだけです。操作境界の画像を取得してから一時停止を要求し、新しい画像と `pause_verified` を返します。キャンセル時は Core に通知して一時停止処理の完了を待ちます。worker 自体が失敗した場合は、一時停止状態が不明であることを明示します。`battle_step` の `timeout_ms` 上限は 10000 です。
 
 `captured_at_ms` は画像取得直後、解析前に記録したホストの Unix ミリ秒時刻で、端末の描画時刻ではありません。`capture_time_snapshot` は `capture_image_path`（操作境界）、`return_time_snapshot` は `return_image_path`（その後の停止確認）に対応します。MCP 画像は従来どおり返却時の画像、操作境界の画像の順です。`observation_id` は取得順ではなく解析順に増加するため、操作境界の ID が大きくても時刻は早い場合があります。システム時計の調整は時間差に影響し、これらの時刻は実行時間の厳密な上限ではありません。同一操作の再送は元の時刻とパスを保持し、新しい撮影にはその取得時刻を記録します。
 
@@ -189,6 +189,49 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 
 PRTS には `{"provider":"prts","command":"prts-mcp","region":"cn"}` を使用できます。アダプターが stdio と構造化出力を要求します。`intel_query` は `stage/operator/enemy` に対応し、Intelligence ではゲームの一意 ID、PRTS ではステージ ID またはオペレーター／敵の中国語名を指定します。Intelligence の `routes_page` と `spawns_page` は 1 始まりで、各ページは 50 件です。情報源、制限、ページ情報を保持し、5 分間キャッシュします。PRTS のステージ問い合わせは敵情報のみで、マス、経路、ウェーブを提供せず、別リージョンのデータへ暗黙に切り替えません。静的情報は現在の戦況ではなく、外部マップの自動統合や補正もしません。
 
+## 時間制限付き待機と判断資料
+
+クライアントで再開と停止を別々に呼び出さずに待機できます。
+
+```json
+{
+  "request": {
+    "session_id": "replace-with-session-id",
+    "operation_id": "wait-001",
+    "action": "wait",
+    "duration_ms": 1000,
+    "adopt_manual_pause": true,
+    "timeout_ms": 10000
+  }
+}
+```
+
+`duration_ms` は 100–8000 で、`timeout_ms` に少なくとも 1000 ms の余裕が必要です。ユニット、位置、方向は指定できません。時間はホストの単調時計で計測し、ゲーム内時間ではありません。取得・解析の負荷により実際の所要時間は増えます。Core は進行中に撮影し、末尾最大 8 フレームと境界／返却フレームを保持します。キャンセルや切断時は進行を中断して停止を試みます。期限切れ、キャンセル、保存失敗、停止未確認は正常な待機成功になりません。外部からの一時停止には `wait_interrupted` を返し、勝手に再開しません。終局を確認できない非戦闘フレームがあれば、その後に一時停止中の戦闘を認識しても `outcome_unknown` と `session_input_blocked=true` を返します。端末 I/O の停止やプロセス障害では一時停止できない場合があります。
+
+`terminal` は `victory`、`defeat`、`unknown`、`still_in_battle` を区別し、認識元、生の照合信頼度、`terminal_evidence_path` を返します。現在のリソースは中国語簡体字／英語の明確な成功・失敗タイトルのみで、全言語・画面の実機対応を保証しません。撃破数の達成、黒画面、戦闘からの離脱は勝利と見なしません。待機処理の成功と戦闘勝利も別です。非戦闘画面を確認したセッションは以後の入力を拒否し、メニューで停止を切り替えません。離脱時の証拠は通常の 128 枚の循環削除から除外され、手動整理が必要です。ユーザーの証言は画像証拠と分けてください。
+
+完全な静的問い合わせは `battle_attach(stage_name="act55side_ex01", mode="normal")` で明示的に紐付けてから、`intel_query(kind="stage", identifier="act55side_ex01", complete_stage=true, session_id="…")` を呼び出します。既存 provider を再利用し、ページキャッシュを使わず、最大 100 リクエスト／120 秒で収集します。リージョン、ステージ、モード、ページ間の出典と重複 ID を確認します。構造化契約は `game_id`、`server`、`mode`、`provenance`、`routes_page`／`spawns_page` の `page` と `has_more`（任意の `total`）、最上位の `routes`／`spawns` 配列またはページ内の `items` を要求します。経路は `route_id`、生成項目は `spawn_id`、`enemy_game_id`、`route_id`、`count` を使います。不明な provider 形式は推測しません。
+
+`coordinate_system="public_row_col"` は紐付けた高さで `x=col, y=height-1-row` に変換し、各点に `maa_location` を追加、二次元タイル配列の行順を反転します。元の応答は `pages` に残します。`maa_grid` は変換せず、他の座標系は不明のままです。項目・ページ不足や provider の partial は `partial` と節ごとの `completeness` を返し、欠落を空集合にしません。識別／バージョン不一致や provider 障害はエラーです。`expires_at` は Unix 秒で、有効期限切れを明示します。省略時は鮮度不明で、5 分キャッシュは最新ゲームデータの保証ではありません。実 provider の受け入れ確認が必要で、模擬サービスの成功は 5 分類の情報完備や動的召喚数を証明しません。
+
+`--loadout-config /absolute/loadout.json` でこの戦闘の構成を渡します。起動時に読み込むため変更後は再起動が必要です。以下は観測結果ではなく設定例です。
+
+```json
+{
+  "region": "cn",
+  "stage_id": "act55side_ex01",
+  "mode": "normal",
+  "confirmed_by_user": false,
+  "operators": [
+    {"operator_game_id": "char_4228_closur", "actual_elite": 2, "equipped_skill_id": null}
+  ]
+}
+```
+
+リージョン、ステージ、明示モードは一致する必要があります。`actual_level`、`potential`、`module_id`、`module_level`、`skill_level`、`mastery` も指定でき、省略は unknown です。スナップショットの `decision_context` は項目ごとの情報源、ユーザー確認、設定ハッシュを別途保持し、ネイティブ観測を上書きせず、ユーザー確認を視覚的確認と呼びません。SP、スキル段階、持続時間、素質は不明のままです。曖昧な game ID 候補の先頭を勝手に選びません。
+
+`battle_evaluate_placement(session_id, placements)` は候補編成全体を読み取り専用で確認します。各項目に `operator_game_id`、`location`、`direction` を指定し、昇進段階は設定から取得するか `assumed_elite` で仮定を明示します。基本範囲、幾何学的な味方カバー、静的配置適合性、マス競合を返します。不明な段階／範囲に職業の既定テンプレートは使いません。現場の占有、回復対象条件、生存や最適性は検証せず、スキル・モジュール・素質・特殊地形効果も含みません。召喚物／装置の制御と敵のリアルタイム追跡は未対応です。
+
 ## Core プロトコル
 
 `AsstAppendTask(handle, "BattleControl", {"stage_name":"main_01-07","session_id":"unique-id"})` で初期化し、`AsstStart` の後に `SubTaskExtraInfo` の `what="BattleControlReady"`（プロトコルバージョン 1）を待ちます。`AsstSetTaskParams` で `session_id`、`command_id`、`action`、`args`、`timeout_ms` を送信し、`what="BattleControlResult"` を待ちます。同時に受け付けるコマンドは 1 件だけです。
@@ -196,3 +239,5 @@ PRTS には `{"provider":"prts","command":"prts-mcp","region":"cn"}` を使用�
 アクションは `observe`、`capture`、`map`、`identify`、`deploy`、`retreat`、`skill`、`set_paused`、`step` です。`step` は事前検証済みの戦術操作を 1 つ受け付け、直後に撮影して一時停止を要求し、確認後に新しい一時停止画像を返します。端末 I/O または MCP プロセス自体が失敗した場合の一時停止は保証できません。引数更新はキューへの追加のみで、端末操作は Core のタスクスレッドで実行します。C ABI 単体では低レベル I/O の終了期限を保証できないため、ネイティブクライアントには外部 watchdog と重複排除が必要です。MCP サーバーはプロセス単位の watchdog を提供します。反復実験と最適化は今後の対応です。
 
 `identify` は省略可能な厳密な boolean 引数 `args.adopt_manual_pause`（既定値 false）を受け付けます。明示的な引き継ぎは認識済みの停止を管理下に置くだけで、停止を切り替えたり、この認識操作による再開を許可したりするものではありません。
+
+`step` はユニット引数なしの `args.action="wait"` と `args.duration_ms` にも対応します。実行中は `AsstSetTaskParams` に `{"session_id":"…","cancel_command_id":"…"}` を送信できます。対応するコマンドに取消信号を設定するだけで、端末操作や 2 件目の結果は生成しません。遅延した取消は次のコマンドに影響せず、元のコールバックが後処理結果を返します。MCP は元の `operation_id` で保存と重複排除を行います。
