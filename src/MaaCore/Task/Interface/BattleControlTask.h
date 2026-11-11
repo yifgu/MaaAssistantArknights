@@ -63,8 +63,13 @@ private:
     json::value execute_wait(const Command& command, CapturedFrame frame, json::value snapshot);
     json::value execute_speed(const Command& command, CapturedFrame frame, json::value snapshot);
     json::value preparation(const CapturedFrame& frame);
-    bool settle_pause(CapturedFrame& frame, json::value& snapshot);
-    void collect_terminal(const Command& command, CapturedFrame& frame, json::value& snapshot, int duration_ms);
+    bool settle_pause(const Command& command, CapturedFrame& frame, json::value& snapshot);
+    void collect_safety_evidence(const Command& command, CapturedFrame& frame, json::value& snapshot, int duration_ms);
+
+    bool input_blocked() const { return m_terminal_seen || m_pause_unverified; }
+
+    void update_input_state(json::value& snapshot);
+    json::value pause_diagnostics(const CapturedFrame& frame, const json::value& snapshot) const;
     json::value terminal_info(const CapturedFrame& frame, const json::value& snapshot) const;
     json::value match_evidence(const cv::Mat& image, const std::string& task) const;
     json::value speed_info(const cv::Mat& image) const;
@@ -80,6 +85,8 @@ private:
     bool m_initialized = false;
     bool m_pause_requested = false;
     bool m_terminal_seen = false;
+    bool m_pause_unverified = false;
+    int m_pause_confirmations = 0;
     bool m_battle_observed = false;
     bool m_preparation_only = false;
     std::chrono::milliseconds m_frame_cost { 0 };

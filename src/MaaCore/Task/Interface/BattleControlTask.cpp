@@ -7,6 +7,7 @@
 #include <unordered_map>
 
 #include "Config/Miscellaneous/BattleDataConfig.h"
+#include "Config/TaskData.h"
 #include "Controller/Controller.h"
 #include "MaaUtils/ImageIo.h"
 #include "Utils/Logger.hpp"
@@ -14,6 +15,7 @@
 #include "Vision/Battle/BattlefieldClassifier.h"
 #include "Vision/Battle/BattlefieldMatcher.h"
 #include "Vision/Miscellaneous/PipelineAnalyzer.h"
+#include "Vision/RegionOCRer.h"
 
 asst::BattleControlTask::BattleControlTask(const AsstCallback& callback, Assistant* inst) :
     InterfaceTask(callback, inst, TaskType),
@@ -303,7 +305,7 @@ json::value
         snapshot["scene"] = "unknown";
         snapshot["terminal"] = m_terminal_result;
         m_terminal_seen = m_terminal_seen || m_battle_observed;
-        snapshot["session_input_blocked"] = m_terminal_seen;
+        update_input_state(snapshot);
         return snapshot;
     }
     BattlefieldMatcher matcher(image);
@@ -319,6 +321,10 @@ json::value
                                     : json::value(nullptr);
     snapshot["pause_evidence"] = pause_evidence;
     const bool paused = pause_evidence.is_object() && pause_evidence.get("score", 0.0) >= 0.9;
+    snapshot["pause_diagnostics"] =
+        !terminal && result && !snapshot.at("running_button_visible").as_boolean() && !paused
+            ? pause_diagnostics(frame, snapshot)
+            : json::value(nullptr);
     snapshot["scene"] = terminal                                                                   ? "terminal"
                         : snapshot.at("terminal").get("result_source", "") == "conflicting_titles" ? "unknown"
                         : !result                                                                  ? "unknown"
@@ -326,14 +332,31 @@ json::value
                         : paused                                                                   ? "paused"
                                                                                                    : "transition";
     const auto scene = snapshot.at("scene").as_string();
+    if (terminal || (scene == "unknown" && m_battle_observed) ||
+        snapshot.at("terminal").get("result_source", "") == "conflicting_titles") {
+        m_terminal_seen = true;
+    }
+    else if (scene == "transition" && m_battle_observed) {
+        if (!input_blocked()) {
+            LogWarn << __FUNCTION__
+                    << "Pause evidence missing in battle; blocking input pending read-only verification";
+        }
+        m_pause_unverified = true;
+        m_pause_confirmations = 0;
+    }
+    else if (scene == "paused" && m_pause_unverified && !m_terminal_seen) {
+        if (++m_pause_confirmations >= 2) {
+            m_pause_unverified = false;
+            LogInfo << __FUNCTION__ << "Pause verified by consecutive fresh captures; no input replayed";
+        }
+    }
+    else {
+        m_pause_confirmations = 0;
+    }
     if (scene == "running" || scene == "paused") {
         m_battle_observed = true;
     }
-    else if (
-        terminal || m_battle_observed || snapshot.at("terminal").get("result_source", "") == "conflicting_titles") {
-        m_terminal_seen = true;
-    }
-    snapshot["session_input_blocked"] = m_terminal_seen;
+    update_input_state(snapshot);
     snapshot["speed"] = (scene == "running" || scene == "paused") ? speed_info(image) : json::value(nullptr);
     if (snapshot.at("terminal").get("result_source", "") == "conflicting_titles") {
         m_terminal_result = snapshot.at("terminal");
@@ -363,10 +386,6 @@ json::value
         }
     }
     snapshot["session_terminal"] = m_terminal_result;
-    if (m_terminal_seen) {
-        m_pause_requested = false;
-        snapshot["pause_requested"] = false;
-    }
     auto finish = [&]() {
         m_frame_cost = std::max(
             m_frame_cost,
@@ -525,7 +544,7 @@ json::value asst::BattleControlTask::save_evidence(const CapturedFrame& frame, j
     if (!MAA_NS::imwrite(file, image)) {
         return failure("evidence_write_failed", "Could not save screenshot");
     }
-    if (!retain && !m_terminal_seen) {
+    if (!retain && !input_blocked()) {
         m_evidence_files.emplace_back(file);
     }
     if (m_evidence_files.size() > 128) {
@@ -609,23 +628,89 @@ json::value asst::BattleControlTask::speed_info(const cv::Mat& image) const
                           { "conflict", is_one && is_two } };
 }
 
-bool asst::BattleControlTask::settle_pause(CapturedFrame& frame, json::value& snapshot)
+void asst::BattleControlTask::update_input_state(json::value& snapshot)
 {
-    for (int attempt = 0; attempt < 2; ++attempt) {
-        if (snapshot.get("scene", "") == "paused") {
-            return true;
+    if (m_terminal_seen) {
+        m_pause_unverified = false;
+        m_pause_confirmations = 0;
+    }
+    if (input_blocked()) {
+        m_pause_requested = false;
+    }
+    snapshot["pause_requested"] = m_pause_requested;
+    snapshot["session_input_blocked"] = input_blocked();
+    snapshot["input_block_reason"] = m_terminal_seen      ? json::value("terminal_or_safety_quarantine")
+                                     : m_pause_unverified ? json::value("pause_verification_pending")
+                                                          : json::value(nullptr);
+}
+
+json::value asst::BattleControlTask::pause_diagnostics(const CapturedFrame& frame, const json::value& snapshot) const
+{
+    const auto task = Task.get("BattleControlPaused");
+    const auto& roi = task->roi;
+    json::value diagnostic = json::object {
+        { "source", "BattleControlPaused" },
+        { "observation_id", snapshot.at("observation_id") },
+        { "captured_at_ms", snapshot.at("captured_at_ms") },
+        { "roi", json::array { roi.x, roi.y, roi.width, roi.height } },
+        { "required_score", 0.9 },
+        { "match", snapshot.at("pause_evidence") },
+        { "candidates", nullptr },
+    };
+    const auto ocr = std::dynamic_pointer_cast<OcrTaskInfo>(task);
+    if (!ocr) {
+        return diagnostic;
+    }
+    diagnostic["full_match"] = ocr->full_match;
+    diagnostic["without_det"] = ocr->without_det;
+    diagnostic["use_raw"] = ocr->use_raw;
+    diagnostic["use_char_model"] = ocr->is_ascii;
+    diagnostic["bin_threshold"] = json::array { ocr->bin_threshold[0], ocr->bin_threshold[1] };
+    diagnostic["candidate_source"] = "same_frame_ocr_without_required_text_filter";
+    diagnostic["candidates"] = json::array();
+    // Diagnostics never substitute a rejected OCR candidate for positive pause evidence.
+    if (ocr->without_det) {
+        RegionOCRer analyzer(frame.image);
+        analyzer.set_task_info(ocr);
+        analyzer.set_required({});
+        if (const auto candidate = analyzer.analyze()) {
+            diagnostic["candidates"].as_array().emplace_back(candidate->to_json());
         }
-        if (snapshot.get("scene", "") != "running" || m_terminal_seen) {
+    }
+    else {
+        OCRer analyzer(frame.image);
+        analyzer.set_task_info(ocr);
+        analyzer.set_required({});
+        if (const auto candidates = analyzer.analyze()) {
+            for (const auto& candidate : *candidates) {
+                diagnostic["candidates"].as_array().emplace_back(candidate.to_json());
+            }
+        }
+    }
+    return diagnostic;
+}
+
+bool asst::BattleControlTask::settle_pause(const Command& command, CapturedFrame& frame, json::value& snapshot)
+{
+    int attempts = 0;
+    while (true) {
+        if (m_pause_unverified) {
+            collect_safety_evidence(command, frame, snapshot, 3000);
+        }
+        if (snapshot.get("scene", "") == "paused") {
+            return !m_pause_unverified;
+        }
+        if (snapshot.get("scene", "") != "running" || input_blocked() || attempts >= 2) {
             return false;
         }
+        ++attempts;
         pause();
         frame = capture_frame();
         snapshot = observe(frame);
     }
-    return snapshot.get("scene", "") == "paused";
 }
 
-void asst::BattleControlTask::collect_terminal(
+void asst::BattleControlTask::collect_safety_evidence(
     const Command& command,
     CapturedFrame& frame,
     json::value& snapshot,
@@ -633,7 +718,7 @@ void asst::BattleControlTask::collect_terminal(
 {
     const auto until =
         std::min(command.deadline, std::chrono::steady_clock::now() + std::chrono::milliseconds(duration_ms));
-    while (m_terminal_seen && m_terminal_result.get("terminal_state", "unknown") == "unknown" &&
+    while (input_blocked() && m_terminal_result.get("terminal_state", "unknown") == "unknown" &&
            m_terminal_result.get("result_source", "") != "conflicting_titles" && !m_cancel_requested && !need_exit() &&
            std::chrono::steady_clock::now() + m_frame_cost < until) {
         {
@@ -642,7 +727,7 @@ void asst::BattleControlTask::collect_terminal(
                 return m_cancel_requested.load() || need_exit();
             });
         }
-        if (m_cancel_requested || need_exit()) {
+        if (m_cancel_requested || need_exit() || std::chrono::steady_clock::now() + m_frame_cost >= until) {
             break;
         }
         frame = capture_frame();
@@ -724,16 +809,14 @@ json::value asst::BattleControlTask::execute_speed(const Command& command, Captu
         snapshot = observe(frame);
         unexpected_resume = snapshot.get("scene", "") == "running";
         if (unexpected_resume) {
-            settle_pause(frame, snapshot);
+            settle_pause(command, frame, snapshot);
         }
     }
-    const bool verified = !unexpected_resume && snapshot.get("scene", "") == "paused" && !m_terminal_seen &&
+    const bool verified = !unexpected_resume && snapshot.get("scene", "") == "paused" && !input_blocked() &&
                           snapshot.at("speed").find<int>("value") == desired;
     if (!verified) {
         m_terminal_seen = true;
-        m_pause_requested = false;
-        snapshot["session_input_blocked"] = true;
-        snapshot["pause_requested"] = false;
+        update_input_state(snapshot);
     }
     auto result = save_evidence(frame, snapshot, true);
     result["status"] = verified && result.get("status", "") == "succeeded" ? "succeeded" : "outcome_unknown";
@@ -751,7 +834,7 @@ json::value asst::BattleControlTask::execute_speed(const Command& command, Captu
         result["error"] = json::object { { "code", "speed_unverified" },
                                          { "message", "Speed or pause changed unexpectedly; further input blocked" } };
     }
-    result["session_input_blocked"] = m_terminal_seen;
+    result["session_input_blocked"] = input_blocked();
     if (std::chrono::steady_clock::now() >= command.deadline) {
         result["status"] = "failed";
         result["error"] =
@@ -785,7 +868,7 @@ json::value asst::BattleControlTask::execute_wait(const Command& command, Captur
     auto cancelled = [&] {
         return m_cancel_requested.load() || need_exit();
     };
-    if (m_terminal_seen || (snapshot.get("scene", "") != "running" && snapshot.get("scene", "") != "paused")) {
+    if (input_blocked() || (snapshot.get("scene", "") != "running" && snapshot.get("scene", "") != "paused")) {
         remember();
     }
     else if (
@@ -809,15 +892,18 @@ json::value asst::BattleControlTask::execute_wait(const Command& command, Captur
             frame = capture_frame();
             snapshot = observe(frame, false, false);
         }
-        resumed = snapshot.get("scene", "") == "running" && !m_terminal_seen;
+        resumed = snapshot.get("scene", "") == "running" && !input_blocked();
         if (resumed) {
             m_pause_requested = false;
             const auto until = std::chrono::steady_clock::now() + duration;
             while (true) {
                 remember();
-                if (snapshot.get("scene", "") != "running" || m_terminal_seen) {
+                if (snapshot.get("scene", "") != "running" || input_blocked()) {
                     if (snapshot.get("scene", "") == "paused") {
                         error = "wait_interrupted";
+                    }
+                    else if (m_pause_unverified) {
+                        error = "pause_unverified";
                     }
                     break;
                 }
@@ -845,18 +931,20 @@ json::value asst::BattleControlTask::execute_wait(const Command& command, Captur
             }
         }
         else if (!m_terminal_seen) {
-            error = "resume_unverified";
+            error = m_pause_unverified ? "pause_unverified" : "resume_unverified";
         }
     }
 
     const auto boundary_frame = frame;
     const auto boundary_snapshot = snapshot;
-    pause_verified = settle_pause(frame, snapshot);
+    pause_verified = settle_pause(command, frame, snapshot);
+    if (m_terminal_seen) {
+        collect_safety_evidence(command, frame, snapshot, 1000);
+    }
     const auto settled_at = std::chrono::steady_clock::now();
-    collect_terminal(command, frame, snapshot, 1000);
-    pause_verified = snapshot.get("scene", "") == "paused";
+    pause_verified = snapshot.get("scene", "") == "paused" && !m_pause_unverified;
     // Refusing manual adoption must not grant ownership as a side effect.
-    m_pause_requested = pause_verified && !m_terminal_seen && error != "pause_state_unknown";
+    m_pause_requested = pause_verified && !input_blocked() && error != "pause_state_unknown";
     snapshot["pause_requested"] = m_pause_requested;
     auto terminal = m_terminal_seen ? m_terminal_result : snapshot.at("terminal");
     const auto state = terminal.at("terminal_state").as_string();
@@ -889,7 +977,7 @@ json::value asst::BattleControlTask::execute_wait(const Command& command, Captur
     if (error.empty() && std::chrono::steady_clock::now() >= command.deadline) {
         error = "deadline_exceeded";
     }
-    const bool safe = (pause_verified && !left_battle) || terminal_verified;
+    const bool safe = (pause_verified && !input_blocked()) || terminal_verified;
     json::value result = json::object {
         { "status",
           !error.empty()                    ? "failed"
@@ -912,10 +1000,10 @@ json::value asst::BattleControlTask::execute_wait(const Command& command, Captur
         { "pause_verified", pause_verified },
         { "safe_state",
           terminal_verified                    ? "terminal"
-          : pause_verified && !m_terminal_seen ? "paused"
+          : pause_verified && !input_blocked() ? "paused"
                                                : "unknown" },
         { "pause_not_applicable", terminal_verified },
-        { "session_input_blocked", m_terminal_seen },
+        { "session_input_blocked", input_blocked() },
         { "terminal", terminal },
         { "capture_time_snapshot", boundary_snapshot },
         { "return_time_snapshot", snapshot },
@@ -956,11 +1044,11 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
         json::value final_snapshot;
         final_frame = capture_frame();
         final_snapshot = observe(final_frame, false, false);
-        const bool pause_verified = settle_pause(final_frame, final_snapshot);
-        m_pause_requested = pause_verified && !m_terminal_seen && may_own_pause;
+        const bool pause_verified = settle_pause(command, final_frame, final_snapshot);
+        m_pause_requested = pause_verified && !input_blocked() && may_own_pause;
         final_snapshot["pause_requested"] = m_pause_requested;
         result["pause_verified"] = pause_verified;
-        result["safe_state"] = pause_verified && !m_terminal_seen ? "paused" : "unknown";
+        result["safe_state"] = pause_verified && !input_blocked() ? "paused" : "unknown";
         result["snapshot"] = final_snapshot;
         auto evidence = save_evidence(final_frame, final_snapshot);
         if (evidence.at("status").as_string() == "succeeded") {
@@ -1047,10 +1135,10 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
         pause();
         const auto resumed_frame = capture_frame();
         const auto resumed_snapshot = observe(resumed_frame, false, false);
-        const bool resumed_running = resumed_snapshot.get("scene", "") == "running" && !m_terminal_seen;
+        const bool resumed_running = resumed_snapshot.get("scene", "") == "running" && !input_blocked();
         if (!resumed_running) {
-            const bool pause_verified = resumed_snapshot.get("scene", "") == "paused";
-            m_pause_requested = pause_verified && !m_terminal_seen;
+            const bool pause_verified = resumed_snapshot.get("scene", "") == "paused" && !m_pause_unverified;
+            m_pause_requested = pause_verified && !input_blocked();
             return json::object {
                 { "status", pause_verified ? "failed" : "outcome_unknown" },
                 { "error",
@@ -1131,8 +1219,8 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
     auto capture_snapshot = observe(boundary_frame);
     auto return_frame = boundary_frame;
     auto return_snapshot = capture_snapshot;
-    const bool pause_verified = settle_pause(return_frame, return_snapshot);
-    m_pause_requested = pause_verified && !m_terminal_seen;
+    const bool pause_verified = settle_pause(command, return_frame, return_snapshot);
+    m_pause_requested = pause_verified && !input_blocked();
     capture_snapshot["pause_requested"] = false;
     auto capture_result = save_evidence(boundary_frame, capture_snapshot);
     return_snapshot["pause_requested"] = m_pause_requested;
@@ -1156,9 +1244,9 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
           m_terminal_result.contains("image_path") && (m_terminal_result.get("terminal_state", "") == "victory" ||
                                                        m_terminal_result.get("terminal_state", "") == "defeat")
               ? "terminal"
-          : pause_verified && !m_terminal_seen ? "paused"
+          : pause_verified && !input_blocked() ? "paused"
                                                : "unknown" },
-        { "session_input_blocked", m_terminal_seen },
+        { "session_input_blocked", input_blocked() },
         { "terminal", m_terminal_result },
         { "evidence_errors", std::move(evidence_errors) },
         { "capture_image_path", capture_result.get("image_path", "") },
@@ -1191,7 +1279,7 @@ json::value asst::BattleControlTask::execute(const Command& command)
     if (command.action == "map") {
         return json::object { { "status", "succeeded" }, { "map", map_info() } };
     }
-    const bool already_blocked = m_terminal_seen;
+    const bool already_blocked = input_blocked();
     auto frame = capture_frame();
     auto snapshot = observe(frame, false, command.action != "step");
     if (command.action == "capture") {
@@ -1201,13 +1289,14 @@ json::value asst::BattleControlTask::execute(const Command& command)
         return json::object { { "status", "succeeded" }, { "snapshot", std::move(snapshot) } };
     }
     if (command.action == "finalize") {
-        if (!m_terminal_seen) {
+        if (!already_blocked && !input_blocked()) {
             return failure("terminal_not_pending", "Read-only terminal collection requires blocked battle input");
         }
-        collect_terminal(command, frame, snapshot, command.args.at("duration_ms").as_integer());
+        collect_safety_evidence(command, frame, snapshot, command.args.at("duration_ms").as_integer());
         auto result = save_evidence(frame, snapshot, true);
         result["terminal"] = m_terminal_result;
-        result["session_input_blocked"] = true;
+        result["session_input_blocked"] = input_blocked();
+        result["pause_verified"] = snapshot.get("scene", "") == "paused" && !m_pause_unverified;
         result["input_sent"] = false;
         return result;
     }
@@ -1216,6 +1305,15 @@ json::value asst::BattleControlTask::execute(const Command& command)
             return execute_wait(command, std::move(frame), std::move(snapshot));
         }
         return failure("battle_ended", "Session input is blocked; inspect scene and terminal evidence");
+    }
+    if (already_blocked || m_pause_unverified) {
+        auto result = failure(
+            "pause_unverified",
+            "Input was blocked at command admission; collect read-only pause evidence before a new command");
+        result["snapshot"] = snapshot;
+        result["session_input_blocked"] = input_blocked();
+        result["input_sent"] = false;
+        return result;
     }
     if (waiting) {
         return execute_wait(command, std::move(frame), std::move(snapshot));
@@ -1250,12 +1348,15 @@ json::value asst::BattleControlTask::execute(const Command& command)
         sent = pause();
         frame = capture_frame();
         snapshot = observe(frame);
-        const bool verified = !m_terminal_seen && snapshot.get("scene", "") == (requested ? "paused" : "running");
+        if (requested && m_pause_unverified) {
+            collect_safety_evidence(command, frame, snapshot, 3000);
+        }
+        const bool verified = !input_blocked() && snapshot.get("scene", "") == (requested ? "paused" : "running");
         m_pause_requested = verified && requested;
         snapshot["pause_requested"] = m_pause_requested;
         auto result = save_evidence(frame, snapshot);
         result["status"] = verified && result.get("status", "") == "succeeded" ? "succeeded" : "outcome_unknown";
-        result["pause_verified"] = snapshot.get("scene", "") == "paused";
+        result["pause_verified"] = snapshot.get("scene", "") == "paused" && !m_pause_unverified;
         result["helper_returned"] = sent;
         return result;
     }
@@ -1264,10 +1365,10 @@ json::value asst::BattleControlTask::execute(const Command& command)
             return failure("pause_state_unknown", "Adopting a manual pause requires explicit authorization");
         }
         auto finish_identification = [&](json::value result, bool pause_verified) {
-            m_pause_requested = pause_verified && !m_terminal_seen;
+            m_pause_requested = pause_verified && !input_blocked();
             snapshot["pause_requested"] = m_pause_requested;
             result["pause_verified"] = pause_verified;
-            result["safe_state"] = pause_verified && !m_terminal_seen ? "paused" : "unknown";
+            result["safe_state"] = pause_verified && !input_blocked() ? "paused" : "unknown";
             result["snapshot"] = snapshot;
             auto evidence = save_evidence(frame, snapshot);
             if (evidence.at("status").as_string() == "succeeded") {
@@ -1282,7 +1383,7 @@ json::value asst::BattleControlTask::execute(const Command& command)
             return result;
         };
         if (running) {
-            if (!settle_pause(frame, snapshot) || m_terminal_seen) {
+            if (!settle_pause(command, frame, snapshot) || input_blocked()) {
                 auto result =
                     failure("pause_unverified", "Identification was not started because pause could not be verified");
                 result["status"] = "outcome_unknown";
@@ -1303,7 +1404,7 @@ json::value asst::BattleControlTask::execute(const Command& command)
         cancel_oper_selection();
         frame = capture_frame();
         snapshot = observe(frame, true);
-        const bool pause_verified = settle_pause(frame, snapshot);
+        const bool pause_verified = settle_pause(command, frame, snapshot);
         if (!identified) {
             return finish_identification(
                 failure("identification_failed", "Deployment cards could not be analyzed"),

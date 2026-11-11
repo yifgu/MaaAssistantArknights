@@ -317,6 +317,198 @@ async def test_intro_is_not_manual_pause(battle):
     assert not any(e["action"] in ("pause", "resume", "click") for e in events(root))
 
 
+@pytest.mark.parametrize("gap", ["intro", "running"])
+async def test_pause_uncertainty_requires_consecutive_positive_captures(battle, gap):
+    service, _, root = battle
+    for mode in ("paused", "running", "intro"):
+        (root / "mode").write_text(mode)
+        snapshot = (await service.read(service.session_id, "capture"))["snapshot"]
+    assert snapshot["scene"] == "transition"
+    assert snapshot["in_battle"] is True
+    assert snapshot["pause_evidence"] is None
+    assert snapshot["session_input_blocked"] is True
+    assert snapshot["input_block_reason"] == "pause_verification_pending"
+    diagnostic = snapshot["pause_diagnostics"]
+    assert diagnostic["observation_id"] == snapshot["observation_id"]
+    assert diagnostic["captured_at_ms"] == snapshot["captured_at_ms"]
+    assert diagnostic["match"] is None
+    assert diagnostic["candidates"] is None  # The fixture uses templates, not OCR.
+    assert diagnostic["roi"] == [200, 180, 880, 360]
+
+    for mode in ("paused", gap, "paused"):
+        (root / "mode").write_text(mode)
+        snapshot = (await service.read(service.session_id, "capture"))["snapshot"]
+        assert snapshot["session_input_blocked"] is True
+    snapshot = (await service.read(service.session_id, "capture"))["snapshot"]
+    assert snapshot["scene"] == "paused"
+    assert snapshot["session_input_blocked"] is False
+    assert snapshot["input_block_reason"] is None
+    assert snapshot["pause_requested"] is False
+    denied = await identify(battle, "still-manual")
+    assert denied.structuredContent["error"]["code"] == "pause_state_unknown"
+    assert not any(
+        e["action"] in ("pause", "resume", "click", "swipe") for e in events(root)
+    )
+
+
+async def test_mutation_that_observes_pause_recovery_is_not_executed(battle):
+    service, _, root = battle
+    for mode in ("paused", "intro", "paused"):
+        (root / "mode").write_text(mode)
+        await service.read(service.session_id, "observe")
+    denied = await identify(battle, "recovery-is-not-adoption", adopt_manual_pause=True)
+    value = denied.structuredContent
+    assert value["error"]["code"] == "pause_unverified"
+    assert value["input_sent"] is False
+    assert value["snapshot"]["session_input_blocked"] is False
+    assert value["snapshot"]["pause_requested"] is False
+    assert not any(
+        e["action"] in ("pause", "resume", "click", "swipe") for e in events(root)
+    )
+    recovered = await identify(battle, "explicit-new-adoption", adopt_manual_pause=True)
+    assert recovered.structuredContent["pause_verified"] is True
+
+
+@pytest.mark.parametrize("battle", ["ocr_pause"], indirect=True)
+async def test_failed_ocr_pause_keeps_diagnostics_without_positive_evidence(battle):
+    service, _, root = battle
+    snapshot = (await service.read(service.session_id, "capture"))["snapshot"]
+    assert snapshot["scene"] == "transition"
+    assert snapshot["pause_evidence"] is None
+    diagnostic = snapshot["pause_diagnostics"]
+    assert diagnostic["match"] is None
+    assert diagnostic["full_match"] is True
+    assert (
+        diagnostic["candidate_source"] == "same_frame_ocr_without_required_text_filter"
+    )
+    assert isinstance(diagnostic["candidates"], list)
+    assert all(
+        {"text", "score", "rect"} <= candidate.keys()
+        for candidate in diagnostic["candidates"]
+    )
+    denied = await identify(battle, "ocr-is-not-pause", adopt_manual_pause=True)
+    assert denied.isError
+    assert not any(
+        e["action"] in ("pause", "resume", "click", "swipe") for e in events(root)
+    )
+
+
+@pytest.mark.parametrize("recover", [True, False])
+async def test_read_only_collection_can_verify_pause_but_never_send_input(
+    battle, recover
+):
+    service, server, root = battle
+    await service.read(service.session_id, "observe")
+    (root / "mode").write_text("intro")
+    await service.read(service.session_id, "observe")
+    if recover:
+        (root / "mode").write_text("paused")
+    request = {
+        "session_id": service.session_id,
+        "operation_id": "verify-pause",
+        "duration_ms": 6_000 if recover else 1_000,
+        "timeout_ms": 15_000,
+    }
+    value = (
+        await server.call_tool("battle_collect_terminal", {"request": request})
+    ).structuredContent
+    assert value["status"] == "succeeded"  # Collection, not a battle outcome.
+    assert value["session_input_blocked"] is not recover
+    assert value["pause_verified"] is recover
+    assert value["snapshot"]["session_input_blocked"] is not recover
+    assert value["terminal"]["terminal_state"] == "unknown"
+    before = events(root)
+    replay = await server.call_tool("battle_collect_terminal", {"request": request})
+    assert replay.structuredContent == value
+    assert events(root) == before
+    assert not any(
+        e["action"] in ("pause", "resume", "click", "swipe") for e in events(root)
+    )
+
+
+async def test_read_only_recovery_does_not_overrun_sampling_budget(battle):
+    service, server, root = battle
+    await service.read(service.session_id, "observe")
+    (root / "mode").write_text("intro")
+    await service.read(service.session_id, "observe")
+    (root / "mode").write_text("paused")
+    (root / "capture-delay").write_text("0.5")
+    before = len(events(root))
+    value = (
+        await server.call_tool(
+            "battle_collect_terminal",
+            {
+                "request": {
+                    "session_id": service.session_id,
+                    "operation_id": "insufficient-verification-budget",
+                    "duration_ms": 100,
+                }
+            },
+        )
+    ).structuredContent
+    assert value["snapshot"]["scene"] == "paused"
+    assert value["snapshot"]["pause_evidence"] is not None
+    assert value["pause_verified"] is False
+    assert value["session_input_blocked"] is True
+    assert [e["action"] for e in events(root)[before:]] == ["capture"]
+
+
+@pytest.mark.parametrize("battle", [True], indirect=True)
+async def test_deploy_pause_dropout_recovers_without_second_toggle_or_replay(battle):
+    service, server, root = battle
+    initial = (await service.read(service.session_id, "capture"))["snapshot"]
+    tile = next(t for t in service.map_info["tiles"] if t["buildable_type"] == 1)
+    (root / "pause-sequence.json").write_text(json.dumps(["intro", "paused", "paused"]))
+    request = {
+        "session_id": service.session_id,
+        "operation_id": "deploy-with-pause-dropout",
+        "action": "deploy",
+        "unit_id": initial["deployment"][0]["unit_id"],
+        "location": tile["location"],
+        "direction": "None",
+        "adopt_manual_pause": True,
+        "timeout_ms": 30_000,
+    }
+    value = (
+        await server.call_tool("battle_step", {"request": request})
+    ).structuredContent
+    assert value["action_returned"] is True
+    assert value["status"] == "outcome_unknown"
+    assert value["capture_time_snapshot"]["scene"] == "running"
+    assert value["return_time_snapshot"]["scene"] == "paused"
+    assert value["pause_verified"] is True
+    assert value["safe_state"] == "paused"
+    assert value["session_input_blocked"] is False
+    before = events(root)
+    assert sum(e["action"] == "pause" for e in before) == 1
+    assert sum(e["action"] == "resume" for e in before) == 1
+    pause_index = next(i for i, e in enumerate(before) if e["action"] == "pause")
+    assert all(e["action"] == "capture" for e in before[pause_index + 1 :])
+    assert [e["mode"] for e in before[pause_index + 1 :]] == [
+        "intro",
+        "paused",
+        "paused",
+    ]
+    replay = await server.call_tool("battle_step", {"request": request})
+    assert replay.structuredContent == value
+    assert events(root) == before
+
+
+@pytest.mark.parametrize("quarantine", ["unknown", "victory", "conflict"])
+async def test_positive_pause_cannot_clear_hard_quarantine(battle, quarantine):
+    service, _, root = battle
+    for mode in ("paused", "intro", quarantine, "paused", "paused", "paused"):
+        (root / "mode").write_text(mode)
+        snapshot = (await service.read(service.session_id, "observe"))["snapshot"]
+    assert snapshot["session_input_blocked"] is True
+    assert snapshot["input_block_reason"] == "terminal_or_safety_quarantine"
+    denied = await identify(battle, "must-stay-blocked", adopt_manual_pause=True)
+    assert denied.structuredContent["error"]["code"] == "battle_ended"
+    assert not any(
+        e["action"] in ("pause", "resume", "click", "swipe") for e in events(root)
+    )
+
+
 @pytest.mark.parametrize(
     "final_scene, verdict", [("victory", "victory"), ("conflict", "unknown")]
 )
@@ -416,6 +608,11 @@ async def test_speed_readback_failure_blocks_input_and_cleans_up(battle, fault):
     assert value["unexpected_resume"] is (fault == "speed-resumes")
     assert (root / "mode").read_text() == "paused"
     assert not any(e["action"] == "resume" for e in events(root))
+    for _ in range(3):
+        snapshot = (await service.read(service.session_id, "observe"))["snapshot"]
+        assert snapshot["session_input_blocked"] is True
+    denied = await identify(battle, "still-quarantined", adopt_manual_pause=True)
+    assert denied.structuredContent["error"]["code"] == "battle_ended"
 
 
 @pytest.mark.parametrize("battle", ["prepare"], indirect=True)
@@ -582,6 +779,34 @@ async def test_external_pause_interrupts_wait_without_resuming_again(battle):
     assert value["error"]["code"] == "wait_interrupted"
     assert value["pause_verified"] is True
     assert sum(e["action"] == "resume" for e in events(root)) == 1
+
+
+@pytest.mark.parametrize("running_observed", [True, False])
+async def test_pause_uncertainty_interrupts_wait_even_if_read_only_recovery_succeeds(
+    battle, running_observed
+):
+    _, _, root = battle
+    sequence = [
+        "paused",
+        *(["running"] if running_observed else []),
+        "intro",
+        "paused",
+        "paused",
+    ]
+    (root / "capture-sequence.json").write_text(json.dumps(sequence))
+    value = (
+        await wait_step(battle, duration_ms=8_000, timeout_ms=30_000)
+    ).structuredContent
+    assert value["status"] == "failed"
+    assert value["error"]["code"] == "pause_unverified"
+    assert value["pause_verified"] is True
+    assert value["session_input_blocked"] is False
+    inputs = [e for e in events(root) if e["action"] != "capture"]
+    assert [
+        e["action"]
+        for e in inputs
+        if e["action"] in ("pause", "resume", "click", "swipe")
+    ] == ["resume"]
 
 
 async def test_wait_deadline_failure_still_returns_paused_evidence(battle):
