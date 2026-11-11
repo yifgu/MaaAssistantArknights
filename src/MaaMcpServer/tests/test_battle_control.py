@@ -393,6 +393,140 @@ async def test_failed_ocr_pause_keeps_diagnostics_without_positive_evidence(batt
     )
 
 
+@pytest.mark.parametrize("battle", ["localized_ocr"], indirect=True)
+@pytest.mark.parametrize(
+    ("mode", "source", "text"),
+    [
+        ("paused_english", "BattleControlPaused", "PAUSE"),
+        ("paused_chinese", "BattleControlPausedLocalized", "暂停中"),
+        ("paused_bilingual", "BattleControlPaused", "PAUSE"),
+    ],
+)
+async def test_exact_pause_markers_are_alternatives_not_joint_requirements(
+    battle, mode, source, text
+):
+    service, _, root = battle
+    (root / "mode").write_text(mode)
+    snapshot = (await service.read(service.session_id, "capture"))["snapshot"]
+    assert snapshot["scene"] == "paused"
+    assert snapshot["pause_evidence"]["source"] == source
+    assert snapshot["pause_evidence"]["text"] == text
+    assert snapshot["pause_evidence"]["score"] >= 0.9
+    assert snapshot["pause_requested"] is False
+    assert not any(
+        e["action"] in ("pause", "resume", "click", "swipe") for e in events(root)
+    )
+
+
+@pytest.mark.parametrize("battle", ["localized_ocr"], indirect=True)
+async def test_localized_pause_uses_production_ocr_and_preserves_recovery_contract(
+    battle,
+):
+    service, server, root = battle
+    snapshot = (await service.read(service.session_id, "capture"))["snapshot"]
+    assert snapshot["scene"] == "paused"
+    evidence = snapshot["pause_evidence"]
+    assert evidence["source"] == "BattleControlPausedLocalized"
+    assert evidence["text"] == "暂停中"
+    assert evidence["score"] >= 0.9
+    x, y, width, height = evidence["rect"]
+    assert 560 <= x < x + width <= 720
+    assert 350 <= y < y + height <= 420
+    assert snapshot["pause_requested"] is False
+    assert (await identify(battle, "not-adopted")).structuredContent["error"][
+        "code"
+    ] == "pause_state_unknown"
+
+    (root / "mode").write_text("pausex_only")
+    snapshot = (await service.read(service.session_id, "capture"))["snapshot"]
+    assert snapshot["input_block_reason"] == "pause_verification_pending"
+    assert snapshot["pause_evidence"] is None
+    assert "PAUSEX" in {
+        item["text"] for item in snapshot["pause_diagnostics"]["candidates"]
+    }
+    assert snapshot["pause_diagnostics"]["localized"]["match"] is None
+
+    (root / "mode").write_text("paused_localized")
+    snapshot = (await service.read(service.session_id, "observe"))["snapshot"]
+    assert snapshot["session_input_blocked"] is True
+    value = (
+        await server.call_tool(
+            "battle_collect_terminal",
+            {
+                "request": {
+                    "session_id": service.session_id,
+                    "operation_id": "localized-readonly-recovery",
+                    "duration_ms": 1000,
+                }
+            },
+        )
+    ).structuredContent
+    assert value["pause_verified"] is True
+    assert value["session_input_blocked"] is False
+    assert value["input_sent"] is False
+    assert value["snapshot"]["pause_requested"] is False
+    assert not any(
+        e["action"] in ("pause", "resume", "click", "swipe") for e in events(root)
+    )
+    adopted = (
+        await identify(battle, "adopt-localized", adopt_manual_pause=True)
+    ).structuredContent
+    assert adopted["pause_verified"] is True
+    assert adopted["snapshot"]["pause_requested"] is True
+    assert not any(e["action"] in ("pause", "resume") for e in events(root))
+
+
+@pytest.mark.parametrize("battle", ["localized_ocr"], indirect=True)
+@pytest.mark.parametrize(
+    ("mode", "scene"),
+    [
+        ("misplaced_localized", "transition"),
+        ("suffixed_localized", "transition"),
+        ("running_localized", "running"),
+        ("victory_localized", "terminal"),
+    ],
+)
+async def test_localized_pause_rejects_wrong_position_text_and_scene(
+    battle, mode, scene
+):
+    service, server, root = battle
+    (root / "mode").write_text(mode)
+    snapshot = (await service.read(service.session_id, "capture"))["snapshot"]
+    assert snapshot["scene"] == scene
+    assert snapshot["pause_evidence"] is None
+    if scene == "transition":
+        diagnostic = snapshot["pause_diagnostics"]["localized"]
+        assert diagnostic["source"] == "BattleControlPausedLocalized"
+        assert diagnostic["roi"] == [560, 350, 160, 70]
+        assert diagnostic["full_match"] is True
+        assert diagnostic["required_score"] == 0.9
+        assert diagnostic["observation_id"] == snapshot["observation_id"]
+        assert diagnostic["captured_at_ms"] == snapshot["captured_at_ms"]
+    rejected = await server.call_tool(
+        "battle_set_speed",
+        {
+            "request": {
+                "session_id": service.session_id,
+                "operation_id": "not-a-paused-scene",
+                "multiplier": 2,
+            }
+        },
+    )
+    assert rejected.isError
+    assert not any(
+        e["action"] in ("speed", "pause", "resume", "click", "swipe")
+        for e in events(root)
+    )
+    if scene == "terminal":
+        (root / "mode").write_text("paused_localized")
+        for _ in range(2):
+            recovered = (await service.read(service.session_id, "capture"))["snapshot"]
+            assert (
+                recovered["pause_evidence"]["source"] == "BattleControlPausedLocalized"
+            )
+            assert recovered["input_block_reason"] == "terminal_or_safety_quarantine"
+
+
 @pytest.mark.parametrize("recover", [True, False])
 async def test_read_only_collection_can_verify_pause_but_never_send_input(
     battle, recover

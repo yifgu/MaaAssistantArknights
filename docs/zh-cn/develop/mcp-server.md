@@ -238,7 +238,9 @@ PRTS 可使用 `{"provider":"prts","command":"prts-mcp","region":"cn"}`；适配
 
 `battle_observe`、`battle_capture_evidence` 和 `battle_collect_terminal(request)` 可在不输入的情况下收集恢复证据。`battle_collect_terminal.duration_ms` 为 100–8000，不能超过 `timeout_ms`；`status=succeeded` 仅表示采集完成，不表示暂停恢复或战斗胜利，须检查 `pause_verified`、`session_input_blocked` 和 `terminal`。锁定期间接收的修改命令即使恰好在观察时完成恢复，也不会执行；须检查新证据后发起新操作，必要时明确授权接管手动暂停。不会重放旧动作或改写历史结果。战斗后的未知／非战斗画面、终局／冲突证据、调速回读失败仍以 `input_block_reason=terminal_or_safety_quarantine` 永久隔离，正向暂停证据不能解锁。`session_terminal` 保留结果和证据路径，黑屏不会抹掉已确认结果，冲突胜败保持 unknown。Core 另有 `set_speed`、`finalize`、`prepare`、`bind` 命令；准备任务以 `preparation_only=true` 初始化，绑定沿用同一控制器。
 
-暂停识别失败时，`pause_diagnostics` 保留同帧 ID／时间、配置 ROI、要求分数和可空匹配结果。OCR 任务另保留预处理设置及同帧取消目标文字过滤后的诊断候选；这些候选不是暂停证据。匹配为 null 不等于测得低分。暂停／速度置信阈值不变；部署后的真实 OCR、1x／2x 和完整战斗验收仍须本地设备复测。
+暂停识别先完整匹配 `PAUSE`；未达到 0.9 时，另用 `BattleControlPausedLocalized` 在 `[560,350,160,70]` 区域完整匹配国服的 `暂停中`，同样要求至少 0.9。该区域依据回归报告的文字框设置，不接受 `PAUSEX`、任意前缀或区域外文字作为替代证据；运行按钮和终局判定仍优先。`pause_evidence` 保留实际命中任务、文字、分数和文字框，恢复隔离仍须连续两帧，不自动接管暂停。
+
+暂停识别失败时，`pause_diagnostics` 保留同帧 ID／时间、配置 ROI、要求分数和可空匹配结果，`localized` 保留中文检测的对应诊断。OCR 任务另保留预处理设置及同帧取消目标文字过滤后的诊断候选；这些候选不是暂停证据。匹配为 null 不等于测得低分。合成文字回归使用正式 OCR 任务，但不证明游戏字体、特效遮挡或外服适配；部署后的真实 OCR、1x／2x 和完整战斗验收仍须本地设备复测，速度阈值不变。
 
 `skill_ready` 是 true 或 null，分类器否定不再冒充已确认冷却。`skill_evidence` 保留同帧 ID、时间、ROI、基点、类别分数和概率，技能阶段／弹药／冷却仍可未知；分数不是已校准的正确率。请保留 `asst.log` 的 `Battle frame` / `Battle command result` 日志、`battle-control/<session>/` 的 PNG 和 `operations.sqlite3`。合成回归不证明真实 OCR、ROI 或按钮适配；真实识别仍须本地复验，不要求本地图片作为云端开发的输入。
 
