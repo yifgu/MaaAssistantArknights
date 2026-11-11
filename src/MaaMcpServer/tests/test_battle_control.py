@@ -588,11 +588,15 @@ async def test_read_only_recovery_does_not_overrun_sampling_budget(battle):
 
 
 @pytest.mark.parametrize("battle", [True], indirect=True)
-async def test_deploy_pause_dropout_recovers_without_second_toggle_or_replay(battle):
+@pytest.mark.parametrize("transition_delay", [0, 3.1])
+async def test_deploy_pause_dropout_recovers_without_second_toggle_or_replay(
+    battle, transition_delay
+):
     service, server, root = battle
     initial = (await service.read(service.session_id, "capture"))["snapshot"]
     tile = next(t for t in service.map_info["tiles"] if t["buildable_type"] == 1)
     (root / "pause-sequence.json").write_text(json.dumps(["intro", "paused", "paused"]))
+    (root / "capture-delay").write_text(json.dumps({"intro": transition_delay}))
     request = {
         "session_id": service.session_id,
         "operation_id": "deploy-with-pause-dropout",
@@ -979,8 +983,9 @@ async def test_full_eight_second_wait_uses_explicit_cleanup_budget(battle):
 
 
 @pytest.mark.parametrize("battle", [True], indirect=True)
-async def test_pause_roundtrip_reports_current_ownership(battle):
-    service, server, _ = battle
+@pytest.mark.parametrize("transition_delay", [0, 3.1])
+async def test_pause_roundtrip_reports_current_ownership(battle, transition_delay):
+    service, server, root = battle
     await identify(battle, "adopt", adopt_manual_pause=True)
     resumed = (
         await server.call_tool(
@@ -997,6 +1002,11 @@ async def test_pause_roundtrip_reports_current_ownership(battle):
     assert resumed["status"] == "succeeded"
     assert resumed["snapshot"]["scene"] == "running"
     assert resumed["snapshot"]["pause_requested"] is False
+    if transition_delay:
+        (root / "pause-sequence.json").write_text(
+            json.dumps(["intro", "paused", "paused"])
+        )
+        (root / "capture-delay").write_text(json.dumps({"intro": transition_delay}))
     paused = (
         await server.call_tool(
             "battle_set_paused",
@@ -1005,6 +1015,7 @@ async def test_pause_roundtrip_reports_current_ownership(battle):
                     "session_id": service.session_id,
                     "operation_id": "pause",
                     "paused": True,
+                    "timeout_ms": 30_000,
                 }
             },
         )
@@ -1012,6 +1023,8 @@ async def test_pause_roundtrip_reports_current_ownership(battle):
     assert paused["status"] == "succeeded"
     assert paused["snapshot"]["pause_requested"] is True
     assert paused["pause_verified"] is True
+    assert sum(e["action"] == "pause" for e in events(root)) == 1
+    assert sum(e["action"] == "resume" for e in events(root)) == 1
 
 
 @pytest.mark.parametrize("battle", [True], indirect=True)

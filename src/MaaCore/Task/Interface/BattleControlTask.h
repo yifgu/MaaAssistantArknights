@@ -64,7 +64,11 @@ private:
     json::value execute_speed(const Command& command, CapturedFrame frame, json::value snapshot);
     json::value preparation(const CapturedFrame& frame);
     bool settle_pause(const Command& command, CapturedFrame& frame, json::value& snapshot);
-    void collect_safety_evidence(const Command& command, CapturedFrame& frame, json::value& snapshot, int duration_ms);
+    void collect_safety_evidence(
+        const Command& command,
+        CapturedFrame& frame,
+        json::value& snapshot,
+        std::chrono::milliseconds duration);
 
     bool input_blocked() const { return m_terminal_seen || m_pause_unverified; }
 
