@@ -234,7 +234,7 @@ PRTS 可使用 `{"provider":"prts","command":"prts-mcp","region":"cn"}`；配接
 
 ## 場景證據、準備觀察與受限操作
 
-`scene` 區分 `running / paused / transition / terminal / unknown`。每張採樣影格均檢查終局，正向終局證據優先於殘留戰鬥 UI。確認戰鬥後，仍在戰鬥內的 `transition` 以 `input_block_reason=pause_verification_pending` 禁止輸入，不再直接視為永久終局隔離。恢復必須連續擷取兩張帶正向暫停證據的新影格；執行或過渡影格會重設計數。不能僅憑執行按鈕消失認定暫停。暫停收尾在命令期限內最多進行 3000 ms 的唯讀驗證，取消會停止驗證；持續無法確認時仍禁止輸入。
+`scene` 區分 `running / paused / transition / terminal / unknown`。每張採樣影格均檢查終局，正向終局證據優先於殘留戰鬥 UI。確認戰鬥後，仍在戰鬥內的 `transition` 以 `input_block_reason=pause_verification_pending` 禁止輸入，不再直接視為永久終局隔離。恢復必須連續擷取兩張帶正向暫停證據的新影格；執行或過渡影格會重設計數。不能僅憑執行按鈕消失認定暫停。暫停收尾的唯讀驗證預算取 3000 ms 與 ｢已觀測到的最大單張影格擷取及分析耗時的兩倍 + 1000 ms｣ 中的較大值，為兩張影格確認及輪詢留出時間，但始終受命令剩餘期限限制，取消會停止驗證；持續無法確認時仍禁止輸入。
 
 `battle_observe`、`battle_capture_evidence` 和 `battle_collect_terminal(request)` 可在不輸入的情況下收集恢復證據。`battle_collect_terminal.duration_ms` 為 100–8000，不能超過 `timeout_ms`；`status=succeeded` 僅表示擷取完成，不表示暫停恢復或戰鬥勝利，須檢查 `pause_verified`、`session_input_blocked` 和 `terminal`。鎖定期間接收的修改命令即使恰好在觀察時完成恢復，也不會執行；須檢查新證據後發起新操作，必要時明確授權接管手動暫停。不會重播舊動作或改寫歷史結果。戰鬥後的未知／非戰鬥畫面、終局／衝突證據、調速回讀失敗仍以 `input_block_reason=terminal_or_safety_quarantine` 永久隔離，正向暫停證據不能解鎖。`session_terminal` 保留結果與證據路徑，黑畫面不抹除已確認結果，衝突勝敗保持 unknown。Core 另有 `set_speed`、`finalize`、`prepare`、`bind` 命令；準備任務以 `preparation_only=true` 初始化，綁定沿用同一控制器。
 

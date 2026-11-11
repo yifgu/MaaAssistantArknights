@@ -234,7 +234,7 @@ PRTS には `{"provider":"prts","command":"prts-mcp","region":"cn"}` を使用�
 
 ## 場面の証拠、準備観測と制限付き操作
 
-`scene` は `running / paused / transition / terminal / unknown` を区別します。全サンプルで終局を確認し、明確な終局証拠は残存する戦闘 UI より優先します。戦闘確認後、戦闘内の `transition` は `input_block_reason=pause_verification_pending` として入力を禁止し、直ちに恒久的な終局隔離とは扱いません。復旧には明確な一時停止証拠を持つ新しい画像を連続 2 回取得する必要があり、実行中または遷移画像で回数をリセットします。実行ボタンの不在だけでは一時停止と判断しません。一時停止処理の最後に命令期限内で最大 3000 ms の読み取り専用確認を行い、キャンセルで確認を停止します。不明のままなら入力禁止を維持します。
+`scene` は `running / paused / transition / terminal / unknown` を区別します。全サンプルで終局を確認し、明確な終局証拠は残存する戦闘 UI より優先します。戦闘確認後、戦闘内の `transition` は `input_block_reason=pause_verification_pending` として入力を禁止し、直ちに恒久的な終局隔離とは扱いません。復旧には明確な一時停止証拠を持つ新しい画像を連続 2 回取得する必要があり、実行中または遷移画像で回数をリセットします。実行ボタンの不在だけでは一時停止と判断しません。一時停止処理の最後に行う読み取り専用確認の時間枠は、3000 ms と ｢観測済みの最大フレーム取得・解析時間の 2 倍 + 1000 ms｣ の大きい方とし、2 フレームの確認とポーリングの時間を確保します。ただし常に命令の残り時間を上限とし、キャンセルで確認を停止します。不明のままなら入力禁止を維持します。
 
 `battle_observe`、`battle_capture_evidence`、`battle_collect_terminal(request)` は入力なしで復旧証拠を収集できます。`battle_collect_terminal.duration_ms` は 100–8000 かつ `timeout_ms` 以下です。`status=succeeded` は収集完了であり、一時停止の復旧や勝利ではありません。`pause_verified`、`session_input_blocked`、`terminal` を確認してください。ロック中に受け付けた変更命令は、その観測で復旧しても実行しません。新しい証拠を確認して新規操作を要求し、必要なら手動停止の引き継ぎを明示的に許可します。過去の操作の再実行や結果の書き換えはありません。戦闘後の不明／非戦闘画面、終局／矛盾証拠、速度読み戻し失敗は `input_block_reason=terminal_or_safety_quarantine` の恒久隔離を維持し、一時停止証拠でも解除できません。`session_terminal` は結果と画像パスを保持し、黒画面で結果を消さず、勝敗の矛盾は unknown にします。Core の追加命令は `set_speed`、`finalize`、`prepare`、`bind` です。準備は `preparation_only=true` で初期化し、同じコントローラーで紐付けます。
 

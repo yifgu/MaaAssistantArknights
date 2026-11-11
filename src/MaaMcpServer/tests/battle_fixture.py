@@ -286,7 +286,8 @@ def device(root, action, args):
         log.write(json.dumps(event) + "\n")
     if action == "capture":
         if (root / "capture-delay").exists():
-            time.sleep(float((root / "capture-delay").read_text()))
+            delay = json.loads((root / "capture-delay").read_text())
+            time.sleep(delay.get(mode, 0) if isinstance(delay, dict) else delay)
         speed = (root / "speed").read_text()
         sys.stdout.buffer.write((root / f"{mode}-{speed}x.png").read_bytes())
         if mode == "unknown" and (root / "return-after-unknown").exists():

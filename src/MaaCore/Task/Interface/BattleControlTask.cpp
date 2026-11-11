@@ -711,7 +711,9 @@ bool asst::BattleControlTask::settle_pause(const Command& command, CapturedFrame
     int attempts = 0;
     while (true) {
         if (m_pause_unverified) {
-            collect_safety_evidence(command, frame, snapshot, 3000);
+            // Two fresh pause confirmations must fit even when one observed frame exceeds three seconds.
+            const auto budget = std::max(std::chrono::milliseconds(3000), m_frame_cost * 2 + std::chrono::seconds(1));
+            collect_safety_evidence(command, frame, snapshot, budget);
         }
         if (snapshot.get("scene", "") == "paused") {
             return !m_pause_unverified;
@@ -730,10 +732,9 @@ void asst::BattleControlTask::collect_safety_evidence(
     const Command& command,
     CapturedFrame& frame,
     json::value& snapshot,
-    int duration_ms)
+    std::chrono::milliseconds duration)
 {
-    const auto until =
-        std::min(command.deadline, std::chrono::steady_clock::now() + std::chrono::milliseconds(duration_ms));
+    const auto until = std::min(command.deadline, std::chrono::steady_clock::now() + duration);
     while (input_blocked() && m_terminal_result.get("terminal_state", "unknown") == "unknown" &&
            m_terminal_result.get("result_source", "") != "conflicting_titles" && !m_cancel_requested && !need_exit() &&
            std::chrono::steady_clock::now() + m_frame_cost < until) {
@@ -955,7 +956,7 @@ json::value asst::BattleControlTask::execute_wait(const Command& command, Captur
     const auto boundary_snapshot = snapshot;
     pause_verified = settle_pause(command, frame, snapshot);
     if (m_terminal_seen) {
-        collect_safety_evidence(command, frame, snapshot, 1000);
+        collect_safety_evidence(command, frame, snapshot, std::chrono::seconds(1));
     }
     const auto settled_at = std::chrono::steady_clock::now();
     pause_verified = snapshot.get("scene", "") == "paused" && !m_pause_unverified;
@@ -1308,7 +1309,11 @@ json::value asst::BattleControlTask::execute(const Command& command)
         if (!already_blocked && !input_blocked()) {
             return failure("terminal_not_pending", "Read-only terminal collection requires blocked battle input");
         }
-        collect_safety_evidence(command, frame, snapshot, command.args.at("duration_ms").as_integer());
+        collect_safety_evidence(
+            command,
+            frame,
+            snapshot,
+            std::chrono::milliseconds(command.args.at("duration_ms").as_integer()));
         auto result = save_evidence(frame, snapshot, true);
         result["terminal"] = m_terminal_result;
         result["session_input_blocked"] = input_blocked();
@@ -1365,7 +1370,7 @@ json::value asst::BattleControlTask::execute(const Command& command)
         frame = capture_frame();
         snapshot = observe(frame);
         if (requested && m_pause_unverified) {
-            collect_safety_evidence(command, frame, snapshot, 3000);
+            settle_pause(command, frame, snapshot);
         }
         const bool verified = !input_blocked() && snapshot.get("scene", "") == (requested ? "paused" : "running");
         m_pause_requested = verified && requested;
