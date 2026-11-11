@@ -29,7 +29,13 @@ async def test_stdio_handshake_tools_and_errors(tmp_path):
         async with ClientSession(read, write) as session:
             await session.initialize()
             tools = {tool.name: tool for tool in (await session.list_tools()).tools}
-            assert len(tools) == 15
+            assert len(tools) == 16
+            assert tools["battle_evaluate_placement"].annotations.readOnlyHint is True
+            step_schema = tools["battle_step"].inputSchema["$defs"][
+                "BoundedStepRequest"
+            ]
+            assert "wait" in step_schema["properties"]["action"]["enum"]
+            assert "unit_id" not in step_schema["required"]
             assert tools["battle_observe"].annotations.readOnlyHint is True
             assert tools["battle_identify"].annotations.readOnlyHint is False
             identify_schema = tools["battle_identify"].inputSchema

@@ -98,7 +98,7 @@ worker 使用独立子进程和专用 stdin/stdout 管道，不继承 MCP 的输
 
 ## 启动与客户端配置
 
-先关闭其他控制同一设备的 MAA/GUI 任务，手动进入普通固定地图战斗。首版不支持自动选词条、进入关卡、识别结算、多阶段镜头或中途恢复已有干员身份。
+先关闭其他控制同一设备的 MAA/GUI 任务，手动进入普通固定地图战斗。当前不支持自动选词条、进入关卡、多阶段镜头或中途恢复已有干员身份。结算识别仅支持下文所述的有限标题匹配。
 
 同一个 `--user-dir` 有跨进程控制锁。请为同一设备始终使用同一个目录；该锁无法阻止使用其他目录的服务或外部 GUI 操作设备。
 
@@ -166,7 +166,7 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 }
 ```
 
-`action` 可为 `deploy`、`retreat` 或 `skill`；部署还须提供 `location` 和 `direction`。手动暂停默认不接管；只有明确设置 `adopt_manual_pause=true` 并由新截图确认暂停后才会恢复。每次动作至多执行一次，工具先取得动作边界截图，再请求暂停并返回新截图与 `pause_verified`；取消客户端请求时服务会等待该命令完成清理。若 worker 本身失效，结果会明确报告暂停状态未知。`battle_step` 的 `timeout_ms` 上限为 10000。
+`action` 可为 `deploy`、`retreat`、`skill` 或下文的 `wait`；部署还须提供 `location` 和 `direction`。手动暂停默认不接管；只有明确设置 `adopt_manual_pause=true` 并由新截图确认暂停后才会恢复。每次动作至多执行一次，工具先取得动作边界截图，再请求暂停并返回新截图与 `pause_verified`；取消客户端请求时服务会通知 Core 并等待该命令完成清理。若 worker 本身失效，结果会明确报告暂停状态未知。`battle_step` 的 `timeout_ms` 上限为 10000。
 
 `captured_at_ms` 是取帧完成后、分析开始前记录的主机 Unix 毫秒时间，不是设备渲染时间。`capture_time_snapshot` 始终对应 `capture_image_path`（动作边界），`return_time_snapshot` 对应 `return_image_path`（稍后的暂停验证）；MCP 图片内容仍按返回帧、动作边界帧排列。`observation_id` 按分析顺序递增而非取帧顺序，因此动作边界观测的 ID 可能更大，但时间戳更早。系统时钟调整会影响时间差，这些时间戳不构成运行时长硬限制。完全相同的操作重放保留原始时间戳与路径，新截图则记录自己的取帧时间。
 
@@ -189,6 +189,49 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 
 PRTS 可使用 `{"provider":"prts","command":"prts-mcp","region":"cn"}`；适配器强制 stdio 和结构化输出请求。`intel_query` 支持 `stage/operator/enemy`，Intelligence 使用游戏唯一 ID，PRTS 使用关卡 ID 或干员/敌人中文名称。Intelligence 的 `routes_page`、`spawns_page` 从 1 开始，每页 50 条；返回保留来源、限制说明及分页信息，缓存 5 分钟。PRTS 关卡查询只返回敌人，不提供地图、路线或波次，也不自动混用外服数据。上游数据不是实时战况，本服务不自动合并或校准外部地图。
 
+## 有界等待与决策资料
+
+等待不再需要客户端分开调用恢复和暂停：
+
+```json
+{
+  "request": {
+    "session_id": "replace-with-session-id",
+    "operation_id": "wait-001",
+    "action": "wait",
+    "duration_ms": 1000,
+    "adopt_manual_pause": true,
+    "timeout_ms": 10000
+  }
+}
+```
+
+`duration_ms` 为 100–8000，`timeout_ms` 至少比它大 1000；不得传 `unit_id`、位置或方向。时长使用主机单调时钟，不是游戏模拟时间；采集和分析耗时会影响实际包络。Core 在推进中间隔采样，保留末段最多 8 帧及边界／返回帧，取消或关闭服务会中止推进并尽力暂停。超过期限、取消、证据写入失败或暂停未知均不会作为正常等待成功返回。外部暂停会返回 `wait_interrupted`，不会擅自再次恢复；未经终局确认的非战斗画面即使随后恢复为暂停战斗，仍返回 `outcome_unknown` 和 `session_input_blocked=true`。设备 I/O 卡死、进程崩溃仍可能无法暂停。
+
+返回的 `terminal` 区分 `victory`、`defeat`、`unknown`、`still_in_battle`，附识别来源、原始匹配置信度和 `terminal_evidence_path`。当前资源仅配置中文与英文的明确成功／失败标题；不是所有语言或界面的实机验证。击杀数达到总数、黑屏、离开战斗均不自动判胜，等待事务成功也不代表作战胜利。观察到非战斗画面后，该会话拒绝后续输入；不在菜单切换暂停。离场时的末段与边界／返回证据不参与普通 128 张轮换，需自行清理；用户证词不得替代截图来源。
+
+完整静态查询先显式 `battle_attach(stage_name="act55side_ex01", mode="normal")`，再调用 `intel_query(kind="stage", identifier="act55side_ex01", complete_stage=true, session_id="…")`。它复用已有 provider，绕过分页缓存，最多 100 次请求／120 秒；检查区服、关卡、模式、跨页来源及重复 ID。完整查询要求结构化输出包含 `game_id`、`server`、`mode`、`provenance`，`routes_page`／`spawns_page` 中的 `page`、`has_more`（可选 `total`），以及顶层 `routes`／`spawns` 数组或分页内 `items`。路线用 `route_id`；生成项用 `spawn_id`、`enemy_game_id`、`route_id`、`count`。未知 provider 结构不会被猜测为已适配。
+
+`coordinate_system="public_row_col"` 时，以绑定地图高度执行 `x=col, y=height-1-row`，点上添加 `maa_location`，二维格子数组翻转行序；原始响应保存在 `pages`。`maa_grid` 不转换，其他坐标系保持未知。缺字段、缺页或 provider partial 返回 `partial` 与逐节 `completeness`，不会用空集合替代缺失；身份／版本冲突及 provider 失败直接报错。`expires_at` 为 Unix 秒，过期明确标记；未提供时新鲜度未知，5 分钟缓存有效不代表游戏数据最新。此契约尚须用实际 provider 验收，模拟服务通过不能证明五类资料已齐全，静态生成数也不含所有动态召唤物。
+
+可通过 `--loadout-config /absolute/loadout.json` 提供本场配置，启动时读取，修改后需重启服务。示例不是现场识别结果：
+
+```json
+{
+  "region": "cn",
+  "stage_id": "act55side_ex01",
+  "mode": "normal",
+  "confirmed_by_user": false,
+  "operators": [
+    {"operator_game_id": "char_4228_closur", "actual_elite": 2, "equipped_skill_id": null}
+  ]
+}
+```
+
+区服、关卡和显式模式必须一致。还可填写 `actual_level`、`potential`、`module_id`、`module_level`、`skill_level`、`mastery`；省略字段为 unknown。快照的 `decision_context` 单独保留逐字段来源、用户确认状态及配置哈希，不覆盖原生观测，也不把用户确认称为视觉验证。SP、技能阶段、持续时间和天赋仍未知；不根据姓名选择候选 ID 中的第一项。
+
+`battle_evaluate_placement(session_id, placements)` 只读检查候选全队阵型。每项填写 `operator_game_id`、`location`、`direction`，精英阶段取配置，或显式填写 `assumed_elite` 作为假设。输出基础范围格、几何上的友军覆盖、静态部署类型兼容性及占格冲突；未知精英或范围不套职业默认模板。该结果不验证现场占位、实际治疗资格、生存或全局最优，也不包含技能、模组、天赋和地形特殊效果。召唤物／装置与现场敌人追踪仍不支持。
+
 ## Core 协议
 
 初始化 `AsstAppendTask(handle, "BattleControl", {"stage_name":"main_01-07","session_id":"unique-id"})` 后调用 `AsstStart`，等待 `SubTaskExtraInfo` 的 `what="BattleControlReady"`（协议版本 1）。之后使用 `AsstSetTaskParams` 发送 `session_id`、`command_id`、`action`、`args`、`timeout_ms`，等待 `what="BattleControlResult"`。每次只允许一个命令；读取回调前不要继续投递。
@@ -196,3 +239,5 @@ PRTS 可使用 `{"provider":"prts","command":"prts-mcp","region":"cn"}`；适配
 动作名为 `observe`、`capture`、`map`、`identify`、`deploy`、`retreat`、`skill`、`set_paused`、`step`。`step` 一次只接受一个已预检的战术动作，并在动作后立即取帧、请求暂停、验证并返回暂停帧；它不能保证设备底层 I/O 或整个 MCP 进程故障时一定暂停。更新参数只入队，设备操作均在 Core 任务线程执行。原生调用者仍须实现外部 watchdog 和去重；单独使用 C ABI 时，Core 不保证底层 I/O 在期限内返回。MCP 服务实现了进程级 watchdog。自动试验和优化器留待后续实现。
 
 `identify` 接受可选的严格布尔参数 `args.adopt_manual_pause`，默认 false。显式接管只取得已识别暂停的控制权，不切换暂停，也不授权此次识别恢复战斗。
+
+`step` 也接受 `args.action="wait"` 与 `args.duration_ms`，不传单位参数。运行中可通过 `AsstSetTaskParams` 发送 `{"session_id":"…","cancel_command_id":"…"}`；它只设置对应命令的取消信号，不执行设备操作，不生成第二份操作结果。迟到的取消不会作用于下一条命令，原命令仍通过原回调返回清理结果；MCP 结果继续按原 `operation_id` 持久化和去重。

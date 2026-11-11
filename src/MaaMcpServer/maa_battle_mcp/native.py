@@ -129,16 +129,41 @@ class NativeCore:
         except (ValueError, TypeError):
             logger.exception("Invalid MaaCore callback")
 
-    def _wait(self, what: str, timeout: float, command_id: str | None = None) -> dict:
+    def _wait(
+        self,
+        what: str,
+        timeout: float,
+        command_id: str | None = None,
+        cancelled: threading.Event | None = None,
+        session_id: str | None = None,
+    ) -> dict:
         deadline = time.monotonic() + timeout
+        cancel_sent = False
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise NativeError("MaaCore callback deadline exceeded")
             try:
-                message, event = self.events.get(timeout=remaining)
+                if cancelled is not None and cancelled.is_set() and not cancel_sent:
+                    self._require(
+                        self.lib.AsstSetTaskParams(
+                            self.handle,
+                            self.task_id,
+                            json.dumps(
+                                {
+                                    "session_id": session_id,
+                                    "cancel_command_id": command_id,
+                                }
+                            ).encode("utf-8"),
+                        ),
+                        "BattleControl cancellation",
+                    )
+                    cancel_sent = True
+                message, event = self.events.get(timeout=min(remaining, 0.05))
             except queue.Empty as exc:
-                raise NativeError("MaaCore callback deadline exceeded") from exc
+                if time.monotonic() >= deadline:
+                    raise NativeError("MaaCore callback deadline exceeded") from exc
+                continue
             if message in (0, 1, 10_000, 10_004):
                 raise NativeError(f"MaaCore task stopped or failed: {event}")
             details = event.get("details", {})
@@ -147,7 +172,13 @@ class NativeCore:
             ):
                 return details
 
-    def dispatch(self, operation: str, payload: dict, settings: Settings) -> dict:
+    def dispatch(
+        self,
+        operation: str,
+        payload: dict,
+        settings: Settings,
+        cancelled: threading.Event | None = None,
+    ) -> dict:
         import json
 
         if operation == "connect":
@@ -202,6 +233,8 @@ class NativeCore:
                 "BattleControlResult",
                 callback_timeout,
                 payload["command_id"],
+                cancelled,
+                payload["session_id"],
             )
         raise NativeError(f"Unsupported worker operation: {operation}")
 
@@ -221,16 +254,30 @@ def _worker() -> None:
     sys.stdin.reconfigure(encoding="utf-8")
     logging.basicConfig(level=logging.INFO)
     with os.fdopen(output_fd, "w", encoding="utf-8", buffering=1) as output:
+        output_lock = threading.Lock()
 
         def send(message: dict) -> None:
-            output.write(json.dumps(message, ensure_ascii=False) + "\n")
-            output.flush()
+            with output_lock:
+                output.write(json.dumps(message, ensure_ascii=False) + "\n")
+                output.flush()
 
         def progress(phase: str) -> None:
             _log_phase(phase)
             send({"phase": phase})
 
         core = None
+        active: threading.Thread | None = None
+        cancellation = threading.Event()
+        active_payload: dict = {}
+
+        def dispatch(operation: str, payload: dict) -> None:
+            try:
+                result = core.dispatch(operation, payload, settings, cancellation)
+                send({"ok": True, "result": result})
+            except Exception as exc:
+                logger.exception("MaaCore worker request failed")
+                send({"ok": False, "error": str(exc)})
+
         try:
             progress("worker_started")
             settings = Settings.model_validate_json(sys.stdin.readline())
@@ -238,14 +285,32 @@ def _worker() -> None:
             progress("ready")
             for line in sys.stdin:
                 operation, payload = json.loads(line)
+                if operation == "cancel":
+                    if (
+                        payload.get("session_id") == active_payload.get("session_id")
+                        and payload.get("command_id")
+                        == active_payload.get("command_id")
+                        and active_payload.get("action") == "step"
+                    ):
+                        cancellation.set()
+                    else:
+                        logger.warning("Ignoring cancellation for an inactive step")
+                    continue
+                if active is not None:
+                    # The normal request channel stays serial; cancel is admitted above.
+                    active.join()
                 progress(operation)
                 if operation == "close":
                     core.close()
                     core = None
                     send({"ok": True, "result": {}})
                     return
-                result = core.dispatch(operation, payload, settings)
-                send({"ok": True, "result": result})
+                active_payload = payload
+                cancellation.clear()
+                active = threading.Thread(
+                    target=dispatch, args=(operation, payload), name="maa-core-request"
+                )
+                active.start()
         except Exception as exc:
             # This is the process boundary: never let a native/FFI error look successful.
             logger.exception("MaaCore worker failed")
@@ -254,6 +319,9 @@ def _worker() -> None:
             except (OSError, ValueError):
                 logger.exception("Unable to deliver worker failure")
         finally:
+            cancellation.set()
+            if active is not None:
+                active.join()
             if core is not None:
                 core.close()
 
@@ -261,6 +329,10 @@ def _worker() -> None:
 class NativeBackend:
     def __init__(self, settings: Settings):
         self.lock = threading.Lock()
+        self.send_lock = threading.RLock()
+        self.active_command: tuple[str, str] | None = None
+        self.last_command: tuple[str, str] | None = None
+        self.pending_cancel: tuple[str, str] | None = None
         self.abort_lock = threading.Lock()
         self.aborted = False
         self.ready = False
@@ -291,8 +363,9 @@ class NativeBackend:
 
     def _send(self, message: str) -> None:
         try:
-            self.process.stdin.write(message + "\n")
-            self.process.stdin.flush()
+            with self.send_lock:
+                self.process.stdin.write(message + "\n")
+                self.process.stdin.flush()
         except (OSError, ValueError) as exc:
             raise NativeError(f"Worker pipe closed during {self.phase}") from exc
 
@@ -351,7 +424,25 @@ class NativeBackend:
                         raise NativeError("Worker returned a result before readiness")
                     self.ready = response.get("phase") == "ready"
                 self.phase = operation
-                self._send(json.dumps([operation, payload], ensure_ascii=False))
+                with self.send_lock:
+                    session_id, command_id = (
+                        payload.get("session_id"),
+                        payload.get("command_id"),
+                    )
+                    if (
+                        operation == "command"
+                        and isinstance(session_id, str)
+                        and isinstance(command_id, str)
+                    ):
+                        self.active_command = (session_id, command_id)
+                        self.last_command = self.active_command
+                    self._send(json.dumps([operation, payload], ensure_ascii=False))
+                    if (
+                        self.pending_cancel is not None
+                        and self.pending_cancel == self.active_command
+                    ):
+                        self.cancel(*self.pending_cancel)
+                    self.pending_cancel = None
                 while True:
                     response = self._receive(deadline, operation)
                     if "phase" in response:
@@ -362,6 +453,22 @@ class NativeBackend:
             except NativeError:
                 self.abort()
                 raise
+            finally:
+                with self.send_lock:
+                    self.active_command = None
+
+    def cancel(self, session_id: str, command_id: str) -> None:
+        target = (session_id, command_id)
+        with self.send_lock:
+            if self.active_command == target:
+                self._send(
+                    json.dumps(
+                        ["cancel", {"session_id": session_id, "command_id": command_id}]
+                    )
+                )
+            elif self.active_command is None and self.last_command != target:
+                # Cancellation may arrive before the executor thread submits its command.
+                self.pending_cancel = target
 
     def abort(self) -> None:
         with self.abort_lock:

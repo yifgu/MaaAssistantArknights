@@ -98,7 +98,7 @@ worker는 MCP 입출력을 상속하지 않고 전용 stdin/stdout 파이프가 
 
 ## 실행 및 클라이언트 설정
 
-동일 기기를 조작하는 다른 MAA/GUI 작업을 중지하고 고정 맵 전투에 수동으로 진입하세요. 첫 버전은 계약 선택, 스테이지 진입, 승리 판정, 다단계 카메라 이동, 연결 전에 배치된 오퍼레이터 복원을 지원하지 않습니다.
+동일 기기를 조작하는 다른 MAA/GUI 작업을 중지하고 고정 맵 전투에 수동으로 진입하세요. 계약 선택, 스테이지 진입, 다단계 카메라 이동, 연결 전에 배치된 오퍼레이터 복원은 지원하지 않습니다. 종료 판정은 아래의 제한적인 제목 인식만 지원합니다.
 
 동일한 `--user-dir`에는 프로세스 간 제어 잠금이 적용됩니다. 같은 기기는 항상 같은 디렉터리를 사용하세요. 다른 디렉터리의 서버나 외부 GUI가 기기를 조작하는 것은 막을 수 없습니다.
 
@@ -166,7 +166,7 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 }
 ```
 
-`action`은 `deploy`, `retreat`, `skill` 중 하나입니다. 배치에는 `location`과 `direction`도 필요합니다. 수동 일시 정지는 기본적으로 인계하지 않습니다. 재개하려면 `adopt_manual_pause=true`와 새로운 스크린샷으로 확인된 일시 정지가 필요합니다. 호출당 행동은 최대 하나입니다. 행동 경계 화면을 캡처하고 일시 정지를 요청한 뒤, 새로운 화면과 `pause_verified`를 반환합니다. 클라이언트 요청이 취소되어도 서비스는 준비된 일시 정리 단계가 끝날 때까지 기다립니다. worker 자체가 실패하면 일시 정지 상태를 알 수 없다고 명시합니다. `battle_step`의 `timeout_ms` 상한은 10000입니다.
+`action`은 `deploy`, `retreat`, `skill` 또는 아래의 `wait`입니다. 배치에는 `location`과 `direction`도 필요합니다. 수동 일시 정지는 기본적으로 인계하지 않습니다. 재개하려면 `adopt_manual_pause=true`와 새로운 스크린샷으로 확인된 일시 정지가 필요합니다. 호출당 행동은 최대 하나입니다. 행동 경계 화면을 캡처하고 일시 정지를 요청한 뒤, 새로운 화면과 `pause_verified`를 반환합니다. 취소 시 Core에 알리고 정리 단계가 끝날 때까지 기다립니다. worker 자체가 실패하면 일시 정지 상태를 알 수 없다고 명시합니다. `battle_step`의 `timeout_ms` 상한은 10000입니다.
 
 `captured_at_ms`는 이미지 획득 직후, 분석 전에 기록한 호스트의 Unix 밀리초 시각으로 기기의 렌더링 시각이 아닙니다. `capture_time_snapshot`은 `capture_image_path`(행동 경계), `return_time_snapshot`은 `return_image_path`(이후 정지 확인)와 연결됩니다. MCP 이미지는 기존처럼 반환 시점 프레임, 행동 경계 프레임 순서입니다. `observation_id`는 획득 순서가 아닌 분석 순서대로 증가하므로 행동 경계의 ID가 더 커도 시각은 더 이를 수 있습니다. 시스템 시계 조정은 시간 차이에 영향을 주며 이 시각은 실행 시간의 엄격한 상한이 아닙니다. 동일 작업 재전송은 원래 시각과 경로를 보존하고 새 캡처에는 자체 획득 시각을 기록합니다.
 
@@ -189,6 +189,49 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 
 PRTS는 `{"provider":"prts","command":"prts-mcp","region":"cn"}`으로 설정할 수 있습니다. 어댑터는 stdio와 구조화 출력을 요청합니다. `intel_query`는 `stage/operator/enemy`를 지원합니다. Intelligence는 게임 고유 ID를, PRTS는 스테이지 ID 또는 오퍼레이터/적의 중국어 이름을 사용합니다. Intelligence의 `routes_page`, `spawns_page`는 1부터 시작하며 페이지당 50개입니다. 출처, 제한, 페이지 정보를 보존하며 5분간 캐시합니다. PRTS 스테이지 조회는 적 정보만 반환하며 타일, 경로, 웨이브는 제공하지 않고 다른 지역 데이터로 조용히 대체하지도 않습니다. 정적 정보는 실시간 전황이 아니며 외부 맵을 자동 병합하거나 보정하지 않습니다.
 
+## 제한 시간 대기와 판단 자료
+
+클라이언트에서 재개와 일시 정지를 따로 호출하지 않고 대기할 수 있습니다.
+
+```json
+{
+  "request": {
+    "session_id": "replace-with-session-id",
+    "operation_id": "wait-001",
+    "action": "wait",
+    "duration_ms": 1000,
+    "adopt_manual_pause": true,
+    "timeout_ms": 10000
+  }
+}
+```
+
+`duration_ms`는 100–8000이며 `timeout_ms`에 최소 1000 ms의 여유가 있어야 합니다. 유닛, 위치, 방향 인수는 허용되지 않습니다. 시간은 게임 시뮬레이션 시간이 아닌 호스트 단조 시계 기준이며 캡처·분석 비용이 실제 소요 시간에 추가됩니다. Core는 진행 중 샘플을 수집하고 마지막 최대 8프레임과 경계/반환 프레임을 보관합니다. 취소나 종료 시 진행을 중단하고 정지를 시도합니다. 취소, 기한 초과, 증거 저장 실패, 정지 미확인은 정상 대기 성공이 아닙니다. 외부 일시 정지는 `wait_interrupted`를 반환하며 임의로 다시 재개하지 않습니다. 종료를 확인하지 못한 비전투 프레임을 관측하면 이후 일시 정지된 전투를 인식해도 `outcome_unknown`과 `session_input_blocked=true`를 반환합니다. 기기 I/O 정지나 프로세스 장애 시에는 정지가 불가능할 수 있습니다.
+
+`terminal`은 `victory`, `defeat`, `unknown`, `still_in_battle`을 구분하며 인식 출처, 원시 일치 신뢰도와 `terminal_evidence_path`를 반환합니다. 현재 리소스는 명확한 중국어 간체/영어 성공·실패 제목만 포함하며 모든 언어와 화면의 실기기 지원을 보장하지 않습니다. 총 처치 수 도달, 검은 화면, 전투 이탈은 승리를 뜻하지 않고 대기 트랜잭션 성공도 승리가 아닙니다. 비전투 화면을 관측한 세션은 후속 입력을 거부하며 메뉴에서 정지 버튼을 누르지 않습니다. 이탈 증거는 일반 128장 순환 삭제에서 제외되므로 직접 정리해야 합니다. 사용자 증언은 이미지 증거와 분리하세요.
+
+완전한 정적 조회는 `battle_attach(stage_name="act55side_ex01", mode="normal")`로 명시적으로 연결한 뒤 `intel_query(kind="stage", identifier="act55side_ex01", complete_stage=true, session_id="…")`를 호출합니다. 기존 provider를 재사용하고 페이지 캐시를 우회하며 최대 100회 요청/120초로 제한합니다. 지역, 스테이지, 모드, 페이지 간 출처 및 중복 ID를 검사합니다. 구조화 계약에는 `game_id`, `server`, `mode`, `provenance`, `routes_page`/`spawns_page`의 `page`, `has_more`(선택적 `total`), 최상위 `routes`/`spawns` 배열 또는 페이지 내 `items`가 필요합니다. 경로는 `route_id`, 생성 항목은 `spawn_id`, `enemy_game_id`, `route_id`, `count`를 사용합니다. 알 수 없는 provider 형식을 추측하지 않습니다.
+
+`coordinate_system="public_row_col"`은 연결된 맵 높이로 `x=col, y=height-1-row`를 계산해 점에 `maa_location`을 추가하고 2차원 타일 배열 행 순서를 뒤집습니다. 원본 응답은 `pages`에 남습니다. `maa_grid`는 변환하지 않으며 다른 좌표계는 미확인입니다. 필드/페이지 누락이나 provider partial은 `partial`과 섹션별 `completeness`를 반환하며 누락을 빈 집합으로 바꾸지 않습니다. 식별/버전 충돌과 provider 실패는 오류입니다. `expires_at`은 Unix 초이며 만료를 명시합니다. 생략 시 최신 여부를 알 수 없고 5분 캐시는 최신 게임 데이터 보장이 아닙니다. 실제 provider 검증이 필요하며 모의 서비스 성공은 다섯 정보 범주의 완전성이나 동적 소환 개체 수를 증명하지 않습니다.
+
+`--loadout-config /absolute/loadout.json`으로 현재 전투 구성을 제공합니다. 시작 시 읽으므로 수정 후에는 서비스를 재시작해야 합니다. 아래는 관측 결과가 아닌 예시입니다.
+
+```json
+{
+  "region": "cn",
+  "stage_id": "act55side_ex01",
+  "mode": "normal",
+  "confirmed_by_user": false,
+  "operators": [
+    {"operator_game_id": "char_4228_closur", "actual_elite": 2, "equipped_skill_id": null}
+  ]
+}
+```
+
+지역, 스테이지와 명시적 모드가 일치해야 합니다. `actual_level`, `potential`, `module_id`, `module_level`, `skill_level`, `mastery`도 선택적으로 입력하며 생략하면 unknown입니다. 스냅샷의 `decision_context`는 필드별 출처, 사용자 확인, 설정 해시를 별도로 보존하고 원시 관측을 덮어쓰거나 사용자 확인을 시각 검증으로 취급하지 않습니다. SP, 스킬 단계, 지속 시간과 재능은 여전히 미확인이며 모호한 game ID 후보의 첫 항목을 임의 선택하지 않습니다.
+
+`battle_evaluate_placement(session_id, placements)`는 후보 전체 진형을 읽기 전용으로 검사합니다. 각 항목에 `operator_game_id`, `location`, `direction`을 넣고 정예 단계는 설정에서 가져오거나 `assumed_elite`로 가정을 명시합니다. 기본 범위, 기하학적 아군 커버, 정적 배치 호환성과 타일 충돌을 반환합니다. 정예 단계/범위를 모르면 직군 기본값을 대입하지 않습니다. 실제 점유, 치료 대상 자격, 생존이나 최적성을 검증하지 않고 스킬, 모듈, 재능과 특수 지형 효과도 포함하지 않습니다. 소환물/장치 제어와 실시간 적 추적은 계속 미지원입니다.
+
 ## Core 프로토콜
 
 `AsstAppendTask(handle, "BattleControl", {"stage_name":"main_01-07","session_id":"unique-id"})`로 초기화하고 `AsstStart`를 호출한 뒤 `SubTaskExtraInfo`의 `what="BattleControlReady"`(프로토콜 버전 1)를 기다립니다. `AsstSetTaskParams`에 `session_id`, `command_id`, `action`, `args`, `timeout_ms`를 전달하고 `what="BattleControlResult"`를 기다립니다. 한 번에 명령 하나만 허용하므로 콜백을 받은 뒤 다음 명령을 전송하세요.
@@ -196,3 +239,5 @@ PRTS는 `{"provider":"prts","command":"prts-mcp","region":"cn"}`으로 설정할
 행동 이름은 `observe`, `capture`, `map`, `identify`, `deploy`, `retreat`, `skill`, `set_paused`, `step`입니다. `step`은 사전 검사된 전술 행동 하나를 받고 즉시 캡처한 뒤 일시 정지를 요청하고, 확인 후 새 일시 정지 화면을 반환합니다. 기기 I/O 또는 MCP 프로세스 자체가 실패하는 경우에는 일시 정지를 보장할 수 없습니다. 인수 갱신은 큐에 추가만 하며 기기 조작은 Core 작업 스레드에서 실행합니다. C ABI만으로는 하위 I/O의 반환 기한을 보장할 수 없어 네이티브 호출자는 외부 watchdog과 중복 방지를 구현해야 합니다. MCP 서버는 프로세스 수준 watchdog을 제공합니다. 반복 실험과 최적화는 후속 구현 범위입니다.
 
 `identify`는 선택적인 엄격한 boolean 인수 `args.adopt_manual_pause`(기본값 false)를 받습니다. 명시적 인계는 인식된 정지를 관리 대상으로 삼을 뿐 정지를 전환하거나 해당 인식 작업의 전투 재개를 허용하지 않습니다.
+
+`step`은 유닛 인수 없는 `args.action="wait"`와 `args.duration_ms`도 지원합니다. 실행 중 `AsstSetTaskParams`에 `{"session_id":"…","cancel_command_id":"…"}`를 보낼 수 있습니다. 해당 명령의 취소 신호만 설정하며 기기 입력이나 두 번째 결과를 만들지 않습니다. 늦은 취소는 다음 명령에 영향을 주지 않고 원래 콜백으로 정리 결과를 반환합니다. MCP는 원래 `operation_id`로 저장하고 중복을 방지합니다.

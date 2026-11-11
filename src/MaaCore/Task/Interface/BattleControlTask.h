@@ -1,10 +1,12 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <mutex>
 #include <optional>
+#include <unordered_map>
 
 #include "Task/BattleHelper.h"
 #include "Task/InterfaceTask.h"
@@ -31,6 +33,7 @@ private:
         std::string id;
         std::string action;
         json::value args;
+        std::chrono::steady_clock::time_point started;
         std::chrono::steady_clock::time_point deadline;
     };
 
@@ -44,9 +47,11 @@ private:
     CapturedFrame capture_frame();
     json::value
         observe(const CapturedFrame& frame, bool active_identification = false, bool include_battlefield = true);
-    json::value save_evidence(const CapturedFrame& frame, json::value snapshot);
+    json::value save_evidence(const CapturedFrame& frame, json::value snapshot, bool retain = false);
     json::value execute(const Command& command);
     json::value execute_step(const Command& command, json::value snapshot);
+    json::value execute_wait(const Command& command, CapturedFrame frame, json::value snapshot);
+    json::value terminal_info(const CapturedFrame& frame, const json::value& snapshot) const;
     json::value map_info() const;
     json::value failure(const std::string& code, const std::string& message) const;
     void emit(const std::string& what, json::value details);
@@ -58,8 +63,12 @@ private:
     bool m_accepting = false;
     bool m_initialized = false;
     bool m_pause_requested = false;
+    bool m_terminal_seen = false;
+    std::atomic_bool m_cancel_requested = false;
+    std::string m_active_command_id;
     std::string m_session_id;
     uint64_t m_observation_id = 0;
     std::deque<std::filesystem::path> m_evidence_files;
+    std::unordered_map<std::string, std::string> m_directions;
 };
 }

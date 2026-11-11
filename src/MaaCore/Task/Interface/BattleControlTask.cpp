@@ -12,6 +12,7 @@
 #include "Utils/Logger.hpp"
 #include "Vision/Battle/BattlefieldClassifier.h"
 #include "Vision/Battle/BattlefieldMatcher.h"
+#include "Vision/Miscellaneous/PipelineAnalyzer.h"
 
 asst::BattleControlTask::BattleControlTask(const AsstCallback& callback, Assistant* inst) :
     InterfaceTask(callback, inst, TaskType),
@@ -41,15 +42,20 @@ bool asst::BattleControlTask::validate_command(const json::value& params) const
         return true;
     }
     if (action == "step") {
-        if (!args.find<std::string>("action") || !args.find<std::string>("unit_id") ||
-            !args.find<bool>("adopt_manual_pause")) {
+        if (!args.find<std::string>("action") || !args.find<bool>("adopt_manual_pause")) {
             return false;
         }
         const auto step_action = args.at("action").as_string();
+        if (step_action == "wait") {
+            const auto duration = args.find<int>("duration_ms");
+            return duration && *duration >= 100 && *duration <= 8000 && *duration + 1000 <= timeout.as_integer() &&
+                   !args.contains("unit_id") && !args.contains("location") && !args.contains("direction");
+        }
         if (step_action != "deploy" && step_action != "retreat" && step_action != "skill") {
             return false;
         }
-        if (args.at("unit_id").as_string().empty()) {
+        if (!args.find<std::string>("unit_id") || args.at("unit_id").as_string().empty() ||
+            args.contains("duration_ms")) {
             return false;
         }
         if (step_action != "deploy") {
@@ -92,6 +98,20 @@ bool asst::BattleControlTask::validate_command(const json::value& params) const
 bool asst::BattleControlTask::set_params(const json::value& params)
 {
     std::lock_guard lock(m_command_mutex);
+    if (params.contains("cancel_command_id")) {
+        if (!m_initialized || params.get("session_id", "") != m_session_id ||
+            !params.find<std::string>("cancel_command_id")) {
+            LogWarn << __FUNCTION__ << "Rejected invalid cancellation";
+            return false;
+        }
+        const auto id = params.at("cancel_command_id").as_string();
+        if (!id.empty() && id == m_active_command_id) {
+            m_cancel_requested = true;
+            m_command_cv.notify_all();
+        }
+        // A cancellation racing with completion must not affect the next command.
+        return true;
+    }
     if (!m_initialized) {
         if (!params.find<std::string>("stage_name") || !params.find<std::string>("session_id")) {
             LogError << __FUNCTION__ << "Missing battle session parameters";
@@ -112,11 +132,14 @@ bool asst::BattleControlTask::set_params(const json::value& params)
         LogError << __FUNCTION__ << "Rejected invalid, stale or concurrent battle command";
         return false;
     }
-    m_command =
-        Command { params.at("command_id").as_string(),
-                  params.at("action").as_string(),
-                  params.at("args"),
-                  std::chrono::steady_clock::now() + std::chrono::milliseconds(params.at("timeout_ms").as_integer()) };
+    const auto now = std::chrono::steady_clock::now();
+    m_command = Command { params.at("command_id").as_string(),
+                          params.at("action").as_string(),
+                          params.at("args"),
+                          now,
+                          now + std::chrono::milliseconds(params.at("timeout_ms").as_integer()) };
+    m_active_command_id = m_command->id;
+    m_cancel_requested = false;
     m_accepting = false;
     m_command_cv.notify_one();
     return true;
@@ -154,6 +177,7 @@ bool asst::BattleControlTask::_run()
         result["command_id"] = command->id;
         {
             std::lock_guard lock(m_command_mutex);
+            m_active_command_id.clear();
             m_accepting = !need_exit();
         }
         emit("BattleControlResult", std::move(result));
@@ -325,6 +349,11 @@ json::value
     snapshot["ambiguous_count"] = ambiguous_count;
     if (include_battlefield) {
         for (const auto& [tag, loc] : m_battlefield_opers) {
+            json::array ids;
+            for (const auto& id : BattleData.get_ids(tag.role, tag.name)) {
+                ids.emplace_back(id);
+            }
+            const auto id = unit_id(tag.role, tag.name);
             json::value ready = nullptr;
             if (const auto tile = m_normal_tile_info.find(loc);
                 tile != m_normal_tile_info.end() && Rect(0, 0, image.cols, image.rows).include(tile->second.pos)) {
@@ -337,11 +366,15 @@ json::value
             }
             snapshot["battlefield"].as_array().emplace_back(
                 json::object {
-                    { "unit_id", unit_id(tag.role, tag.name) },
+                    { "unit_id", id },
+                    { "game_ids", std::move(ids) },
                     { "name", tag.name },
                     { "role", static_cast<int>(tag.role) },
                     { "location", json::array { loc.x, loc.y } },
                     { "position_source", "action_history_unverified" },
+                    { "direction",
+                      m_directions.contains(id) ? json::value(m_directions.at(id)) : json::value(nullptr) },
+                    { "direction_source", "action_history_unverified" },
                     { "skill_ready", std::move(ready) },
                 });
         }
@@ -349,7 +382,7 @@ json::value
     return snapshot;
 }
 
-json::value asst::BattleControlTask::save_evidence(const CapturedFrame& frame, json::value snapshot)
+json::value asst::BattleControlTask::save_evidence(const CapturedFrame& frame, json::value snapshot, bool retain)
 {
     const auto& image = frame.image;
     if (image.empty()) {
@@ -361,7 +394,9 @@ json::value asst::BattleControlTask::save_evidence(const CapturedFrame& frame, j
     if (!MAA_NS::imwrite(file, image)) {
         return failure("evidence_write_failed", "Could not save screenshot");
     }
-    m_evidence_files.emplace_back(file);
+    if (!retain) {
+        m_evidence_files.emplace_back(file);
+    }
     if (m_evidence_files.size() > 128) {
         std::error_code ec;
         std::filesystem::remove(m_evidence_files.front(), ec);
@@ -375,6 +410,222 @@ json::value asst::BattleControlTask::save_evidence(const CapturedFrame& frame, j
         { "snapshot", std::move(snapshot) },
         { "image_path", relative.generic_string() },
     };
+}
+
+json::value asst::BattleControlTask::terminal_info(const CapturedFrame& frame, const json::value& snapshot) const
+{
+    json::value result = json::object {
+        { "terminal_state", snapshot.at("in_battle").as_boolean() ? "still_in_battle" : "unknown" },
+        { "terminal_confidence", nullptr },
+        { "result_source", "unrecognized" },
+    };
+    if (snapshot.at("in_battle").as_boolean() || frame.image.empty()) {
+        return result;
+    }
+    int matches = 0;
+    for (const auto& [task, state] :
+         { std::pair { "BattleControlVictory", "victory" }, std::pair { "BattleControlDefeat", "defeat" } }) {
+        PipelineAnalyzer analyzer(frame.image);
+        analyzer.set_tasks({ task });
+        if (const auto match = analyzer.analyze()) {
+            double score = 0;
+            if (const auto* ocr = std::get_if<OCRer::Result>(&match->result)) {
+                score = ocr->score;
+            }
+            else if (const auto* templ = std::get_if<Matcher::Result>(&match->result)) {
+                score = templ->score;
+            }
+            if (score >= 0.9) {
+                ++matches;
+                result["terminal_state"] = state;
+                result["result_source"] = task;
+                result["terminal_confidence"] = score;
+            }
+        }
+    }
+    if (matches > 1) {
+        result["terminal_state"] = "unknown";
+        result["terminal_confidence"] = nullptr;
+        result["result_source"] = "conflicting_titles";
+    }
+    return result;
+}
+
+json::value asst::BattleControlTask::execute_wait(const Command& command, CapturedFrame frame, json::value snapshot)
+{
+    const auto started = command.started;
+    const auto duration = std::chrono::milliseconds(command.args.at("duration_ms").as_integer());
+    std::string error;
+    bool pause_verified = false;
+    bool resumed = false;
+    std::deque<std::pair<CapturedFrame, json::value>> recent;
+    auto remember = [&] {
+        recent.emplace_back(frame, snapshot);
+        if (recent.size() > 8) {
+            recent.pop_front();
+        }
+    };
+    auto cancelled = [&] {
+        return m_cancel_requested.load() || need_exit();
+    };
+    if (!snapshot.at("in_battle").as_boolean()) {
+        remember();
+    }
+    else if (
+        !snapshot.at("running_button_visible").as_boolean() && !m_pause_requested &&
+        !command.args.at("adopt_manual_pause").as_boolean()) {
+        error = "pause_state_unknown";
+    }
+    else if (cancelled()) {
+        error = "cancelled";
+    }
+    else if (std::chrono::steady_clock::now() + duration >= command.deadline) {
+        error = "deadline_exceeded";
+    }
+    else {
+        if (!snapshot.at("running_button_visible").as_boolean()) {
+            m_pause_requested = true;
+            pause();
+            frame = capture_frame();
+            snapshot = observe(frame, false, false);
+        }
+        resumed = snapshot.at("in_battle").as_boolean() && snapshot.at("running_button_visible").as_boolean();
+        if (resumed) {
+            m_pause_requested = false;
+            const auto until = std::chrono::steady_clock::now() + duration;
+            while (true) {
+                remember();
+                if (!snapshot.at("in_battle").as_boolean() || !snapshot.at("running_button_visible").as_boolean()) {
+                    if (snapshot.at("in_battle").as_boolean()) {
+                        error = "wait_interrupted";
+                    }
+                    break;
+                }
+                if (cancelled()) {
+                    error = "cancelled";
+                    break;
+                }
+                const auto now = std::chrono::steady_clock::now();
+                if (now >= command.deadline) {
+                    error = "deadline_exceeded";
+                    break;
+                }
+                if (now >= until) {
+                    break;
+                }
+                {
+                    std::unique_lock lock(m_command_mutex);
+                    m_command_cv.wait_until(
+                        lock,
+                        std::min({ until, command.deadline, now + std::chrono::milliseconds(200) }),
+                        cancelled);
+                }
+                frame = capture_frame();
+                snapshot = observe(frame, false, false);
+            }
+        }
+        else if (snapshot.at("in_battle").as_boolean()) {
+            error = "resume_unverified";
+        }
+    }
+
+    const auto boundary_frame = frame;
+    const auto boundary_snapshot = snapshot;
+    if (snapshot.at("in_battle").as_boolean() && snapshot.at("running_button_visible").as_boolean()) {
+        pause();
+    }
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        frame = capture_frame();
+        snapshot = observe(frame);
+        if (!snapshot.at("in_battle").as_boolean()) {
+            break;
+        }
+        if (!snapshot.at("running_button_visible").as_boolean()) {
+            pause_verified = true;
+            break;
+        }
+        if (attempt == 0) {
+            pause();
+        }
+    }
+    // Refusing manual adoption must not grant ownership as a side effect.
+    m_pause_requested = pause_verified && error != "pause_state_unknown";
+    snapshot["pause_requested"] = m_pause_requested;
+    auto terminal = terminal_info(boundary_frame, boundary_snapshot);
+    const bool boundary_terminal =
+        terminal.at("terminal_state").as_string() == "victory" || terminal.at("terminal_state").as_string() == "defeat";
+    if (terminal.at("terminal_state").as_string() == "still_in_battle" ||
+        terminal.at("terminal_state").as_string() == "unknown") {
+        terminal = terminal_info(frame, snapshot);
+    }
+    const auto state = terminal.at("terminal_state").as_string();
+    const bool terminal_verified = state == "victory" || state == "defeat";
+    const bool left_battle = !boundary_snapshot.at("in_battle").as_boolean() || !snapshot.at("in_battle").as_boolean();
+    m_terminal_seen = left_battle;
+    json::array evidence_errors;
+    auto save = [&](const CapturedFrame& saved_frame, json::value saved_snapshot) {
+        auto evidence = save_evidence(saved_frame, std::move(saved_snapshot), left_battle);
+        if (evidence.at("status").as_string() != "succeeded") {
+            evidence_errors.emplace_back(evidence.at("error"));
+        }
+        return evidence.get("image_path", "");
+    };
+    json::array samples;
+    for (const auto& [sample, sample_snapshot] : recent) {
+        if (sample_snapshot.at("observation_id") == boundary_snapshot.at("observation_id")) {
+            continue;
+        }
+        samples.emplace_back(
+            json::object {
+                { "captured_at_ms", sample_snapshot.at("captured_at_ms") },
+                { "image_path", save(sample, sample_snapshot) },
+            });
+    }
+    const auto boundary_path = save(boundary_frame, boundary_snapshot);
+    const auto return_path = save(frame, snapshot);
+    if (cancelled()) {
+        error = "cancelled";
+    }
+    if (error.empty() && std::chrono::steady_clock::now() >= command.deadline) {
+        error = "deadline_exceeded";
+    }
+    const bool safe = (pause_verified && !left_battle) || terminal_verified;
+    json::value result = json::object {
+        { "status",
+          !error.empty()                    ? "failed"
+          : safe && evidence_errors.empty() ? "succeeded"
+                                            : "outcome_unknown" },
+        { "requested_duration_ms", duration.count() },
+        { "duration_basis", "host_monotonic_not_game_simulation_time" },
+        { "actual_observed_envelope_ms",
+          std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count() },
+        { "resumed", resumed },
+        { "pause_verified", pause_verified },
+        { "safe_state",
+          terminal_verified ? "terminal"
+          : pause_verified  ? "paused"
+                            : "unknown" },
+        { "pause_not_applicable", terminal_verified },
+        { "session_input_blocked", m_terminal_seen },
+        { "terminal", terminal },
+        { "capture_time_snapshot", boundary_snapshot },
+        { "return_time_snapshot", snapshot },
+        { "capture_image_path", boundary_path },
+        { "return_image_path", return_path },
+        { "terminal_evidence_path", terminal_verified ? (boundary_terminal ? boundary_path : return_path) : "" },
+        { "samples", std::move(samples) },
+        { "evidence_errors", std::move(evidence_errors) },
+        { "warnings",
+          left_battle && !terminal_verified
+              ? json::array { "Observed a non-battle frame without terminal proof; further session input is blocked" }
+              : json::array() },
+    };
+    if (!error.empty()) {
+        result["error"] = json::object { { "code", error },
+                                         { "message", "Wait did not complete; inspect return safety and evidence" } };
+        LogWarn << __FUNCTION__ << error;
+    }
+    return result;
 }
 
 json::value asst::BattleControlTask::execute_step(const Command& command, json::value snapshot)
@@ -477,6 +728,9 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
         }
     }
 
+    if (m_cancel_requested) {
+        return reject_preflight("cancelled", "Step cancelled before action");
+    }
     if (std::chrono::steady_clock::now() >= command.deadline) {
         return reject_preflight("deadline_exceeded", "Step expired during preflight; no action was sent");
     }
@@ -512,9 +766,12 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
     }
 
     bool action_returned = false;
-    if (std::chrono::steady_clock::now() < command.deadline) {
+    if (!m_cancel_requested && std::chrono::steady_clock::now() < command.deadline) {
         if (action == "deploy") {
             action_returned = deploy_oper(deployment_oper->role, deployment_oper->name, location, direction);
+            if (action_returned) {
+                m_directions[target] = args.at("direction").as_string();
+            }
         }
         else if (action == "retreat") {
             action_returned = retreat_oper(battlefield_oper->first.role, battlefield_oper->first.name);
@@ -580,7 +837,8 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
 
 json::value asst::BattleControlTask::execute(const Command& command)
 {
-    if (need_exit() || std::chrono::steady_clock::now() >= command.deadline) {
+    const bool waiting = command.action == "step" && command.args.get("action", "") == "wait";
+    if (!waiting && (need_exit() || std::chrono::steady_clock::now() >= command.deadline)) {
         return failure("deadline_exceeded", "Command expired before execution");
     }
     if (command.action == "map") {
@@ -593,6 +851,12 @@ json::value asst::BattleControlTask::execute(const Command& command)
     }
     if (command.action == "observe") {
         return json::object { { "status", "succeeded" }, { "snapshot", std::move(snapshot) } };
+    }
+    if (m_terminal_seen) {
+        return failure("battle_ended", "This session left battle; no further input is permitted");
+    }
+    if (waiting) {
+        return execute_wait(command, std::move(frame), std::move(snapshot));
     }
     if (!snapshot.at("in_battle").as_boolean()) {
         return failure("not_in_battle", "Battle not recognized; no input sent");
@@ -736,6 +1000,9 @@ json::value asst::BattleControlTask::execute(const Command& command)
                 { "None", battle::DeployDirection::None },
             };
             sent = deploy_oper(oper.role, oper.name, loc, directions.at(command.args.at("direction").as_string()));
+            if (sent) {
+                m_directions[target] = command.args.at("direction").as_string();
+            }
         }
         else {
             const auto unit = std::ranges::find_if(m_battlefield_opers, [&](const auto& pair) {

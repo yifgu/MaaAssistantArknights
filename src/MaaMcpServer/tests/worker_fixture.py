@@ -3,6 +3,7 @@
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -19,7 +20,7 @@ class FixtureCore:
         progress("resource_load")
         os.write(sys.stdout.fileno(), b"fixture native stdout\n")
 
-    def dispatch(self, operation, payload, settings):
+    def dispatch(self, operation, payload, settings, cancelled=None):
         if settings.address == "connect-hang" and operation == "connect":
             time.sleep(60)
         if operation == "connect":
@@ -34,8 +35,13 @@ class FixtureCore:
             time.sleep(60)
         if payload.get("action") == "crash":
             os._exit(7)
+        if payload.get("action") == "step":
+            assert isinstance(cancelled, threading.Event)
+            cancelled.wait(5)
         return {
-            "status": "succeeded",
+            "status": "failed"
+            if cancelled is not None and cancelled.is_set()
+            else "succeeded",
             "session_id": payload["session_id"],
             "command_id": payload["command_id"],
             "snapshot": {"fixture": True},

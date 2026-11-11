@@ -11,14 +11,17 @@ from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, ImageContent, TextContent, ToolAnnotations
 from pydantic import Field
 
+from .decision import CLIENT_REGIONS, DecisionContext
 from .intelligence import IntelligenceClient
 from .models import (
+    BattleMode,
     BoundedStepRequest,
     DeployRequest,
     Identifier,
     IdentifyRequest,
     IntelligenceConfig,
     PauseRequest,
+    Placement,
     Settings,
     UnitRequest,
 )
@@ -60,10 +63,14 @@ def create_server(
             "Observe before acting. Unknown identities and enemy state are not empty state. "
             "Mutations may return outcome_unknown even if input succeeded: capture evidence, "
             "never blindly retry. Reuse an operation_id only for the identical request. "
-            "Prefer battle_step for a prevalidated single action followed by capture and verified pause. "
+            "Prefer battle_step for one action or bounded wait followed by verified pause or terminal evidence. "
+            "Wait success means the transaction completed safely, not necessarily battle victory. "
+            "Supplied loadouts and static coverage are not live observations or optimality proofs. "
+            "Keep the game paused during intelligence queries and placement evaluation; read-only tools do not pause it. "
             "battle_identify can explicitly adopt a manual pause without resuming. "
             "Manual-pause adoption must be explicit. Close does not pause the game. "
-            "No automatic stage entry, spending, contract selection, victory detection or optimizer."
+            "No automatic stage entry, spending, contract selection or optimizer. "
+            "Unrecognized terminal screens remain unknown; never infer victory from leaving battle."
         ),
         lifespan=lifespan,
     )
@@ -77,13 +84,16 @@ def create_server(
                 "session_id": service.session_id,
                 **service.diagnostics(),
                 "intelligence_configured": intelligence is not None,
+                "loadout_configured": service.decision.config is not None,
+                "mode": service.mode,
                 "limitations": [
                     "Only a single caller-supplied fixed map; no camera movement or stage recognition.",
                     "Battlefield positions are unverified action history; no mid-battle reconstruction.",
                     "Summon/device deployment is rejected until instance-level identity tracking is implemented.",
                     "Mutations are not automatically confirmed; inspect evidence after each action.",
-                    "battle_step bounds one action and immediately captures then requests pause; "
-                    "pause verification is returned separately.",
+                    "battle_step bounds one action or host-time wait; pause and terminal evidence are returned separately.",
+                    "Terminal OCR currently recognizes configured CN/English titles only; other screens remain unknown.",
+                    "Placement evaluation checks base geometry, not current skill effects or live occupancy.",
                     "No enemy tracking, contract automation, experiment optimizer or arbitrary clicks.",
                     "Stop other MAA/GUI controllers before connecting.",
                 ],
@@ -96,9 +106,22 @@ def create_server(
         return tool_result(await service.connect())
 
     @server.tool(annotations=MUTATING)
-    async def battle_attach(stage_name: Identifier) -> CallToolResult:
+    async def battle_attach(
+        stage_name: Identifier, mode: BattleMode | None = None
+    ) -> CallToolResult:
         """Bind a unique MaaCore stage/level ID to an already-started battle. Verify the returned map."""
-        return tool_result(await service.attach(stage_name))
+        return tool_result(await service.attach(stage_name, mode))
+
+    @server.tool(annotations=READ_ONLY)
+    async def battle_evaluate_placement(
+        session_id: Identifier,
+        placements: Annotated[list[Placement], Field(min_length=1, max_length=32)],
+    ) -> CallToolResult:
+        """Check candidate formation base geometry and static tile conflicts. Does not verify live occupancy or optimize a strategy."""
+        service._check_session(session_id)
+        if service.map_info is None:
+            raise BattleError("Attach a map before evaluating placements")
+        return tool_result(service.decision.evaluate(service.map_info, placements))
 
     @server.tool(annotations=READ_ONLY)
     async def battle_observe(session_id: Identifier) -> CallToolResult:
@@ -146,17 +169,13 @@ def create_server(
 
     @server.tool(annotations=MUTATING)
     async def battle_step(request: BoundedStepRequest) -> CallToolResult:
-        """Run one prevalidated action, capture immediately, then pause and verify before returning."""
+        """Run one action or bounded wait; capture, then verify pause or terminal evidence. Wait uses host time, not simulation time."""
         result = await service.command(
             "step",
             request,
-            {
-                "action": request.action,
-                "unit_id": request.unit_id,
-                "adopt_manual_pause": request.adopt_manual_pause,
-                "location": request.location,
-                "direction": request.direction,
-            },
+            request.model_dump(
+                exclude={"session_id", "operation_id", "timeout_ms"}, exclude_none=True
+            ),
         )
         response = tool_result(result)
         for key in ("return_image_path", "capture_image_path"):
@@ -234,12 +253,47 @@ def create_server(
         identifier: Identifier,
         routes_page: Annotated[int, Field(ge=1)] = 1,
         spawns_page: Annotated[int, Field(ge=1)] = 1,
+        complete_stage: bool = False,
+        session_id: Identifier | None = None,
     ) -> CallToolResult:
         """Query configured static intelligence. Intelligence uses game IDs; PRTS uses stage IDs or Chinese names."""
         if intelligence is None:
             raise BattleError(
                 "No intelligence provider configured; start with --intel-config"
             )
+        if complete_stage:
+            if (
+                kind != "stage"
+                or session_id is None
+                or routes_page != 1
+                or spawns_page != 1
+            ):
+                raise BattleError(
+                    "Complete stage queries require kind=stage, session_id and initial pages"
+                )
+            service._check_session(session_id)
+            if (
+                service.map_info is None
+                or service.map_info["stage_id"] != identifier
+                or service.mode is None
+            ):
+                raise BattleError(
+                    "Complete intelligence requires the attached exact stage ID and explicit mode"
+                )
+            if (
+                intelligence.config.region
+                != CLIENT_REGIONS[service.settings.client_type]
+            ):
+                raise BattleError(
+                    "Provider region does not match the device client; no cross-region fallback"
+                )
+            return tool_result(
+                await intelligence.query_complete_stage(
+                    identifier, service.mode, service.map_info["height"]
+                )
+            )
+        if session_id is not None:
+            raise BattleError("session_id is only valid for a complete stage query")
         return tool_result(
             await intelligence.query(kind, identifier, routes_page, spawns_page)
         )
@@ -268,6 +322,7 @@ def main() -> None:
         default="Official",
     )
     parser.add_argument("--intel-config", type=Path)
+    parser.add_argument("--loadout-config", type=Path)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     core_dir = args.core_dir.resolve()
@@ -287,7 +342,10 @@ def main() -> None:
             args.intel_config.read_text(encoding="utf-8")
         )
         intelligence = IntelligenceClient(config)
-    create_server(BattleService(settings), intelligence).run(transport="stdio")
+    decision = DecisionContext(settings, args.loadout_config)
+    create_server(BattleService(settings, decision=decision), intelligence).run(
+        transport="stdio"
+    )
 
 
 if __name__ == "__main__":

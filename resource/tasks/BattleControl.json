@@ -1,0 +1,14 @@
+{
+    "BattleControlVictory": {
+        "algorithm": "OcrDetect",
+        "text": ["演习成功", "行动成功", "MISSION ACCOMPLISHED"],
+        "fullMatch": true,
+        "roi": [0, 0, 1280, 720]
+    },
+    "BattleControlDefeat": {
+        "algorithm": "OcrDetect",
+        "text": ["演习失败", "任务失败", "MISSION FAILED"],
+        "fullMatch": true,
+        "roi": [0, 0, 1280, 720]
+    }
+}
