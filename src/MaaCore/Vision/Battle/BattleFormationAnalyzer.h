@@ -16,6 +16,7 @@ public:
 
         std::string name;
         cv::Mat avatar;
+        Rect rect;
     };
 
     using ResultsVec = std::vector<Result>;

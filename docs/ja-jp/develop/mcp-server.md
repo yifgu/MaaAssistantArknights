@@ -102,7 +102,7 @@ worker は MCP の入出力を継承せず、専用 stdin/stdout パイプを持
 
 同じ `--user-dir` はプロセス間ロックで保護されます。同じ端末には常に同じディレクトリを使用してください。別ディレクトリのサーバーや外部 GUI による操作は防げません。
 
-個体ごとの識別が実装されるまでは召喚物や装置の配置を明示的に拒否します。同名の複数ユニットを 1 人のオペレーターとして扱うことはできません。
+召喚物の配置は信頼できる起動時許可リストに限定し、個体別に記録します。未許可の装置と召喚物のスキル／撤退は引き続き拒否します。詳細は後述します。
 
 ```bash
 uv run --project src/MaaMcpServer maa-battle-mcp \
@@ -132,7 +132,7 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 
 `battle_connect`、`battle_attach(stage_name="main_01-07")`、`battle_capture_evidence`、`battle_observe` の順で呼び出します。ステージ ID は画面と一致している必要があります。マップの指定は呼び出し側の責任で、自動認識ではありません。`battle_get_map` は静的なマスと 2 種類の画面投影を返します。不明な名前は null です。`battle_identify` は詳細画面を開いて認識し、一時停止を要求します。実行後に画像を確認してから `battle_set_paused(paused=false)` で明示的に再開してください。
 
-手動一時停止中の戦闘に新しいセッションを接続した場合、`battle_identify` に `request.adopt_manual_pause=true` を指定すると、再開せずに停止状態の引き継ぎを明示的に許可できます。厳密な boolean 型で、既定値は false です。省略すると管理下にない停止は引き続き拒否されます。Core はまず戦闘画面であり、実行中の一時停止ボタンが見えないことを確認します。認識できない画面は引き継げません。カードの確認は停止中に行い、OCR が不完全な場合やキャンセル時も自動再開しません。処理完了時は部分認識でも `pause_verified`、`safe_state`、最後の同一フレームの `snapshot` / `image_path` と PNG を返します。保存失敗は `evidence_error` で明示され、キャンセルや worker 障害では最終画像を返せない場合があります。初回認識のための外部 ADB タップは不要です。
+手動一時停止の引き継ぎには、`battle_identify` の厳密な boolean 引数 `request.adopt_manual_pause=true` が必要です。既定値は false で、再開を許可しません。Core は明確な停止証拠を要求します。実行ボタンの不在だけでは不十分で、入場タイトルの遷移は引き継げません。停止中にカードを確認し、部分 OCR でも `pause_verified`、`safe_state`、同一フレームの `snapshot` / `image_path` と PNG を返します。保存失敗は `evidence_error` に記録され、キャンセルや worker 障害では最終証拠が得られない場合がありますが、自動再開しません。
 
 配置リクエストの例です。セッション ID と観測されたユニット ID を置き換えます。ツール引数には `request` オブジェクトが必要です。
 
@@ -166,13 +166,13 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 }
 ```
 
-`action` は `deploy`、`retreat`、`skill` または後述の `wait` です。配置には `location` と `direction` も必要です。手動一時停止は既定では引き継ぎません。再開するには `adopt_manual_pause=true` と新しい画像による一時停止確認が必要です。1 回の呼び出しで実行する操作は 1 つだけです。操作境界の画像を取得してから一時停止を要求し、新しい画像と `pause_verified` を返します。キャンセル時は Core に通知して一時停止処理の完了を待ちます。worker 自体が失敗した場合は、一時停止状態が不明であることを明示します。`battle_step` の `timeout_ms` 上限は 10000 です。
+`action` は `deploy`、`retreat`、`skill`、`wait` です。配置には `location` と `direction` も必要です。手動停止の再開には `adopt_manual_pause=true` と新しい停止証拠が必要です。操作は最大 1 回で、操作境界を解析してから停止を要求し、新しい画像と `pause_verified` を返します。キャンセル時は Core の後処理を待ちますが、worker 障害時は停止が不明になる場合があります。`battle_step.timeout_ms` は既定 10000、上限 30000 で、呼び出し側の予算を勝手に延長しません。
 
 `captured_at_ms` は画像取得直後、解析前に記録したホストの Unix ミリ秒時刻で、端末の描画時刻ではありません。`capture_time_snapshot` は `capture_image_path`（操作境界）、`return_time_snapshot` は `return_image_path`（その後の停止確認）に対応します。MCP 画像は従来どおり返却時の画像、操作境界の画像の順です。`observation_id` は取得順ではなく解析順に増加するため、操作境界の ID が大きくても時刻は早い場合があります。システム時計の調整は時間差に影響し、これらの時刻は実行時間の厳密な上限ではありません。同一操作の再送は元の時刻とパスを保持し、新しい撮影にはその取得時刻を記録します。
 
 `battle_identify` は `identified_count`、`unresolved_count`、`ambiguous_count` とカードごとの `identity_reason` を返します。空の名前を持つキャッシュ項目が詳細 OCR を抑制することはなくなりました。その他の操作が `outcome_unknown` を返すと MCP の `isError=true` になります。`helper_returned=true` や `action_returned=true` でもゲーム内の成功は保証されません。再撮影して確認し、無条件に再試行しないでください。配置位置の情報源は `action_history_unverified`、敵の状態は null です。モデルによる状態の直接上書きには対応しません。単独の一時停止要求は停止確認と同じではなく、再開は本サーバーが要求または明示的に引き継いだ停止に限定されます。
 
-通常コマンドの `timeout_ms` は 1–30000、`battle_step` は最大 10000 です。通常コマンドの期限切れやキャンセル時は worker を終了し、セッションを無効化して不明な結果を保存します。step のキャンセル時は準備済みの一時停止処理を待ちますが、worker の障害時には一時停止を確認できない場合があります。`battle_close` は通常コマンドを中断し、step の実行中は一時停止処理の完了を待ってから閉じます。ただし、それ自体がゲームを一時停止・終了させるわけではありません。`battle_get_operation` で永続化された結果を取得できます。ログと `operations.sqlite3` は `--user-dir` に保存され、明示的な撮影画像は各戦闘につき直近 128 枚を保持します。古いセッション、ログ、データベースは定期的に整理してください。
+全コマンドの `timeout_ms` 上限は 30000 です。通常の期限切れ／キャンセルでは worker を終了してセッションを無効化し、不明な結果を保存します。step は停止後処理を待ちますが、端末故障時の停止は保証しません。`battle_close` は通常コマンドを中断、または step の後処理を待ち、それ自体では停止・終了しません。`battle_get_operation` は永続結果を読み、保存失敗時は明示的に報告して以後のコマンドを拒否します。`--user-dir` にログと `operations.sqlite3` を保存し、通常画像は直近 128 枚、重要証拠は別途保持します。手動整理が必要です。
 
 ## 任意の情報サーバー
 
@@ -230,7 +230,25 @@ PRTS には `{"provider":"prts","command":"prts-mcp","region":"cn"}` を使用�
 
 リージョン、ステージ、明示モードは一致する必要があります。`actual_level`、`potential`、`module_id`、`module_level`、`skill_level`、`mastery` も指定でき、省略は unknown です。スナップショットの `decision_context` は項目ごとの情報源、ユーザー確認、設定ハッシュを別途保持し、ネイティブ観測を上書きせず、ユーザー確認を視覚的確認と呼びません。SP、スキル段階、持続時間、素質は不明のままです。曖昧な game ID 候補の先頭を勝手に選びません。
 
-`battle_evaluate_placement(session_id, placements)` は候補編成全体を読み取り専用で確認します。各項目に `operator_game_id`、`location`、`direction` を指定し、昇進段階は設定から取得するか `assumed_elite` で仮定を明示します。基本範囲、幾何学的な味方カバー、静的配置適合性、マス競合を返します。不明な段階／範囲に職業の既定テンプレートは使いません。現場の占有、回復対象条件、生存や最適性は検証せず、スキル・モジュール・素質・特殊地形効果も含みません。召喚物／装置の制御と敵のリアルタイム追跡は未対応です。
+`battle_evaluate_placement(session_id, placements)` は候補編成全体を読み取り専用で確認します。各項目に `operator_game_id`、`location`、`direction` を指定し、昇進段階は設定から取得するか `assumed_elite` で仮定を明示します。基本範囲、幾何学的な味方カバー、静的配置適合性、マス競合を返します。不明な段階／範囲に職業の既定テンプレートは使いません。現場の占有、回復対象条件、生存や最適性は検証せず、スキル・モジュール・素質・特殊地形効果も含みません。敵のリアルタイム追跡は未対応です。
+
+## 場面の証拠、準備観測と制限付き操作
+
+`scene` は `running / paused / transition / terminal / unknown` を区別します。全サンプルで終局を確認し、明確な終局証拠は残存する戦闘 UI より優先します。戦闘確認後の不明／遷移画面や終局では入力をロックします。`session_terminal` は結果と画像パスを保持し、黒画面で結果を消さず、勝敗の矛盾は unknown にします。`battle_collect_terminal(request)` はロック中の読み取り専用収集です。`duration_ms` は 100–8000 かつ `timeout_ms` 以下で、新しい収集には新しい `operation_id` を使います。解除、メニュー操作、過去結果の書き換えは行いません。Core の追加コマンドは `set_speed`、`finalize`、`prepare`、`bind` です。準備は `preparation_only=true` で初期化し、同じコントローラーで紐付けます。
+
+`skill_ready` は true または null で、分類器の否定を確認済みクールダウンと扱いません。`skill_evidence` は同一フレームの ID、時刻、ROI、基点、分類スコアと確率を残します。発動段階／弾薬／クールダウンは不明のままで構いません。スコアは校正済み正解率ではありません。`asst.log` の `Battle frame` / `Battle command result`、`battle-control/<session>/` の PNG、`operations.sqlite3` を保存してください。合成回帰は実 OCR、ROI、ボタンの対応確認とは別で、実機再確認が必要ですが、ローカル画像をクラウド開発の必須入力にはしません。
+
+接続後、attach 前の `battle_observe_preparation(stage_name, mode)` は手動で開いた編成画面を入力なしで読みます。名前、候補 ID、名前の矩形と証拠を返し、選択スキル、育成、サポートの識別は不明で、詳細画面を開きません。最新の結果を `battle_attach(..., preparation_id=..., confirm_preparation_unchanged=true)` で紐付けます。これは呼び出し側の再確認であり、連続観測ではありません。編成／スキル／ステージ／アカウント変更後は `battle_invalidate_preparation` と再取得が必要です。再取得、紐付け消費、切断後は旧結果を使えず、現場の識別不一致は `decision_context.preparation` に記録します。
+
+通常のドラッグ配置が確認済みの召喚カードだけ、起動時に `--allow-summon GAME_ID` を繰り返し指定して許可します。`battle_step(action="deploy")` には通常引数に加えて観測した `card_id` が必要です。一意、利用可能、位置不変、取得後 30 秒以内を要求します。毎回独立した `instance:<operation_id>` を作り、同名を上書きしません。位置と存続は未確認の操作履歴で、不明な消滅から占有を自動解放しません。個体スキル／撤退、曖昧なカード、未許可装置は拒否し、helper の返却値を配置成功とは扱いません。
+
+`battle_set_speed(request)` は `session_id`、`operation_id`、`multiplier=1|2`、`timeout_ms` を受け付けます。明確な停止中だけ速度を読み、必要なら 1 回切り替えて再確認し、前後の証拠を返します。停止所有権を変えず、自動再開せず、2 倍の重複指定で 1 倍に戻りません。速度不明時はクリックせず、変更後に確認できなければ入力をロックします。加速の判断はホストだけが行います。待機はホスト時間で、観測済み取得コストから後処理予算を確保し、不足なら再開を拒否します。`cleanup_reserve_ms`、`resumed_interval_upper_bound_ms`、`deadline_margin_ms` は厳密なゲーム時間を保証しません。
+
+## 固定された生ステージデータ
+
+`--intel-config` の `provider="raw"` は信頼できるローカルファイル専用で、自動ダウンロードしません。設定項目は `root`（絶対ディレクトリ）、`repository`、`commit`（40 桁）、`data_version`、`region`、`stages`、`enemy_database` です。`stages` は stage ID を `{"path":"relative/path","sha256":"64-character hash"}` に対応させ、`enemy_database` も同じ形式です。各ファイルは 64 MiB 以下で SHA-256 を検証し、ルート外を拒否します。
+
+紐付け済みセッションで `intel_query(..., complete_stage=true)` を使います。上起点のマップと下起点の経路を別々に変換して `maa_grid` を出力し、待機チェックポイントを移動扱いしません。SPAWN action ごとに 1 レコードを作り、count、delay、interval、隠しグループ、ブロック項目を保持します。敵のレベル継承、定義フラグ、ステージ上書きを処理し、Key/Value と key/value に対応します。不明な機構や非 SPAWN actions を空集合にしません。`mode_modifiers` は難易度 mask の選択のみで、ルーン解釈済みとは扱わず、`alignment=unknown` です。`mode=normal|challenge` は難易度で、演習／実戦ではありません。外部 provider に mode を渡すのは schema に宣言がある場合だけで、キャッシュも mode 別です。ハッシュや版の宣言はゲーム版との一致や独立 provider の互換性を証明せず、データはサービスに再配布しません。
 
 ## Core プロトコル
 

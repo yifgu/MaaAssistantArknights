@@ -102,7 +102,7 @@ worker 使用独立子进程和专用 stdin/stdout 管道，不继承 MCP 的输
 
 同一个 `--user-dir` 有跨进程控制锁。请为同一设备始终使用同一个目录；该锁无法阻止使用其他目录的服务或外部 GUI 操作设备。
 
-召唤物和装置的部署会明确拒绝；在实现实例级身份跟踪前，不能把多个同名单位当成一个干员操作。
+召唤物部署仅向受信任启动白名单开放，使用独立实例记录；未授权装置及召唤物技能／撤退仍拒绝，详见下文。
 
 ```bash
 uv run --project src/MaaMcpServer maa-battle-mcp \
@@ -132,7 +132,7 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 
 按顺序调用 `battle_connect`、`battle_attach(stage_name="main_01-07")`、`battle_capture_evidence` 和 `battle_observe`。关卡 ID 必须对应实际画面；地图绑定来自调用者，不是自动识别。`battle_get_map` 返回静态格子与两种屏幕投影。未知名字返回 null，需要主动识别时调用 `battle_identify`；它可能点击详情并请求暂停，之后须查看截图并显式调用 `battle_set_paused(paused=false)` 恢复。
 
-新会话接入手动暂停的战斗时，可在 `battle_identify` 中传入 `request.adopt_manual_pause=true`，明确授权接管而不恢复战斗。该参数为严格布尔值，默认 false；省略时仍拒绝未归本服务管理的暂停。Core 首先要求画面被识别为战斗且未显示运行中的暂停按钮，无法识别的画面不能接管。识别只在暂停时查看卡牌，即使 OCR 不完整或操作被取消也不会主动恢复。识别完成后返回 `pause_verified`、`safe_state`、最终同帧的 `snapshot` / `image_path` 及 PNG 内容，部分识别同样返回；截图保存失败通过 `evidence_error` 明示，取消或 worker 故障可能导致无法返回最终证据。冷启动不再需要外部 ADB 点击。
+新会话接入手动暂停时，`battle_identify` 的严格布尔参数 `request.adopt_manual_pause=true` 明确授权接管而不恢复；默认 false。Core 必须识别到正向暂停证据，缺少运行按钮不再足够，入场标题过渡不能接管。识别只在暂停时查看卡牌；返回 `pause_verified`、`safe_state`、同帧 `snapshot` / `image_path` 和 PNG，部分 OCR 也保留证据。保存失败通过 `evidence_error` 明示，取消或 worker 故障可能无法提供最终证据，不会主动恢复战斗。
 
 部署示例，替换会话和单位 ID；工具参数包含一层 `request`：
 
@@ -166,13 +166,13 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 }
 ```
 
-`action` 可为 `deploy`、`retreat`、`skill` 或下文的 `wait`；部署还须提供 `location` 和 `direction`。手动暂停默认不接管；只有明确设置 `adopt_manual_pause=true` 并由新截图确认暂停后才会恢复。每次动作至多执行一次，工具先取得动作边界截图，再请求暂停并返回新截图与 `pause_verified`；取消客户端请求时服务会通知 Core 并等待该命令完成清理。若 worker 本身失效，结果会明确报告暂停状态未知。`battle_step` 的 `timeout_ms` 上限为 10000。
+`action` 可为 `deploy`、`retreat`、`skill` 或下文的 `wait`；部署还须提供 `location` 和 `direction`。手动暂停默认不接管；恢复须显式 `adopt_manual_pause=true` 并由新截图确认暂停。每次至多执行一个动作，先取得并分析动作边界，再请求暂停并返回新截图与 `pause_verified`；取消会通知 Core 并等待清理。worker 失效时暂停可能未知。`battle_step` 的 `timeout_ms` 默认 10000，上限 30000，不自动延长调用者的预算。
 
 `captured_at_ms` 是取帧完成后、分析开始前记录的主机 Unix 毫秒时间，不是设备渲染时间。`capture_time_snapshot` 始终对应 `capture_image_path`（动作边界），`return_time_snapshot` 对应 `return_image_path`（稍后的暂停验证）；MCP 图片内容仍按返回帧、动作边界帧排列。`observation_id` 按分析顺序递增而非取帧顺序，因此动作边界观测的 ID 可能更大，但时间戳更早。系统时钟调整会影响时间差，这些时间戳不构成运行时长硬限制。完全相同的操作重放保留原始时间戳与路径，新截图则记录自己的取帧时间。
 
 `battle_identify` 返回 `identified_count`、`unresolved_count`、`ambiguous_count` 和逐卡 `identity_reason`；空名缓存不会再抑制详情 OCR。其他动作返回 `outcome_unknown` 时，MCP `isError` 为 true，即使 `helper_returned` 或 `action_returned` 为 true 也不代表游戏内成功。须截图复核，不能盲目重试。场上位置标为 `action_history_unverified`，敌人状态为 null；首版不接受模型直接覆写状态。单独的暂停请求不等于已确认暂停，恢复只允许针对本服务请求过或明确接管的暂停。
 
-普通命令的 `timeout_ms` 为 1–30000；`battle_step` 最多 10000。普通命令超时或取消会终止独立 worker、使会话失效，并保存未知结果；step 取消会等待已准备的暂停清理，worker 失效时仍可能无法确认状态。`battle_close` 可中断普通命令；遇到 step 时会等待其暂停清理后关闭，但本身不负责暂停或退出游戏。通过 `battle_get_operation` 查询持久结果；日志及 `operations.sqlite3` 位于 `--user-dir`，每场最多保留最近 128 张主动截图。旧场次、日志和数据库需要自行定期清理。
+命令的 `timeout_ms` 上限统一为 30000。普通命令超时或取消会终止 worker、使会话失效并保存未知结果；step 会等待暂停清理，但无法保证设备故障时暂停。`battle_close` 中断普通命令，或等待 step 清理后关闭，本身不负责暂停或退出游戏。`battle_get_operation` 读取持久结果；存储失败会明确报错并阻止此服务继续发命令。日志及 `operations.sqlite3` 位于 `--user-dir`，普通截图保留最近 128 张，关键证据另行保留，需自行清理。
 
 ## 可选情报服务
 
@@ -230,7 +230,25 @@ PRTS 可使用 `{"provider":"prts","command":"prts-mcp","region":"cn"}`；适配
 
 区服、关卡和显式模式必须一致。还可填写 `actual_level`、`potential`、`module_id`、`module_level`、`skill_level`、`mastery`；省略字段为 unknown。快照的 `decision_context` 单独保留逐字段来源、用户确认状态及配置哈希，不覆盖原生观测，也不把用户确认称为视觉验证。SP、技能阶段、持续时间和天赋仍未知；不根据姓名选择候选 ID 中的第一项。
 
-`battle_evaluate_placement(session_id, placements)` 只读检查候选全队阵型。每项填写 `operator_game_id`、`location`、`direction`，精英阶段取配置，或显式填写 `assumed_elite` 作为假设。输出基础范围格、几何上的友军覆盖、静态部署类型兼容性及占格冲突；未知精英或范围不套职业默认模板。该结果不验证现场占位、实际治疗资格、生存或全局最优，也不包含技能、模组、天赋和地形特殊效果。召唤物／装置与现场敌人追踪仍不支持。
+`battle_evaluate_placement(session_id, placements)` 只读检查候选全队阵型。每项填写 `operator_game_id`、`location`、`direction`，精英阶段取配置，或显式填写 `assumed_elite` 作为假设。输出基础范围格、几何上的友军覆盖、静态部署类型兼容性及占格冲突；未知精英或范围不套职业默认模板。该结果不验证现场占位、实际治疗资格、生存或全局最优，也不包含技能、模组、天赋和地形特殊效果。现场敌人追踪仍不支持。
+
+## 场景证据、准备观察与受限操作
+
+`scene` 区分 `running / paused / transition / terminal / unknown`。每张采样帧均检查终局，正向终局证据优先于残留战斗 UI。确认战斗后出现未知／过渡画面，或识别到终局时锁定输入。`session_terminal` 保留结果和证据路径，黑屏不会抹掉已确认结果，冲突胜败保持 unknown。`battle_collect_terminal(request)` 在锁定下只读采集；`duration_ms` 为 100–8000，不能超过 `timeout_ms`。新采集使用新 `operation_id`，不会解锁、点击菜单或改写历史操作。Core 另有 `set_speed`、`finalize`、`prepare`、`bind` 命令；准备任务以 `preparation_only=true` 初始化，绑定沿用同一控制器。
+
+`skill_ready` 是 true 或 null，分类器否定不再冒充已确认冷却。`skill_evidence` 保留同帧 ID、时间、ROI、基点、类别分数和概率，技能阶段／弹药／冷却仍可未知；分数不是已校准的正确率。请保留 `asst.log` 的 `Battle frame` / `Battle command result` 日志、`battle-control/<session>/` 的 PNG 和 `operations.sqlite3`。合成回归不证明真实 OCR、ROI 或按钮适配；真实识别仍须本地复验，不要求本地图片作为云端开发的输入。
+
+连接后、attach 前调用 `battle_observe_preparation(stage_name, mode)`，只读取手动打开的编队页，不产生设备输入。返回名称、候选 ID、名称框和证据；所选技能、练度、助战身份目前未知，不打开详情。使用 `battle_attach(..., preparation_id=..., confirm_preparation_unchanged=true)` 关联最新快照，只表示调用者重新确认，不是连续视觉验证。修改编队／技能／关卡／账号后调用 `battle_invalidate_preparation` 并重新采集。新采集、绑定消费或关闭后旧快照不能复用，现场身份不符在 `decision_context.preparation` 标为冲突。
+
+启动时可重复传入 `--allow-summon GAME_ID`，仅授权已确认采用普通拖拽部署语义的召唤卡。使用 `battle_step(action="deploy")`，除普通参数外传同帧卡片的 `card_id`；卡片须唯一、可用、位置未改变且不超过 30 秒。每次产生独立 `instance:<operation_id>`，同名不覆盖；位置与存续仅为未验证动作历史，未知消失不会自动释放占格。实例技能／撤退、模糊卡片及未授权装置仍拒绝，helper 返回值不证明部署成功。
+
+`battle_set_speed(request)` 接受 `session_id`、`operation_id`、`multiplier=1|2` 和 `timeout_ms`。只在明确暂停时读取速度、必要时切换一次并回读，返回前后证据，不更改暂停所有权，不自动恢复；重复设置 2 倍不会切回 1 倍。速度未知时不点击，切换后无法确认则锁定输入。是否加速完全由宿主决定。等待仍是主机时间：Core 根据已观测取帧成本预留暂停预算，不足时拒绝恢复；返回 `cleanup_reserve_ms`、`resumed_interval_upper_bound_ms`、`deadline_margin_ms`，不保证精确游戏时间。
+
+## 固定原始关卡快照
+
+`--intel-config` 支持 `provider="raw"`，只读取受信任本地文件，不自动下载。配置字段为 `root`（绝对根目录）、`repository`、`commit`（40 位提交）、`data_version`、`region`、`stages` 和 `enemy_database`。`stages` 将 stage ID 映射到 `{"path":"相对路径","sha256":"64位哈希"}`，`enemy_database` 使用相同文件结构。每文件限制 64 MiB、校验 SHA-256 并拒绝越出根目录。
+
+通过已绑定会话调用 `intel_query(..., complete_stage=true)`。适配器分别处理自顶向下地图与自底向上路线，输出 `maa_grid`，等待检查点不当移动点；一条 SPAWN action 对应一条生成记录，保留 count、delay、interval、隐藏组和阻塞字段。敌人等级继承、定义标志及关卡覆盖会解析，支持 Key/Value 与 key/value；未知机制与非 SPAWN actions 保留，不伪造空集合。`mode_modifiers` 仅选择难度 mask，不宣称解释了符文；`alignment=unknown`。`mode=normal|challenge` 表示难度，不表示演习／实战。外部 provider 只在 schema 声明支持时接收 mode，缓存按 mode 隔离。哈希和版本声明不证明与本场游戏版本相同，也不证明独立 provider 兼容；数据包不随服务重新分发。
 
 ## Core 协议
 

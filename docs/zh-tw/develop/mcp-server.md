@@ -102,7 +102,7 @@ worker 使用獨立子程序與專用 stdin/stdout 管道，不繼承 MCP 的輸
 
 同一個 `--user-dir` 有跨程序控制鎖。同一裝置請固定使用同一目錄；此鎖無法阻止使用其他目錄的服務或外部 GUI 操作裝置。
 
-召喚物與裝置的部署會明確拒絕；實作個體身分追蹤前，不能將多個同名單位當成一位幹員操作。
+召喚物部署僅向可信任的啟動白名單開放，使用獨立實例記錄；未授權裝置及召喚物技能／撤退仍拒絕，詳見下文。
 
 ```bash
 uv run --project src/MaaMcpServer maa-battle-mcp \
@@ -132,7 +132,7 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 
 依序呼叫 `battle_connect`、`battle_attach(stage_name="main_01-07")`、`battle_capture_evidence` 和 `battle_observe`。關卡 ID 必須符合實際畫面；地圖綁定由呼叫者提供，不是自動識別。`battle_get_map` 回傳靜態格子與兩種螢幕投影。未知名字回傳 null。需要主動識別時呼叫 `battle_identify`，它可能點開詳情並請求暫停；之後檢查截圖，再明確呼叫 `battle_set_paused(paused=false)` 恢復。
 
-新會話接入手動暫停的戰鬥時，可在 `battle_identify` 傳入 `request.adopt_manual_pause=true`，明確授權接管而不恢復戰鬥。此參數為嚴格布林值，預設 false；省略時仍拒絕未由本服務管理的暫停。Core 首先要求畫面被識別為戰鬥且未顯示運行中的暫停按鈕，無法識別的畫面不能接管。識別只在暫停時查看卡牌，即使 OCR 不完整或操作被取消也不會主動恢復。識別完成後回傳 `pause_verified`、`safe_state`、最終同影格的 `snapshot` / `image_path` 與 PNG 內容，部分識別同樣回傳；截圖儲存失敗透過 `evidence_error` 明示，取消或 worker 故障可能無法回傳最終證據。冷啟動不再需要外部 ADB 點擊。
+新會話接入手動暫停時，`battle_identify` 的嚴格布林參數 `request.adopt_manual_pause=true` 明確授權接管而不恢復，預設 false。Core 必須識別正向暫停證據，缺少運行按鈕不再足夠，入場標題過渡不能接管。識別只在暫停時查看卡牌；回傳 `pause_verified`、`safe_state`、同影格 `snapshot` / `image_path` 與 PNG，部分 OCR 亦保留證據。儲存失敗透過 `evidence_error` 明示，取消或 worker 故障可能無法提供最終證據，不會主動恢復戰鬥。
 
 部署範例，請替換會話和單位 ID；工具參數有一層 `request`：
 
@@ -166,13 +166,13 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 }
 ```
 
-`action` 可為 `deploy`、`retreat`、`skill` 或下文的 `wait`；部署還須提供 `location` 和 `direction`。手動暫停預設不會接管；只有明確設定 `adopt_manual_pause=true` 並由新截圖確認暫停後才會恢復。每次最多執行一個動作；工具先取得動作邊界截圖，再請求暫停並回傳新截圖與 `pause_verified`。取消用戶端請求時，服務會通知 Core 並等待命令完成清理。若 worker 本身失效，結果會明確回報暫停狀態未知。`battle_step` 的 `timeout_ms` 上限為 10000。
+`action` 可為 `deploy`、`retreat`、`skill` 或 `wait`；部署還須提供 `location` 和 `direction`。恢復手動暫停須明確 `adopt_manual_pause=true` 與新截圖的暫停證據。每次最多執行一個動作，先分析動作邊界，再請求暫停並回傳新截圖與 `pause_verified`。取消會通知 Core 並等待清理，worker 故障時暫停可能未知。`battle_step.timeout_ms` 預設 10000、上限 30000，不會自動延長呼叫者預算。
 
 `captured_at_ms` 是取影格完成後、分析開始前記錄的主機 Unix 毫秒時間，不是裝置渲染時間。`capture_time_snapshot` 始終對應 `capture_image_path`（動作邊界），`return_time_snapshot` 對應 `return_image_path`（稍後的暫停驗證）；MCP 圖片內容仍按回傳影格、動作邊界影格排列。`observation_id` 按分析順序遞增而非取影格順序，因此動作邊界觀測的 ID 可能較大，但時間戳較早。系統時鐘調整會影響時間差，這些時間戳不構成運行時間硬限制。完全相同的操作重送保留原始時間戳與路徑，新截圖則記錄自己的取影格時間。
 
 `battle_identify` 會回傳 `identified_count`、`unresolved_count`、`ambiguous_count` 和各卡牌的 `identity_reason`；空名稱快取不再抑制詳情 OCR。其他動作回傳 `outcome_unknown` 時，MCP `isError=true`；即使 `helper_returned` 或 `action_returned` 為 true，也不代表遊戲內成功。必須截圖確認，不可盲目重試。場上位置標為 `action_history_unverified`，敵人狀態為 null；首版不接受模型直接覆寫狀態。單獨的暫停請求不代表已確認暫停，恢復僅允許針對本服務請求過或明確接管的暫停。
 
-一般命令的 `timeout_ms` 為 1–30000；`battle_step` 上限為 10000。一般命令逾時或取消會終止獨立 worker、使會話失效並保存未知結果；step 取消時會等待已準備的暫停清理，但 worker 失效時仍可能無法確認狀態。`battle_close` 可中斷一般命令；遇到 step 時會等待其暫停清理後關閉，但本身不負責暫停或退出遊戲。`battle_get_operation` 可查詢持久結果。日誌與 `operations.sqlite3` 位於 `--user-dir`；每場保留最近 128 張主動截圖。舊場次、日誌和資料庫需自行定期清理。
+命令的 `timeout_ms` 上限統一為 30000。一般命令逾時或取消會終止 worker、使會話失效並保存未知結果；step 等待暫停清理，但無法保證裝置故障時暫停。`battle_close` 中斷一般命令或等待 step 清理，本身不暫停或退出遊戲。`battle_get_operation` 讀取持久結果；儲存失敗會明確報錯並阻止此服務繼續發命令。日誌及 `operations.sqlite3` 位於 `--user-dir`，一般截圖保留最近 128 張，關鍵證據另外保留，需自行清理。
 
 ## 可選情報服務
 
@@ -230,7 +230,25 @@ PRTS 可使用 `{"provider":"prts","command":"prts-mcp","region":"cn"}`；配接
 
 區服、關卡和明確模式須一致。可選填 `actual_level`、`potential`、`module_id`、`module_level`、`skill_level`、`mastery`；省略為 unknown。快照的 `decision_context` 分別保留欄位來源、使用者確認和設定雜湊，不覆寫原生觀測，也不將使用者確認稱為視覺驗證。SP、技能階段、持續時間與天賦仍未知；不從有歧義的 game ID 候選中默選第一項。
 
-`battle_evaluate_placement(session_id, placements)` 唯讀檢查候選全隊陣型。每項填 `operator_game_id`、`location`、`direction`，精英階段取設定，或明確填 `assumed_elite` 作假設。輸出基礎範圍、幾何友軍覆蓋、靜態部署類型相容性及占格衝突；未知階段／範圍不套職業預設模板。不驗證現場占位、實際治療資格、生存或全域最佳化，也不含技能、模組、天賦和地形特殊效果。召喚物／裝置與現場敵人追蹤仍不支援。
+`battle_evaluate_placement(session_id, placements)` 唯讀檢查候選全隊陣型。每項填 `operator_game_id`、`location`、`direction`，精英階段取設定，或明確填 `assumed_elite` 作假設。輸出基礎範圍、幾何友軍覆蓋、靜態部署類型相容性及占格衝突；未知階段／範圍不套職業預設模板。不驗證現場占位、實際治療資格、生存或全域最佳化，也不含技能、模組、天賦和地形特殊效果。現場敵人追蹤仍不支援。
+
+## 場景證據、準備觀察與受限操作
+
+`scene` 區分 `running / paused / transition / terminal / unknown`。每張採樣影格均檢查終局，正向終局證據優先於殘留戰鬥 UI。確認戰鬥後出現未知／過渡畫面，或識別終局時鎖定輸入。`session_terminal` 保留結果與證據路徑，黑畫面不抹除已確認結果，衝突勝敗保持 unknown。`battle_collect_terminal(request)` 在鎖定下唯讀採集；`duration_ms` 為 100–8000，不能超過 `timeout_ms`。新採集用新 `operation_id`，不解鎖、不點選選單、不改寫歷史結果。Core 另有 `set_speed`、`finalize`、`prepare`、`bind` 命令；準備任務以 `preparation_only=true` 初始化，綁定沿用同一控制器。
+
+`skill_ready` 是 true 或 null，分類器否定不再冒充已確認冷卻。`skill_evidence` 保留同影格 ID、時間、ROI、基點、類別分數和機率；技能階段／彈藥／冷卻仍可未知，分數並非校準後正確率。請保留 `asst.log` 的 `Battle frame` / `Battle command result`、`battle-control/<session>/` 的 PNG 與 `operations.sqlite3`。合成回歸不證明真實 OCR、ROI 或按鈕適配；仍須本機複驗，不要求本機圖片作為雲端開發輸入。
+
+連線後、attach 前呼叫 `battle_observe_preparation(stage_name, mode)`，唯讀擷取手動開啟的編隊頁。回傳名稱、候選 ID、名稱框與證據；所選技能、練度、助戰身分未知，不開啟詳情。以 `battle_attach(..., preparation_id=..., confirm_preparation_unchanged=true)` 關聯最新快照，只代表呼叫者重新確認，不是連續視覺驗證。修改編隊／技能／關卡／帳號後呼叫 `battle_invalidate_preparation` 並重擷取。新擷取、綁定消費或關閉後舊快照不能重用，現場身分不符在 `decision_context.preparation` 標為衝突。
+
+啟動時可重複傳入 `--allow-summon GAME_ID`，只授權已確認採普通拖曳部署語義的召喚卡。`battle_step(action="deploy")` 除一般參數外須傳觀測卡片的 `card_id`；卡片須唯一、可用、位置不變且不超過 30 秒。每次產生獨立 `instance:<operation_id>`，同名不覆蓋；位置與存續僅為未驗證動作歷史，未知消失不自動釋放占格。實例技能／撤退、模糊卡片及未授權裝置仍拒絕，helper 回傳不證明部署成功。
+
+`battle_set_speed(request)` 接受 `session_id`、`operation_id`、`multiplier=1|2` 與 `timeout_ms`。只在明確暫停時讀取速度、必要時切換一次並回讀，回傳前後證據，不變更暫停所有權、不自動恢復；重複設 2 倍不切回 1 倍。速度未知不點擊，切換後無法確認則鎖定輸入。是否加速完全由宿主決定。等待仍是主機時間：依已觀測取影格成本預留暫停預算，不足時拒絕恢復；`cleanup_reserve_ms`、`resumed_interval_upper_bound_ms`、`deadline_margin_ms` 不保證精確遊戲時間。
+
+## 固定原始關卡快照
+
+`--intel-config` 支援 `provider="raw"`，只讀可信任本機檔案，不自動下載。設定 `root`（絕對根目錄）、`repository`、`commit`（40 位提交）、`data_version`、`region`、`stages`、`enemy_database`。`stages` 將 stage ID 映射至 `{"path":"相對路徑","sha256":"64位雜湊"}`，`enemy_database` 使用相同檔案結構。每檔上限 64 MiB、核驗 SHA-256，拒絕越出根目錄。
+
+透過已綁定會話呼叫 `intel_query(..., complete_stage=true)`。分別轉換自頂向下地圖與自底向上路線，輸出 `maa_grid`，等待檢查點不當移動點。一條 SPAWN action 對應一筆生成記錄，保留 count、delay、interval、隱藏組和阻塞欄位。敵人等級繼承、定義旗標與關卡覆寫會解析，支援 Key/Value 與 key/value；未知機制與非 SPAWN actions 保留，不偽造空集合。`mode_modifiers` 只選難度 mask，不宣稱解釋符文；`alignment=unknown`。`mode=normal|challenge` 表示難度，非演習／實戰。外部 provider 僅在 schema 宣告支援時接收 mode，快取依 mode 隔離。雜湊與版本聲明不證明本場遊戲相容或獨立 provider 互通；資料包不隨服務重新散布。
 
 ## Core 協議
 

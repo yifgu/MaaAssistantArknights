@@ -7,6 +7,7 @@
 #include <mutex>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "Task/BattleHelper.h"
 #include "Task/InterfaceTask.h"
@@ -41,6 +42,15 @@ private:
     {
         cv::Mat image;
         std::chrono::system_clock::time_point captured_at;
+        std::chrono::steady_clock::time_point started;
+    };
+
+    struct Card
+    {
+        battle::OperNameTag tag;
+        Rect rect;
+        size_t index;
+        std::chrono::steady_clock::time_point seen;
     };
 
     bool validate_command(const json::value& params) const;
@@ -51,7 +61,13 @@ private:
     json::value execute(const Command& command);
     json::value execute_step(const Command& command, json::value snapshot);
     json::value execute_wait(const Command& command, CapturedFrame frame, json::value snapshot);
+    json::value execute_speed(const Command& command, CapturedFrame frame, json::value snapshot);
+    json::value preparation(const CapturedFrame& frame);
+    bool settle_pause(CapturedFrame& frame, json::value& snapshot);
+    void collect_terminal(const Command& command, CapturedFrame& frame, json::value& snapshot, int duration_ms);
     json::value terminal_info(const CapturedFrame& frame, const json::value& snapshot) const;
+    json::value match_evidence(const cv::Mat& image, const std::string& task) const;
+    json::value speed_info(const cv::Mat& image) const;
     json::value map_info() const;
     json::value failure(const std::string& code, const std::string& message) const;
     void emit(const std::string& what, json::value details);
@@ -64,6 +80,15 @@ private:
     bool m_initialized = false;
     bool m_pause_requested = false;
     bool m_terminal_seen = false;
+    bool m_battle_observed = false;
+    bool m_preparation_only = false;
+    std::chrono::milliseconds m_frame_cost { 0 };
+    json::value m_terminal_result = json::object { { "terminal_state", "unknown" },
+                                                   { "terminal_confidence", nullptr },
+                                                   { "result_source", "unrecognized" } };
+    std::unordered_set<std::string> m_allowed_summons;
+    std::unordered_map<std::string, Card> m_cards;
+    json::array m_summons;
     std::atomic_bool m_cancel_requested = false;
     std::string m_active_command_id;
     std::string m_session_id;

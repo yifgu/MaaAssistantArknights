@@ -8,7 +8,8 @@ from typing import Literal
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from .models import BattleMode, IntelligenceConfig
+from .models import BattleMode, IntelligenceConfig, RawIntelligenceConfig
+from .raw_data import RawStageProvider
 
 
 class IntelligenceError(RuntimeError):
@@ -16,12 +17,17 @@ class IntelligenceError(RuntimeError):
 
 
 class IntelligenceClient:
-    def __init__(self, config: IntelligenceConfig):
+    def __init__(self, config: IntelligenceConfig | RawIntelligenceConfig):
         if config.provider == "prts" and config.region != "cn":
             raise IntelligenceError(
                 "PRTS adapter supports CN data only; no cross-region fallback"
             )
         self.config = config
+        self.raw = (
+            RawStageProvider(config)
+            if isinstance(config, RawIntelligenceConfig)
+            else None
+        )
         self.cache: dict[tuple, tuple[float, dict]] = {}
 
     def translate(
@@ -62,8 +68,9 @@ class IntelligenceClient:
         spawns_page: int = 1,
         *,
         refresh: bool = False,
+        mode: BattleMode | None = None,
     ) -> dict:
-        key = (kind, identifier, routes_page, spawns_page)
+        key = (kind, identifier, routes_page, spawns_page, mode)
         if not refresh and key in self.cache:
             fetched, value = self.cache[key]
             if time.monotonic() - fetched < 300:
@@ -72,6 +79,23 @@ class IntelligenceClient:
                     "cached": True,
                     "cache_age_seconds": time.monotonic() - fetched,
                 }
+        if self.raw is not None:
+            if kind != "stage" or mode is None:
+                raise IntelligenceError(
+                    "Raw snapshots require a complete, explicitly bound stage query"
+                )
+            try:
+                data = await asyncio.to_thread(
+                    self.raw.stage, identifier, mode, routes_page, spawns_page
+                )
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                raise IntelligenceError(f"Raw snapshot rejected: {exc}") from exc
+            return {
+                "data": data,
+                "provider": "raw",
+                "cached": False,
+                "fetched_at": time.time(),
+            }
         tool, arguments = self.translate(kind, identifier, routes_page, spawns_page)
         env = dict(self.config.env)
         if self.config.provider == "prts":
@@ -88,6 +112,15 @@ class IntelligenceClient:
                         raise IntelligenceError(
                             f"Provider does not advertise required tool: {tool}"
                         )
+                    advertised = next(
+                        item for item in listing.tools if item.name == tool
+                    )
+                    if (
+                        kind == "stage"
+                        and mode is not None
+                        and "mode" in advertised.inputSchema.get("properties", {})
+                    ):
+                        arguments["mode"] = mode
                     result = await session.call_tool(tool, arguments)
         if result.isError:
             raise IntelligenceError(f"Provider tool failed: {result.model_dump_json()}")
@@ -132,7 +165,7 @@ class IntelligenceClient:
     async def query_complete_stage(
         self, identifier: str, mode: BattleMode, height: int
     ) -> dict:
-        if self.config.provider != "intelligence":
+        if self.config.provider not in ("intelligence", "raw"):
             raise IntelligenceError(
                 "PRTS cannot supply complete stage maps/routes/spawns"
             )
@@ -164,6 +197,7 @@ class IntelligenceClient:
                 requested["routes"],
                 requested["spawns"],
                 refresh=True,
+                mode=mode,
             )
             pages.append(page)
             data = page["data"]
@@ -363,6 +397,15 @@ class IntelligenceClient:
             )
             tiles = normalized["tiles"]
             if (
+                isinstance(tiles, list)
+                and tiles
+                and all(isinstance(row, list) for row in tiles)
+                and len(tiles) != height
+            ):
+                raise IntelligenceError(
+                    "Provider tile height differs from the attached map"
+                )
+            if (
                 coordinate_system == "public_row_col"
                 and isinstance(tiles, list)
                 and tiles
@@ -396,6 +439,12 @@ class IntelligenceClient:
                 and all(collections[name] is not None for name in collections),
             },
             "normalized": normalized,
+            "enemy_definitions": first.get("enemy_definitions"),
+            "mode_modifiers": first.get("mode_modifiers"),
+            "raw_mechanisms": first.get("raw_mechanisms"),
+            "non_spawn_actions": first.get("non_spawn_actions"),
+            "map_effects": first.get("map_effects"),
+            "alignment": "unknown",
             "coordinate_system": "maa_grid" if normalized is not None else "unknown",
             "static_spawn_count": spawn_count,
             "referenced_enemy_ids": sorted(enemy_ids)
