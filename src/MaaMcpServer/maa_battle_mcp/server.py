@@ -174,7 +174,7 @@ def create_server(
 
     @server.tool(annotations=READ_ONLY)
     async def battle_collect_terminal(request: TerminalRequest) -> CallToolResult:
-        """Collect terminal evidence under the input lock within a deadline. Never unlocks or clicks."""
+        """Collect terminal/pause evidence without input. Two fresh paused frames can clear pause uncertainty, never terminal/safety quarantine."""
         return evidence_result(
             await service.command(
                 "finalize", request, {"duration_ms": request.duration_ms}

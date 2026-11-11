@@ -146,6 +146,14 @@ def prepare(settings, known):
             (root / f"{mode}-{speed}x.png").write_bytes(png(1280, 720, image))
     tasks["BattleOperAvailable"] = {"specialParams": [0]}
     tasks["BattleOperRole"] = {"templThreshold": 0.99}
+    if known == "ocr_pause":
+        tasks["BattleControlPaused"] = {
+            "baseTask": "#none",
+            "algorithm": "OcrDetect",
+            "text": ["NOT A PAUSE LABEL"],
+            "fullMatch": True,
+            "roi": [200, 180, 880, 360],
+        }
     task_dir = root / "resource/tasks"
     task_dir.mkdir()
     (task_dir / "fixture.json").write_text(json.dumps(tasks), encoding="utf-8")
@@ -184,6 +192,12 @@ def device(root, action, args):
             mode = state["target"]
             (root / "mode").write_text(mode)
         transition.write_text(json.dumps(state))
+    sequence = root / "capture-sequence.json"
+    if action == "capture" and sequence.exists():
+        remaining = json.loads(sequence.read_text())
+        if remaining:
+            mode = remaining.pop(0)
+            sequence.write_text(json.dumps(remaining))
     event = {
         "action": action,
         "args": args,
@@ -194,6 +208,8 @@ def device(root, action, args):
         event["action"] = "resume" if mode == "paused" else "pause"
         mode = "running" if mode == "paused" else "paused"
         (root / "mode").write_text(mode, encoding="utf-8")
+        if event["action"] == "pause" and (root / "pause-sequence.json").exists():
+            sequence.write_text((root / "pause-sequence.json").read_text())
     elif (
         action == "click" and 1070 <= int(args[0]) <= 1130 and 20 <= int(args[1]) <= 80
     ):
