@@ -1,4 +1,6 @@
 import copy
+import hashlib
+import json
 import sys
 import time
 from pathlib import Path
@@ -6,7 +8,12 @@ from pathlib import Path
 import pytest
 
 from maa_battle_mcp.intelligence import IntelligenceClient, IntelligenceError
-from maa_battle_mcp.models import IntelligenceConfig
+from maa_battle_mcp.models import (
+    IntelligenceConfig,
+    RawIntelligenceConfig,
+    SnapshotFile,
+)
+from maa_battle_mcp.raw_data import RawDataError, RawStageProvider
 
 
 def config(provider="intelligence", region="cn"):
@@ -53,9 +60,13 @@ async def test_real_mcp_provider_roundtrip_and_cache():
     assert result["data"]["routes_page"]["has_more"] is True
     assert result["cached"] is False
     assert (await client.query("stage", "main_01-07", 2, 1))["cached"] is True
+    challenge = await client.query("stage", "main_01-07", 2, 1, mode="challenge")
+    assert challenge["data"]["mode"] == "challenge"
+    assert challenge["cached"] is False
+    assert (await client.query("stage", "main_01-07", 2, 1))["data"]["mode"] is None
     with pytest.raises(IntelligenceError, match="database_unavailable"):
         await client.query("stage", "failure", 2, 1)
-    assert ("stage", "failure", 2, 1) not in client.cache
+    assert ("stage", "failure", 2, 1, None) not in client.cache
     plain = await client.query("stage", "unstructured", 2, 1)
     assert plain["data"] is None
     assert any("unstructured" in warning for warning in plain["warnings"])
@@ -98,8 +109,9 @@ def paged_client(monkeypatch, mutate=None):
     client = IntelligenceClient(config())
     calls = []
 
-    async def query(kind, identifier, routes_page, spawns_page, *, refresh):
+    async def query(kind, identifier, routes_page, spawns_page, *, refresh, mode):
         assert refresh
+        assert mode == "normal"
         calls.append((routes_page, spawns_page))
         data = complete_page(routes_page, spawns_page)
         if mutate:
@@ -181,3 +193,156 @@ def test_coordinate_conversion_preserves_unknown_and_rejects_invalid():
         IntelligenceClient._normalize_coordinates(
             {"row": True, "col": 1}, 7, "public_row_col"
         )
+
+
+@pytest.fixture
+def raw_snapshot(tmp_path):
+    # Self-authored structure, not redistributed game data.
+    level = {
+        "mapData": {
+            "map": [[0, 1], [1, 0]],
+            "tiles": [{"tileKey": "tile_end"}, {"tileKey": "tile_road"}],
+        },
+        "routes": [
+            {
+                "startPosition": {"row": 0, "col": 1},
+                "endPosition": {"row": 1, "col": 0},
+                "checkpoints": [
+                    {
+                        "type": "WAIT_FOR_SECONDS",
+                        "position": {"row": 0, "col": 0},
+                        "time": 9,
+                    }
+                ],
+            }
+        ],
+        "enemyDbRefs": [
+            {
+                "id": "enemy",
+                "level": 1,
+                "useDb": True,
+                "overwrittenData": {
+                    "attributes": {"atk": {"m_defined": True, "m_value": 7}},
+                },
+            }
+        ],
+        "waves": [
+            {
+                "fragments": [
+                    {
+                        "preDelay": 5,
+                        "actions": [
+                            {
+                                "actionType": "SPAWN",
+                                "key": "enemy",
+                                "routeIndex": 0,
+                                "count": 2,
+                                "interval": 3,
+                                "hiddenGroup": "conditional",
+                                "blockFragment": False,
+                            }
+                            for _ in range(51)
+                        ]
+                        + [{"actionType": "UNKNOWN_ACTION", "key": "script"}],
+                    }
+                ]
+            }
+        ],
+        "runes": [
+            {"difficultyMask": "FOUR_STAR", "key": "enemy_attribute_mul"},
+            {"difficultyMask": 99},
+        ],
+    }
+    enemies = {
+        "enemies": [
+            {
+                "key": "enemy",
+                "value": [
+                    {
+                        "level": 0,
+                        "enemyData": {
+                            "attributes": {
+                                "maxHp": {"m_defined": True, "m_value": 10},
+                                "atk": {"m_defined": True, "m_value": 3},
+                            },
+                            "skills": [{"prefabKey": "Summon"}],
+                        },
+                    },
+                    {
+                        "level": 1,
+                        "enemyData": {
+                            "attributes": {"maxHp": {"m_defined": False, "m_value": 0}}
+                        },
+                    },
+                ],
+            }
+        ]
+    }
+
+    def write(name, data):
+        content = json.dumps(data).encode()
+        (tmp_path / name).write_bytes(content)
+        return SnapshotFile(path=name, sha256=hashlib.sha256(content).hexdigest())
+
+    config = RawIntelligenceConfig(
+        provider="raw",
+        root=tmp_path,
+        repository="fixture/self-authored",
+        commit="a" * 40,
+        data_version="fixture",
+        region="cn",
+        stages={"stage": write("level.json", level)},
+        enemy_database=write("enemies.json", enemies),
+    )
+    return config, level, write
+
+
+async def test_raw_snapshot_pages_coordinates_and_sparse_enemy_levels(raw_snapshot):
+    config, _, _ = raw_snapshot
+    client = IntelligenceClient(config)
+    result = await client.query_complete_stage("stage", "normal", 2)
+    assert result["status"] == "partial"
+    assert result["completeness"]["all_pages"] is True
+    assert result["static_spawn_count"] == 102
+    assert len(result["normalized"]["spawns"]) == 51
+    assert len(result["pages"]) == 2
+    assert result["normalized"]["tiles"][0][0]["tileKey"] == "tile_end"
+    route = result["normalized"]["routes"][0]
+    assert route["endPosition"]["maa_location"] == [0, 0]
+    assert route["checkpoints"][0]["is_movement"] is False
+    assert "maa_location" not in route["checkpoints"][0]["position"]
+    definition = result["enemy_definitions"][0]["definition"]
+    assert definition["attributes"] == {"maxHp": 10, "atk": 7}
+    assert definition["skills"][0]["prefabKey"] == "Summon"
+    assert result["mode_modifiers"][0]["applies_to_mode"] is False
+    assert result["mode_modifiers"][1]["applies_to_mode"] is None
+    assert result["non_spawn_actions"][0]["actionType"] == "UNKNOWN_ACTION"
+    assert result["alignment"] == "unknown"
+    hard = await client.query_complete_stage("stage", "challenge", 2)
+    assert hard["mode_modifiers"][0]["applies_to_mode"] is True
+    with pytest.raises(IntelligenceError, match="height"):
+        await client.query_complete_stage("stage", "normal", 7)
+    with pytest.raises(IntelligenceError, match="no fallback"):
+        await client.query_complete_stage("unavailable-region-stage", "normal", 2)
+
+
+@pytest.mark.parametrize("failure", ["route", "enemy", "hash", "escape"])
+async def test_raw_snapshot_rejects_invalid_sources(raw_snapshot, failure):
+    config, level, write = raw_snapshot
+    if failure == "route":
+        level["waves"][0]["fragments"][0]["actions"][0]["routeIndex"] = 9
+        config.stages["stage"] = write("level.json", level)
+    elif failure == "enemy":
+        level["enemyDbRefs"][0]["id"] = "missing"
+        config.stages["stage"] = write("level.json", level)
+    elif failure == "hash":
+        config.stages["stage"].sha256 = "0" * 64
+    else:
+        config.stages["stage"].path = "../outside.json"
+    with pytest.raises(IntelligenceError, match="Raw snapshot rejected"):
+        await IntelligenceClient(config).query_complete_stage("stage", "normal", 2)
+
+
+def test_raw_snapshot_coordinates_do_not_coerce_boolean():
+    with pytest.raises(RawDataError, match="coordinates"):
+        RawStageProvider.point({"row": True, "col": 1}, 2, 2)

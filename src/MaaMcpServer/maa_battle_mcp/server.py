@@ -22,7 +22,10 @@ from .models import (
     IntelligenceConfig,
     PauseRequest,
     Placement,
+    RawIntelligenceConfig,
     Settings,
+    SpeedRequest,
+    TerminalRequest,
     UnitRequest,
 )
 from .service import BattleError, BattleService
@@ -46,6 +49,33 @@ def tool_result(value: dict) -> CallToolResult:
 def create_server(
     service: BattleService, intelligence: IntelligenceClient | None = None
 ) -> FastMCP:
+    def evidence_result(value: dict, *keys: str) -> CallToolResult:
+        images = []
+        for key in keys:
+            relative = value.get(key)
+            if not relative:
+                continue
+            try:
+                image = service.evidence_path({"image_path": relative}).read_bytes()
+            except (OSError, BattleError) as exc:
+                logging.getLogger(__name__).exception("Could not read command evidence")
+                value = {
+                    **value,
+                    "status": "outcome_unknown",
+                    "evidence_read_error": str(exc),
+                }
+                continue
+            images.append(
+                ImageContent(
+                    type="image",
+                    mimeType="image/png",
+                    data=base64.b64encode(image).decode("ascii"),
+                )
+            )
+        response = tool_result(value)
+        response.content.extend(images)
+        return response
+
     @asynccontextmanager
     async def lifespan(_server: FastMCP):
         try:
@@ -89,7 +119,7 @@ def create_server(
                 "limitations": [
                     "Only a single caller-supplied fixed map; no camera movement or stage recognition.",
                     "Battlefield positions are unverified action history; no mid-battle reconstruction.",
-                    "Summon/device deployment is rejected until instance-level identity tracking is implemented.",
+                    "Summon deployment requires a trusted startup allowlist and fresh card_id; instance skills/retreat remain unsupported.",
                     "Mutations are not automatically confirmed; inspect evidence after each action.",
                     "battle_step bounds one action or host-time wait; pause and terminal evidence are returned separately.",
                     "Terminal OCR currently recognizes configured CN/English titles only; other screens remain unknown.",
@@ -107,10 +137,50 @@ def create_server(
 
     @server.tool(annotations=MUTATING)
     async def battle_attach(
-        stage_name: Identifier, mode: BattleMode | None = None
+        stage_name: Identifier,
+        mode: BattleMode | None = None,
+        preparation_id: Identifier | None = None,
+        confirm_preparation_unchanged: bool = False,
     ) -> CallToolResult:
         """Bind a unique MaaCore stage/level ID to an already-started battle. Verify the returned map."""
-        return tool_result(await service.attach(stage_name, mode))
+        return tool_result(
+            await service.attach(
+                stage_name, mode, preparation_id, confirm_preparation_unchanged
+            )
+        )
+
+    @server.tool(annotations=READ_ONLY)
+    async def battle_observe_preparation(
+        stage_name: Identifier, mode: BattleMode
+    ) -> CallToolResult:
+        """Before attach, read the manually opened formation page without input. Only names are recognized; skills/configuration remain unknown."""
+        return evidence_result(await service.prepare(stage_name, mode), "image_path")
+
+    @server.tool(annotations=MUTATING)
+    async def battle_invalidate_preparation() -> CallToolResult:
+        """Invalidate preparation binding after roster, skill, account or stage changes. Sends no device input."""
+        return tool_result(await service.invalidate_preparation())
+
+    @server.tool(annotations=MUTATING)
+    async def battle_set_speed(request: SpeedRequest) -> CallToolResult:
+        """Set observed 1x/2x idempotently while verified paused. Never resumes. The host chooses the speed."""
+        return evidence_result(
+            await service.command(
+                "set_speed", request, {"multiplier": request.multiplier}
+            ),
+            "image_path",
+            "before_image_path",
+        )
+
+    @server.tool(annotations=READ_ONLY)
+    async def battle_collect_terminal(request: TerminalRequest) -> CallToolResult:
+        """Collect terminal evidence under the input lock within a deadline. Never unlocks or clicks."""
+        return evidence_result(
+            await service.command(
+                "finalize", request, {"duration_ms": request.duration_ms}
+            ),
+            "image_path",
+        )
 
     @server.tool(annotations=READ_ONLY)
     async def battle_evaluate_placement(
@@ -137,17 +207,7 @@ def create_server(
     async def battle_capture_evidence(session_id: Identifier) -> CallToolResult:
         """Return a PNG and observation from the SAME frame for multimodal analysis. Keeps 128 captures/session."""
         result = await service.read(session_id, "capture")
-        response = tool_result(result)
-        if not response.isError:
-            image = service.evidence_path(result).read_bytes()
-            response.content.append(
-                ImageContent(
-                    type="image",
-                    mimeType="image/png",
-                    data=base64.b64encode(image).decode("ascii"),
-                )
-            )
-        return response
+        return evidence_result(result, "image_path")
 
     @server.tool(annotations=MUTATING)
     async def battle_identify(request: IdentifyRequest) -> CallToolResult:
@@ -155,17 +215,7 @@ def create_server(
         result = await service.command(
             "identify", request, {"adopt_manual_pause": request.adopt_manual_pause}
         )
-        response = tool_result(result)
-        if result.get("image_path"):
-            image = service.evidence_path(result).read_bytes()
-            response.content.append(
-                ImageContent(
-                    type="image",
-                    mimeType="image/png",
-                    data=base64.b64encode(image).decode("ascii"),
-                )
-            )
-        return response
+        return evidence_result(result, "image_path")
 
     @server.tool(annotations=MUTATING)
     async def battle_step(request: BoundedStepRequest) -> CallToolResult:
@@ -177,20 +227,7 @@ def create_server(
                 exclude={"session_id", "operation_id", "timeout_ms"}, exclude_none=True
             ),
         )
-        response = tool_result(result)
-        for key in ("return_image_path", "capture_image_path"):
-            relative = result.get(key)
-            if not isinstance(relative, str) or not relative:
-                continue
-            image = service.evidence_path({"image_path": relative}).read_bytes()
-            response.content.append(
-                ImageContent(
-                    type="image",
-                    mimeType="image/png",
-                    data=base64.b64encode(image).decode("ascii"),
-                )
-            )
-        return response
+        return evidence_result(result, "return_image_path", "capture_image_path")
 
     @server.tool(annotations=MUTATING)
     async def battle_deploy(request: DeployRequest) -> CallToolResult:
@@ -323,6 +360,9 @@ def main() -> None:
     )
     parser.add_argument("--intel-config", type=Path)
     parser.add_argument("--loadout-config", type=Path)
+    parser.add_argument(
+        "--allow-summon", action="append", default=[], metavar="GAME_ID"
+    )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
     core_dir = args.core_dir.resolve()
@@ -335,12 +375,16 @@ def main() -> None:
         connection_config=args.connection_config,
         touch_mode=args.touch_mode,
         client_type=args.client_type,
+        allowed_summons=args.allow_summon,
     )
     intelligence = None
     if args.intel_config:
-        config = IntelligenceConfig.model_validate_json(
-            args.intel_config.read_text(encoding="utf-8")
-        )
+        data = json.loads(args.intel_config.read_text(encoding="utf-8"))
+        config = (
+            RawIntelligenceConfig
+            if data.get("provider") == "raw"
+            else IntelligenceConfig
+        ).model_validate_json(json.dumps(data))
         intelligence = IntelligenceClient(config)
     decision = DecisionContext(settings, args.loadout_config)
     create_server(BattleService(settings, decision=decision), intelligence).run(

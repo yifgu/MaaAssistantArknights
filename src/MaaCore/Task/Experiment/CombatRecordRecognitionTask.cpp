@@ -129,8 +129,8 @@ bool asst::CombatRecordRecognitionTask::analyze_formation()
         // 有些视频会有个过渡或者动画啥的，只取一帧识别的可能不全。多识别几帧
         if (formation_opt) {
             if (formation_opt->size() > m_formation.size()) {
-                for (const auto& [name, avatar] : *formation_opt) {
-                    m_formation.insert_or_assign(name, avatar);
+                for (const auto& oper : *formation_opt) {
+                    m_formation.insert_or_assign(oper.name, oper.avatar);
                 }
             }
             else if (++no_changes_count > 5) {

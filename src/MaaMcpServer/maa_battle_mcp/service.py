@@ -9,7 +9,7 @@ from typing import Protocol
 
 from filelock import FileLock, Timeout
 
-from .decision import DecisionContext
+from .decision import CLIENT_REGIONS, DecisionContext
 from .diagnostics import provenance
 from .models import BattleMode, OperationRequest, Settings
 from .native import NativeBackend, NativeError
@@ -43,8 +43,11 @@ class BattleService:
         self.backend: Backend | None = None
         self.connection_info: dict = {}
         self.session_id: str | None = None
+        self.preparation_session_id: str | None = None
+        self.preparation_snapshot: dict | None = None
         self.lock = asyncio.Lock()
         self.step_active = False
+        self.storage_failed = False
         self.active_request: OperationRequest | None = None
         settings.user_dir.mkdir(parents=True, exist_ok=True)
         self.lease = FileLock(settings.user_dir / "controller.lock", timeout=0)
@@ -67,6 +70,9 @@ class BattleService:
                 raise BattleError(
                     "Already connected; close the existing connection first"
                 )
+            self.preparation_session_id = None
+            self.preparation_snapshot = None
+            self.decision.preparation = None
             try:
                 self.lease.acquire()
             except Timeout as exc:
@@ -95,7 +101,63 @@ class BattleService:
     def diagnostics(self) -> dict:
         return {**self.connection_info, **provenance(self.settings)}
 
-    async def attach(self, stage_name: str, mode: BattleMode | None = None) -> dict:
+    async def prepare(self, stage_name: str, mode: BattleMode) -> dict:
+        if self.lock.locked():
+            raise BattleError("Controller is busy")
+        async with self.lock:
+            if self.backend is None or self.session_id is not None:
+                raise BattleError(
+                    "Preparation requires a connection without an attached battle"
+                )
+            self.preparation_snapshot = None
+            self.decision.preparation = None
+            self.preparation_session_id = self.preparation_session_id or str(
+                uuid.uuid4()
+            )
+            request_id = str(uuid.uuid4())
+            try:
+                result = await asyncio.to_thread(
+                    self.backend.request,
+                    "preparation",
+                    {
+                        "session_id": self.preparation_session_id,
+                        "command_id": request_id,
+                        "action": "prepare",
+                        "args": {},
+                        "timeout_ms": 30_000,
+                    },
+                    35,
+                )
+            except (NativeError, asyncio.CancelledError):
+                await asyncio.to_thread(self.backend.abort)
+                self.backend = None
+                self.preparation_session_id = None
+                self.lease.release()
+                raise
+            if result.get("status") == "succeeded":
+                result["region"] = CLIENT_REGIONS[self.settings.client_type]
+                result["preparation_id"] = request_id
+                result["binding"] = {
+                    "stage_id": stage_name,
+                    "mode": mode,
+                    "source": "caller_supplied",
+                }
+                self.preparation_snapshot = result
+            return result
+
+    async def invalidate_preparation(self) -> dict:
+        async with self.lock:
+            self.preparation_snapshot = None
+            self.decision.preparation = None
+            return {"status": "succeeded", "preparation_valid": False}
+
+    async def attach(
+        self,
+        stage_name: str,
+        mode: BattleMode | None = None,
+        preparation_id: str | None = None,
+        confirm_preparation_unchanged: bool = False,
+    ) -> dict:
         async with self.lock:
             if self.backend is None:
                 raise BattleError("Connect before attaching")
@@ -104,7 +166,21 @@ class BattleService:
                     "A battle is already attached; close before starting another"
                 )
             self.decision.validate_binding(stage_name, mode)
-            session = str(uuid.uuid4())
+            prepared = self.preparation_snapshot
+            if preparation_id is not None:
+                if (
+                    not confirm_preparation_unchanged
+                    or prepared is None
+                    or prepared["preparation_id"] != preparation_id
+                    or prepared["binding"]["stage_id"] != stage_name
+                    or prepared["binding"]["mode"] != mode
+                ):
+                    raise BattleError(
+                        "Preparation binding is stale, mismatched or not explicitly reconfirmed"
+                    )
+            elif confirm_preparation_unchanged:
+                raise BattleError("Reconfirmation requires preparation_id")
+            session = self.preparation_session_id or str(uuid.uuid4())
             backend = self.backend
             try:
                 result = await asyncio.to_thread(
@@ -120,6 +196,17 @@ class BattleService:
                 self.session_id = session
                 self.map_info = result.get("map")
                 self.mode = mode
+                self.decision.preparation = (
+                    prepared if preparation_id is not None else None
+                )
+                self.preparation_snapshot = None
+                self.preparation_session_id = None
+                result["preparation_id"] = preparation_id
+                result["preparation_binding"] = (
+                    "caller_reconfirmed_not_continuously_observed"
+                    if preparation_id
+                    else None
+                )
                 result["mode"] = mode
                 result["mode_source"] = "caller_supplied_not_visually_verified"
                 return result
@@ -133,6 +220,10 @@ class BattleService:
     async def command(
         self, action: str, request: OperationRequest, args: dict | None = None
     ) -> dict:
+        if self.storage_failed:
+            raise BattleError(
+                "Operation storage failed; do not retry input in this service"
+            )
         # Do not silently queue tactical decisions behind a slow vision request.
         if self.lock.locked():
             raise BattleError(
@@ -230,15 +321,29 @@ class BattleService:
             return result
 
     def _save_result(self, request: OperationRequest, result: dict) -> None:
-        self.journal.execute(
-            "UPDATE operations SET result=? WHERE session=? AND id=?",
-            (
-                json.dumps(result, ensure_ascii=False),
-                request.session_id,
+        try:
+            self.journal.execute(
+                "UPDATE operations SET result=? WHERE session=? AND id=?",
+                (
+                    json.dumps(result, ensure_ascii=False),
+                    request.session_id,
+                    request.operation_id,
+                ),
+            )
+            self.journal.commit()
+        except sqlite3.Error as exc:
+            self.storage_failed = True
+            try:
+                self.journal.rollback()
+            except sqlite3.Error:
+                logger.exception("Could not roll back failed operation persistence")
+            logger.exception(
+                "Could not persist operation %s; input may have occurred",
                 request.operation_id,
-            ),
-        )
-        self.journal.commit()
+            )
+            raise BattleError(
+                "Operation result could not be persisted; do not retry input"
+            ) from exc
 
     async def read(self, session_id: str, action: str) -> dict:
         return await self.command(
@@ -296,6 +401,9 @@ class BattleService:
             self.session_id = None
             self.map_info = None
             self.mode = None
+            self.preparation_session_id = None
+            self.preparation_snapshot = None
+            self.decision.preparation = None
             self.connection_info = {}
             if current is not None:
                 try:

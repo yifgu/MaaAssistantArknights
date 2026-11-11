@@ -49,6 +49,10 @@ MARKERS = {
     "unknown": (70, 80, 90),
     "victory": (100, 110, 120),
     "defeat": (130, 140, 150),
+    "intro": (140, 150, 160),
+    "victory_overlay": (150, 160, 170),
+    "conflict": (160, 170, 180),
+    "paused_unknown_speed": (170, 180, 190),
 }
 
 
@@ -62,9 +66,19 @@ def prepare(settings, known):
         (1, "BattleHpFlag", 500, 20),
         (2, "BattleOfficiallyBegin", 1180, 30),
         (3, "BattleOpersFlag", 100, 590),
-        (4, "BattleOperRolePioneer", 60, 597),
+        (
+            4,
+            "BattleOperRoleDrone"
+            if known in ("summon", "summon_unapproved")
+            else "BattleOperRolePioneer",
+            60,
+            597,
+        ),
         (6, "BattleControlVictory", 400, 300),
         (7, "BattleControlDefeat", 500, 300),
+        (8, "BattleControlPaused", 600, 320),
+        (9, "BattleControlSpeedOne", 1075, 40),
+        (10, "BattleSpeedUpCheck", 1085, 40),
     ):
         pixels = random.Random(seed).randbytes(8 * 8 * 3)
         (templates / f"{name}.png").write_bytes(png(8, 8, pixels))
@@ -76,6 +90,8 @@ def prepare(settings, known):
         }
         if name.startswith("BattleControl"):
             tasks[name].update(baseTask="#none", roi=[200, 180, 880, 360])
+        if "Speed" in name:
+            tasks[name].update(baseTask="#none", roi=[1060, 20, 80, 70])
         patches.append((name, x, y, 8, 8, pixels))
     avatar = random.Random(5).randbytes(60 * 60 * 3)
     patches.append(("avatar", 62, 628, 60, 60, avatar))
@@ -83,28 +99,51 @@ def prepare(settings, known):
     if known:
         cache = settings.user_dir / "cache/avatars"
         cache.mkdir(parents=True)
-        (cache / "char_123_fang.png").write_bytes(png(60, 60, avatar))
+        game_id = (
+            "token_10000_silent_healrb"
+            if known in ("summon", "summon_unapproved")
+            else "char_123_fang"
+        )
+        (cache / f"{game_id}.png").write_bytes(png(60, 60, avatar))
     for mode, marker in MARKERS.items():
-        image = bytearray(1280 * 720 * 3)
-        image[:3] = bytes(marker)
-        for name, x, y, width, height, pixels in patches:
-            if name == "BattleHpFlag" and mode in ("unknown", "victory", "defeat"):
-                continue
-            if name == "BattleControlVictory" and mode != "victory":
-                continue
-            if name == "BattleControlDefeat" and mode != "defeat":
-                continue
-            if (
-                name in ("BattleOfficiallyBegin", "running-brightness")
-                and mode != "running"
-            ):
-                continue
-            for row in range(height):
-                start = ((y + row) * 1280 + x) * 3
-                image[start : start + width * 3] = pixels[
-                    row * width * 3 : (row + 1) * width * 3
-                ]
-        (root / f"{mode}.png").write_bytes(png(1280, 720, image))
+        for speed in (1, 2):
+            image = bytearray(1280 * 720 * 3)
+            image[:3] = bytes(marker)
+            for name, x, y, width, height, pixels in patches:
+                if name == "BattleHpFlag" and mode in ("unknown", "victory", "defeat"):
+                    continue
+                if name == "BattleControlVictory" and mode not in (
+                    "victory",
+                    "victory_overlay",
+                    "conflict",
+                ):
+                    continue
+                if name == "BattleControlDefeat" and mode not in ("defeat", "conflict"):
+                    continue
+                if name == "BattleControlPaused" and mode not in (
+                    "paused",
+                    "paused_unknown_speed",
+                ):
+                    continue
+                if name == "BattleControlSpeedOne" and (
+                    speed != 1 or mode == "paused_unknown_speed"
+                ):
+                    continue
+                if name == "BattleSpeedUpCheck" and (
+                    speed != 2 or mode == "paused_unknown_speed"
+                ):
+                    continue
+                if (
+                    name in ("BattleOfficiallyBegin", "running-brightness")
+                    and mode != "running"
+                ):
+                    continue
+                for row in range(height):
+                    start = ((y + row) * 1280 + x) * 3
+                    image[start : start + width * 3] = pixels[
+                        row * width * 3 : (row + 1) * width * 3
+                    ]
+            (root / f"{mode}-{speed}x.png").write_bytes(png(1280, 720, image))
     tasks["BattleOperAvailable"] = {"specialParams": [0]}
     tasks["BattleOperRole"] = {"templThreshold": 0.99}
     task_dir = root / "resource/tasks"
@@ -131,6 +170,7 @@ def prepare(settings, known):
     ]
     (root / "resource/config.json").write_text(json.dumps(config), encoding="utf-8")
     (root / "mode").write_text("paused", encoding="utf-8")
+    (root / "speed").write_text("1")
     return root
 
 
@@ -154,12 +194,23 @@ def device(root, action, args):
         event["action"] = "resume" if mode == "paused" else "pause"
         mode = "running" if mode == "paused" else "paused"
         (root / "mode").write_text(mode, encoding="utf-8")
+    elif (
+        action == "click" and 1070 <= int(args[0]) <= 1130 and 20 <= int(args[1]) <= 80
+    ):
+        event["action"] = "speed"
+        if not (root / "ignore-speed").exists():
+            (root / "speed").write_text(
+                "2" if (root / "speed").read_text() == "1" else "1"
+            )
+        if (root / "speed-resumes").exists():
+            (root / "mode").write_text("running")
     with (root / "events.jsonl").open("a", encoding="utf-8") as log:
         log.write(json.dumps(event) + "\n")
     if action == "capture":
         if (root / "capture-delay").exists():
             time.sleep(float((root / "capture-delay").read_text()))
-        sys.stdout.buffer.write((root / f"{mode}.png").read_bytes())
+        speed = (root / "speed").read_text()
+        sys.stdout.buffer.write((root / f"{mode}-{speed}x.png").read_bytes())
         if mode == "unknown" and (root / "return-after-unknown").exists():
             (root / "mode").write_text("paused")
     elif action in ("click", "swipe"):

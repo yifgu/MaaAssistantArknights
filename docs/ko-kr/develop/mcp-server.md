@@ -102,7 +102,7 @@ worker는 MCP 입출력을 상속하지 않고 전용 stdin/stdout 파이프가 
 
 동일한 `--user-dir`에는 프로세스 간 제어 잠금이 적용됩니다. 같은 기기는 항상 같은 디렉터리를 사용하세요. 다른 디렉터리의 서버나 외부 GUI가 기기를 조작하는 것은 막을 수 없습니다.
 
-개체별 식별 기능을 구현하기 전까지 소환물과 장치 배치는 명시적으로 거부합니다. 이름이 같은 여러 유닛을 하나의 오퍼레이터처럼 조작해서는 안 됩니다.
+소환물 배치는 신뢰할 수 있는 시작 설정의 허용 목록으로 제한하고 개체별로 기록합니다. 미허용 장치 및 소환물 스킬/퇴각은 계속 거부합니다. 자세한 내용은 아래를 참고하세요.
 
 ```bash
 uv run --project src/MaaMcpServer maa-battle-mcp \
@@ -132,7 +132,7 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 
 `battle_connect`, `battle_attach(stage_name="main_01-07")`, `battle_capture_evidence`, `battle_observe` 순서로 호출합니다. 스테이지 ID는 실제 화면과 일치해야 합니다. 맵 지정은 호출자가 제공하며 자동 인식이 아닙니다. `battle_get_map`은 정적 타일과 두 가지 화면 투영을 반환합니다. 알 수 없는 이름은 null입니다. `battle_identify`는 상세 화면을 열어 인식하며 일시 정지를 요청합니다. 이후 스크린샷을 확인하고 `battle_set_paused(paused=false)`로 명시적으로 재개하세요.
 
-수동 일시 정지된 전투에 새 세션을 연결했다면 `battle_identify`에 `request.adopt_manual_pause=true`를 지정해 재개 없이 정지 상태 인계를 명시적으로 허용할 수 있습니다. 엄격한 boolean 형식이며 기본값은 false입니다. 생략하면 서버가 관리하지 않는 정지는 계속 거부됩니다. Core는 먼저 전투 화면으로 인식되고 실행 중 일시 정지 버튼이 보이지 않는지 확인하며, 인식할 수 없는 화면은 인계하지 않습니다. 카드는 정지 상태에서만 확인하고 OCR이 불완전하거나 요청이 취소되어도 자동 재개하지 않습니다. 처리가 완료되면 부분 인식에서도 `pause_verified`, `safe_state`, 최종 동일 프레임의 `snapshot` / `image_path`와 PNG를 반환합니다. 저장 실패는 `evidence_error`로 명시하며 취소나 worker 장애 시 최종 증거를 반환하지 못할 수 있습니다. 초기 인식에 외부 ADB 탭은 필요하지 않습니다.
+수동 정지를 인계하려면 `battle_identify`의 엄격한 boolean 인수 `request.adopt_manual_pause=true`가 필요하며 기본값은 false입니다. 재개를 허용하지는 않습니다. Core는 명확한 정지 증거를 요구합니다. 실행 버튼이 없다는 이유만으로 정지로 판단하지 않고 입장 제목 전환도 인계하지 않습니다. 정지 상태에서 카드를 확인하고 부분 OCR에서도 `pause_verified`, `safe_state`, 같은 프레임의 `snapshot` / `image_path`와 PNG를 반환합니다. 저장 실패는 `evidence_error`에 기록하며 취소나 worker 장애로 최종 증거를 얻지 못해도 자동 재개하지 않습니다.
 
 배치 요청 예시입니다. 세션과 관측된 유닛 ID를 바꾸세요. 도구 인수에는 `request` 객체가 있습니다.
 
@@ -166,13 +166,13 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 }
 ```
 
-`action`은 `deploy`, `retreat`, `skill` 또는 아래의 `wait`입니다. 배치에는 `location`과 `direction`도 필요합니다. 수동 일시 정지는 기본적으로 인계하지 않습니다. 재개하려면 `adopt_manual_pause=true`와 새로운 스크린샷으로 확인된 일시 정지가 필요합니다. 호출당 행동은 최대 하나입니다. 행동 경계 화면을 캡처하고 일시 정지를 요청한 뒤, 새로운 화면과 `pause_verified`를 반환합니다. 취소 시 Core에 알리고 정리 단계가 끝날 때까지 기다립니다. worker 자체가 실패하면 일시 정지 상태를 알 수 없다고 명시합니다. `battle_step`의 `timeout_ms` 상한은 10000입니다.
+`action`은 `deploy`, `retreat`, `skill`, `wait`이며 배치에는 `location`과 `direction`도 필요합니다. 수동 정지 재개에는 명시적 `adopt_manual_pause=true`와 새 정지 증거가 필요합니다. 호출당 행동은 최대 하나이며 경계 프레임을 분석한 다음 정지를 요청하고 새 이미지와 `pause_verified`를 반환합니다. 취소 시 Core 정리를 기다리지만 worker 장애 시 정지가 미확인일 수 있습니다. `battle_step.timeout_ms` 기본값은 10000, 상한은 30000이며 호출자의 예산을 임의 연장하지 않습니다.
 
 `captured_at_ms`는 이미지 획득 직후, 분석 전에 기록한 호스트의 Unix 밀리초 시각으로 기기의 렌더링 시각이 아닙니다. `capture_time_snapshot`은 `capture_image_path`(행동 경계), `return_time_snapshot`은 `return_image_path`(이후 정지 확인)와 연결됩니다. MCP 이미지는 기존처럼 반환 시점 프레임, 행동 경계 프레임 순서입니다. `observation_id`는 획득 순서가 아닌 분석 순서대로 증가하므로 행동 경계의 ID가 더 커도 시각은 더 이를 수 있습니다. 시스템 시계 조정은 시간 차이에 영향을 주며 이 시각은 실행 시간의 엄격한 상한이 아닙니다. 동일 작업 재전송은 원래 시각과 경로를 보존하고 새 캡처에는 자체 획득 시각을 기록합니다.
 
 `battle_identify`는 `identified_count`, `unresolved_count`, `ambiguous_count`와 카드별 `identity_reason`을 반환합니다. 이름이 빈 캐시 항목은 더 이상 상세 OCR을 억제하지 않습니다. 다른 행동이 `outcome_unknown`을 반환하면 MCP `isError=true`이며 `helper_returned=true` 또는 `action_returned=true`도 게임 내 성공을 증명하지 않습니다. 새 증거를 확인하고 무작정 재시도하지 마세요. 위치 출처는 `action_history_unverified`, 적 상태는 null이며 모델의 직접 상태 덮어쓰기는 지원하지 않습니다. 별도의 일시 정지 요청은 정지 확인이 아니며 재개는 이 서버가 요청하거나 명시적으로 인계한 정지에만 허용됩니다.
 
-일반 명령의 `timeout_ms`는 1–30000이고 `battle_step`은 최대 10000입니다. 일반 명령 시간 초과나 취소 시 worker를 종료하고 세션을 무효화하며 알 수 없는 결과를 저장합니다. step 취소 시 준비된 일시 정지 정리가 끝날 때까지 기다리지만, worker 장애로 일시 정지를 확인하지 못할 수 있습니다. `battle_close`는 일반 명령을 중단하며 step 실행 중에는 일시 정지 정리가 끝날 때까지 기다린 뒤 닫습니다. 단, 이 작업 자체가 게임을 일시 정지하거나 종료하지는 않습니다. `battle_get_operation`으로 저장된 결과를 조회합니다. 로그와 `operations.sqlite3`는 `--user-dir`에 있으며 전투별로 최근 명시적 캡처 128장을 보관합니다. 오래된 세션, 로그, 데이터베이스는 주기적으로 직접 정리하세요.
+모든 명령의 `timeout_ms` 상한은 30000입니다. 일반 명령 시간 초과/취소 시 worker를 종료하고 세션을 무효화하여 미확인 결과를 저장합니다. step은 정지 정리를 기다리지만 기기 장애 시 정지를 보장하지 않습니다. `battle_close`는 일반 명령을 중단하거나 step 정리를 기다리며 자체적으로 게임을 정지/종료하지 않습니다. `battle_get_operation`은 영구 결과를 읽고 저장 실패는 명시적으로 알리며 이 서비스의 후속 명령을 차단합니다. `--user-dir`에 로그와 `operations.sqlite3`를 저장하고 일반 이미지는 최근 128장, 중요 증거는 별도 보관하므로 직접 정리해야 합니다.
 
 ## 선택적 정보 서버
 
@@ -230,7 +230,25 @@ PRTS는 `{"provider":"prts","command":"prts-mcp","region":"cn"}`으로 설정할
 
 지역, 스테이지와 명시적 모드가 일치해야 합니다. `actual_level`, `potential`, `module_id`, `module_level`, `skill_level`, `mastery`도 선택적으로 입력하며 생략하면 unknown입니다. 스냅샷의 `decision_context`는 필드별 출처, 사용자 확인, 설정 해시를 별도로 보존하고 원시 관측을 덮어쓰거나 사용자 확인을 시각 검증으로 취급하지 않습니다. SP, 스킬 단계, 지속 시간과 재능은 여전히 미확인이며 모호한 game ID 후보의 첫 항목을 임의 선택하지 않습니다.
 
-`battle_evaluate_placement(session_id, placements)`는 후보 전체 진형을 읽기 전용으로 검사합니다. 각 항목에 `operator_game_id`, `location`, `direction`을 넣고 정예 단계는 설정에서 가져오거나 `assumed_elite`로 가정을 명시합니다. 기본 범위, 기하학적 아군 커버, 정적 배치 호환성과 타일 충돌을 반환합니다. 정예 단계/범위를 모르면 직군 기본값을 대입하지 않습니다. 실제 점유, 치료 대상 자격, 생존이나 최적성을 검증하지 않고 스킬, 모듈, 재능과 특수 지형 효과도 포함하지 않습니다. 소환물/장치 제어와 실시간 적 추적은 계속 미지원입니다.
+`battle_evaluate_placement(session_id, placements)`는 후보 전체 진형을 읽기 전용으로 검사합니다. 각 항목에 `operator_game_id`, `location`, `direction`을 넣고 정예 단계는 설정에서 가져오거나 `assumed_elite`로 가정을 명시합니다. 기본 범위, 기하학적 아군 커버, 정적 배치 호환성과 타일 충돌을 반환합니다. 정예 단계/범위를 모르면 직군 기본값을 대입하지 않습니다. 실제 점유, 치료 대상 자격, 생존이나 최적성을 검증하지 않고 스킬, 모듈, 재능과 특수 지형 효과도 포함하지 않습니다. 실시간 적 추적은 계속 미지원입니다.
+
+## 장면 증거, 준비 관측 및 제한된 조작
+
+`scene`은 `running / paused / transition / terminal / unknown`을 구분합니다. 모든 샘플에서 종료 증거를 확인하고 명확한 종료 증거를 잔존 전투 UI보다 우선합니다. 전투 확인 후 미확인/전환 화면이나 종료를 관측하면 입력을 잠급니다. `session_terminal`은 결과와 이미지 경로를 유지하며 검은 화면으로 확정 결과를 지우지 않고 승패 충돌은 unknown으로 유지합니다. `battle_collect_terminal(request)`은 잠금 상태의 읽기 전용 수집입니다. `duration_ms`는 100–8000이며 `timeout_ms` 이하여야 합니다. 새 수집에는 새 `operation_id`를 쓰며 잠금 해제, 메뉴 클릭, 과거 결과 변경은 하지 않습니다. 추가 Core 명령은 `set_speed`, `finalize`, `prepare`, `bind`입니다. 준비 작업은 `preparation_only=true`로 초기화하고 같은 컨트롤러로 연결합니다.
+
+`skill_ready`는 true 또는 null이며 분류기 부정을 확인된 쿨다운으로 취급하지 않습니다. `skill_evidence`는 동일 프레임 ID, 시각, ROI, 기준점, 분류 점수와 확률을 보존합니다. 발동 단계/탄약/쿨다운은 미확인일 수 있고 점수는 보정된 정확도가 아닙니다. `asst.log`의 `Battle frame` / `Battle command result`, `battle-control/<session>/`의 PNG, `operations.sqlite3`를 보관하세요. 합성 회귀는 실제 OCR, ROI, 버튼 호환성 확인이 아니므로 로컬 재검증이 필요하지만 로컬 이미지를 클라우드 개발의 필수 입력으로 요구하지 않습니다.
+
+연결 후 attach 전에 `battle_observe_preparation(stage_name, mode)`로 수동으로 연 편성 화면을 입력 없이 읽습니다. 이름, 후보 ID, 이름 영역과 증거를 반환하며 선택 스킬, 육성 상태, 지원 여부는 미확인이고 상세 화면을 열지 않습니다. 최신 결과를 `battle_attach(..., preparation_id=..., confirm_preparation_unchanged=true)`로 연결합니다. 이는 호출자의 재확인이지 지속적인 시각 검증이 아닙니다. 편성/스킬/스테이지/계정 변경 후 `battle_invalidate_preparation`을 호출하고 다시 수집하세요. 재수집, 연결 소비, 종료 후에는 이전 결과를 재사용할 수 없고 현장 식별 불일치는 `decision_context.preparation`에 충돌로 기록됩니다.
+
+일반 드래그 배치 방식이 확인된 소환 카드만 시작 시 `--allow-summon GAME_ID`를 반복 지정해 허용합니다. `battle_step(action="deploy")`에는 기존 인수 외에 관측한 `card_id`가 필요하며 유일하고 사용 가능하며 위치가 같고 30초 이내인 카드여야 합니다. 매 시도마다 독립적인 `instance:<operation_id>`를 만들고 동명 개체를 덮어쓰지 않습니다. 위치/생존은 미검증 행동 이력이고 미확인 소멸로 타일을 자동 해제하지 않습니다. 개체 스킬/퇴각, 모호한 카드, 미허용 장치는 거부하며 helper 반환값은 배치 성공 증거가 아닙니다.
+
+`battle_set_speed(request)`은 `session_id`, `operation_id`, `multiplier=1|2`, `timeout_ms`를 받습니다. 명확히 정지된 상태에서만 속도를 읽고 필요하면 한 번 전환한 뒤 재확인하여 전후 증거를 반환합니다. 정지 소유권을 바꾸거나 자동 재개하지 않으며 2배속 중복 요청이 1배속으로 되돌리지 않습니다. 속도 미확인 시 클릭하지 않고 변경 후 검증 실패 시 입력을 잠급니다. 가속 판단은 전적으로 호스트가 합니다. 대기는 호스트 시간이며 관측한 캡처 비용으로 정리 예산을 확보하고 부족하면 재개를 거부합니다. `cleanup_reserve_ms`, `resumed_interval_upper_bound_ms`, `deadline_margin_ms`는 정확한 게임 시간 보장이 아닙니다.
+
+## 고정 원본 스테이지 스냅샷
+
+`--intel-config`의 `provider="raw"`는 신뢰할 수 있는 로컬 파일만 읽으며 자동 다운로드하지 않습니다. `root`(절대 디렉터리), `repository`, `commit`(40자리), `data_version`, `region`, `stages`, `enemy_database`를 설정합니다. `stages`는 stage ID를 `{"path":"relative/path","sha256":"64-character hash"}`로 매핑하며 `enemy_database`도 같은 구조입니다. 파일마다 64 MiB 제한과 SHA-256 검증을 적용하고 루트 밖 경로를 거부합니다.
+
+연결된 세션에서 `intel_query(..., complete_stage=true)`를 사용합니다. 위쪽 원점 맵과 아래쪽 원점 경로를 따로 변환해 `maa_grid`를 출력하고 대기 체크포인트를 이동점으로 취급하지 않습니다. SPAWN action 하나당 레코드 하나를 만들며 count, delay, interval, 숨김 그룹, 차단 필드를 유지합니다. 적 레벨 상속, 정의 플래그, 스테이지 덮어쓰기를 처리하며 Key/Value와 key/value를 지원합니다. 미확인 기믹과 비 SPAWN actions를 빈 집합으로 바꾸지 않습니다. `mode_modifiers`는 난이도 mask만 선택하고 룬 해석 완료를 주장하지 않으며 `alignment=unknown`입니다. `mode=normal|challenge`는 난이도이며 연습/실전 구분이 아닙니다. 외부 provider에는 schema가 지원을 선언할 때만 mode를 전달하고 캐시도 mode별로 분리합니다. 해시와 버전 선언은 설치 게임 버전 일치나 독립 provider 호환성을 증명하지 않으며 게임 데이터는 서비스와 재배포하지 않습니다.
 
 ## Core 프로토콜
 

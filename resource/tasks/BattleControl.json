@@ -1,7 +1,7 @@
 {
     "BattleControlVictory": {
         "algorithm": "OcrDetect",
-        "text": ["演习成功", "行动成功", "MISSION ACCOMPLISHED"],
+        "text": ["演习成功", "行动成功", "任务完成", "MISSION ACCOMPLISHED"],
         "fullMatch": true,
         "roi": [0, 0, 1280, 720]
     },
@@ -10,5 +10,17 @@
         "text": ["演习失败", "任务失败", "MISSION FAILED"],
         "fullMatch": true,
         "roi": [0, 0, 1280, 720]
+    },
+    "BattleControlPaused": {
+        "algorithm": "OcrDetect",
+        "text": ["PAUSE"],
+        "fullMatch": true,
+        "roi": [0, 0, 1280, 720]
+    },
+    "BattleControlSpeedOne": {
+        "algorithm": "OcrDetect",
+        "text": ["1", "1X", "1x", "1×", "×1"],
+        "fullMatch": true,
+        "roi": [1060, 20, 80, 70]
     }
 }

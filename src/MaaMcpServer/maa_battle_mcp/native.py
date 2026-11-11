@@ -83,6 +83,7 @@ class NativeCore:
                 f"AsstSetInstanceOption({key})",
             )
         self.task_id: int | None = None
+        self.preparation_session: str | None = None
 
     def _bind(self) -> None:
         pointer = ctypes.c_void_p
@@ -195,22 +196,68 @@ class NativeCore:
                 "core_version": self.lib.AsstGetVersion().decode("utf-8"),
                 **provenance(settings),
             }
+        if operation == "preparation":
+            if self.task_id is None:
+                self.preparation_session = payload["session_id"]
+                self.task_id = self.lib.AsstAppendTask(
+                    self.handle,
+                    b"BattleControl",
+                    json.dumps(
+                        {
+                            "session_id": self.preparation_session,
+                            "preparation_only": True,
+                            "allowed_summons": settings.allowed_summons,
+                        }
+                    ).encode("utf-8"),
+                )
+                self._require(self.task_id, "BattleControl preparation initialization")
+                self._require(self.lib.AsstStart(self.handle), "AsstStart")
+                self._wait("BattleControlReady", 30)
+            if self.preparation_session != payload["session_id"]:
+                raise NativeError(
+                    "Preparation is only available before battle attachment"
+                )
+            return self.dispatch("command", payload, settings, cancelled)
         if operation == "attach":
-            if self.task_id is not None:
+            if (
+                self.task_id is not None
+                and self.preparation_session != payload["session_id"]
+            ):
                 raise NativeError("A battle task is already attached")
             try:
                 map_source = stage_data(settings, payload["stage_name"])
             except (OSError, ValueError) as exc:
                 raise NativeError(str(exc)) from exc
-            self.task_id = self.lib.AsstAppendTask(
-                self.handle, b"BattleControl", json.dumps(payload).encode("utf-8")
-            )
-            self._require(
-                self.task_id,
-                "BattleControl task rejected preflighted stage; build this checkout's Core",
-            )
-            self._require(self.lib.AsstStart(self.handle), "AsstStart")
-            ready = self._wait("BattleControlReady", 30)
+            if self.task_id is not None:
+                ready = self.dispatch(
+                    "command",
+                    {
+                        "session_id": payload["session_id"],
+                        "command_id": "bind",
+                        "action": "bind",
+                        "args": {"stage_name": payload["stage_name"]},
+                        "timeout_ms": 30_000,
+                    },
+                    settings,
+                    cancelled,
+                )
+                if ready.get("status") != "succeeded":
+                    raise NativeError(f"Battle binding failed: {ready}")
+                self.preparation_session = None
+            else:
+                self.task_id = self.lib.AsstAppendTask(
+                    self.handle,
+                    b"BattleControl",
+                    json.dumps(
+                        {**payload, "allowed_summons": settings.allowed_summons}
+                    ).encode("utf-8"),
+                )
+                self._require(
+                    self.task_id,
+                    "BattleControl task rejected preflighted stage; build this checkout's Core",
+                )
+                self._require(self.lib.AsstStart(self.handle), "AsstStart")
+                ready = self._wait("BattleControlReady", 30)
             if ready["map"]["stage_id"] != map_source["stage_id"]:
                 raise NativeError(
                     f"Core map binding mismatch for stage {payload['stage_name']!r} "

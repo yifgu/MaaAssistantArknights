@@ -26,6 +26,7 @@ class DecisionContext:
         self.settings = settings
         self.config = None
         self.provenance = None
+        self.preparation: dict | None = None
         if loadout_path is not None:
             raw = loadout_path.read_bytes()
             self.config = LoadoutConfig.model_validate_json(raw)
@@ -117,6 +118,24 @@ class DecisionContext:
                         "Supplied loadout is not a measurement of this battle. Skill readiness does not identify the equipped skill or SP."
                     ],
                 }
+                if self.preparation is not None:
+                    roster = self.preparation["snapshot"]["operators"]
+                    matches = (
+                        [oper for oper in roster if resolved in oper["game_ids"]]
+                        if resolved
+                        else []
+                    )
+                    unit["decision_context"]["preparation"] = {
+                        "preparation_id": self.preparation["preparation_id"],
+                        "image_path": self.preparation.get("image_path"),
+                        "identity_match": len(matches) == 1 if resolved else None,
+                        "status": "matched"
+                        if len(matches) == 1
+                        else "conflict"
+                        if resolved
+                        else "unknown",
+                        "configuration_verified": False,
+                    }
 
     def evaluate(self, map_info: dict, placements: list[Placement]) -> dict:
         path = self.settings.resource_dir / "resource/battle_data.json"

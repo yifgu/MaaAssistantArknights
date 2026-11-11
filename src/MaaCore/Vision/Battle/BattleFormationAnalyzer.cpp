@@ -62,7 +62,7 @@ BattleFormationAnalyzer::ResultsVec
         Rect base_point { name_res.rect.x + name_res.rect.width, name_res.rect.y, 0, 0 };
         Rect avatar_rect = base_point.move(Task.get("BattleFormationOperAvatarMove")->rect_move);
         cv::Mat avatar = m_image(make_rect<cv::Rect>(avatar_rect));
-        results.emplace_back(Result { .name = name, .avatar = avatar });
+        results.emplace_back(Result { .name = name, .avatar = avatar, .rect = name_res.rect });
 
 #ifdef ASST_DEBUG
         cv::rectangle(m_image_draw, make_rect<cv::Rect>(name_res.rect), cv::Scalar(0, 255, 0), 2);

@@ -1,4 +1,5 @@
 import asyncio
+import sqlite3
 import threading
 
 import pytest
@@ -10,6 +11,7 @@ from maa_battle_mcp.models import (
     IdentifyRequest,
     OperationRequest,
     PauseRequest,
+    SpeedRequest,
 )
 from maa_battle_mcp.native import NativeError
 from maa_battle_mcp.service import BattleError, BattleService
@@ -75,6 +77,64 @@ async def test_duplicate_operation_does_not_repeat_input(connected):
     assert len([call for call in backend.calls if call[0] == "command"]) == 1
     with pytest.raises(BattleError, match="different parameters"):
         await service.command("retreat", request, {"unit_id": "unit"})
+
+
+async def test_preparation_binding_requires_current_snapshot_and_confirmation(settings):
+    class PreparationBackend(FakeBackend):
+        def request(self, operation, payload, timeout):
+            if operation == "preparation":
+                return {
+                    "status": "succeeded",
+                    "snapshot": {
+                        "page": "formation",
+                        "operators": [{"name": "Fang", "game_ids": ["char_123_fang"]}],
+                    },
+                }
+            return super().request(operation, payload, timeout)
+
+    backend = PreparationBackend()
+    service = BattleService(settings, lambda _: backend)
+    try:
+        await service.connect()
+        first = await service.prepare("main_01-07", "normal")
+        current = await service.prepare("main_01-07", "normal")
+        with pytest.raises(BattleError, match="stale"):
+            await service.attach("main_01-07", "normal", first["preparation_id"], True)
+        with pytest.raises(BattleError, match="reconfirmed"):
+            await service.attach("main_01-07", "normal", current["preparation_id"])
+        await service.attach("main_01-07", "normal", current["preparation_id"], True)
+        assert service.decision.preparation == current
+        await service.invalidate_preparation()
+        assert service.decision.preparation is None
+    finally:
+        await service.close()
+        service.journal.close()
+
+
+async def test_journal_failure_is_explicit_and_never_replays(connected, monkeypatch):
+    service, backend = connected
+    journal = service.journal
+
+    class FailingJournal:
+        def execute(self, query, args=()):
+            if query.startswith("UPDATE operations"):
+                raise sqlite3.OperationalError("disk full")
+            return journal.execute(query, args)
+
+        def commit(self):
+            journal.commit()
+
+        def rollback(self):
+            journal.rollback()
+
+    monkeypatch.setattr(service, "journal", FailingJournal())
+    request = OperationRequest(session_id=service.session_id, operation_id="disk-full")
+    with pytest.raises(BattleError, match="could not be persisted"):
+        await service.command("skill", request, {"unit_id": "u"})
+    with pytest.raises(BattleError, match="do not retry"):
+        await service.command("skill", request, {"unit_id": "u"})
+    assert len([call for call in backend.calls if call[0] == "command"]) == 1
+    monkeypatch.setattr(service, "journal", journal)
 
 
 async def test_stale_session_is_rejected(connected):
@@ -348,7 +408,7 @@ def test_bounded_step_requires_complete_action_arguments():
         BoundedStepRequest(
             session_id="s",
             operation_id="o",
-            timeout_ms=10_001,
+            timeout_ms=30_001,
             action="skill",
             unit_id="u",
         )
@@ -376,3 +436,9 @@ def test_wait_request_does_not_require_a_dummy_unit():
         session_id="s", operation_id="o", action="wait", duration_ms=500
     )
     assert request.unit_id is None
+
+
+@pytest.mark.parametrize("speed", [True, False, 0, 3, "2", 2.0])
+def test_speed_rejects_non_integer_or_unsupported_multiplier(speed):
+    with pytest.raises(ValidationError):
+        SpeedRequest(session_id="s", operation_id="o", multiplier=speed)

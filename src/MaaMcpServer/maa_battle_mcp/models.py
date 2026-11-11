@@ -24,6 +24,7 @@ class Settings(StrictModel):
     connection_config: str = "General"
     touch_mode: Literal["adb", "minitouch", "maatouch", "MaaFwAdb"] = "maatouch"
     client_type: ClientType = "Official"
+    allowed_summons: list[Identifier] = Field(default_factory=list)
 
 
 class OperationRequest(StrictModel):
@@ -49,8 +50,22 @@ class PauseRequest(OperationRequest):
     paused: bool
 
 
+class SpeedRequest(OperationRequest):
+    multiplier: Annotated[int, Field(ge=1, le=2)]
+
+
+class TerminalRequest(OperationRequest):
+    duration_ms: Annotated[int, Field(ge=100, le=8_000)] = 2_000
+
+    @model_validator(mode="after")
+    def bounded(self):
+        if self.duration_ms > self.timeout_ms:
+            raise ValueError("terminal collection exceeds command deadline")
+        return self
+
+
 class BoundedStepRequest(OperationRequest):
-    timeout_ms: Annotated[int, Field(ge=1, le=10_000)] = 10_000
+    timeout_ms: Timeout = 10_000
     action: Literal["deploy", "retreat", "skill", "wait"]
     unit_id: Identifier | None = None
     duration_ms: Annotated[int, Field(ge=100, le=8_000)] | None = None
@@ -59,9 +74,12 @@ class BoundedStepRequest(OperationRequest):
         None
     )
     direction: Literal["Right", "Down", "Left", "Up", "None"] | None = None
+    card_id: Identifier | None = None
 
     @model_validator(mode="after")
     def validate_action_args(self):
+        if self.card_id is not None and self.action != "deploy":
+            raise ValueError("card_id is only valid for deployment")
         if self.action == "wait":
             if (
                 self.unit_id is not None
@@ -92,6 +110,28 @@ class IntelligenceConfig(StrictModel):
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
     region: Literal["cn", "en"] = "cn"
+
+
+class SnapshotFile(StrictModel):
+    path: str
+    sha256: Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+
+
+class RawIntelligenceConfig(StrictModel):
+    provider: Literal["raw"]
+    root: Path
+    repository: Identifier
+    commit: Annotated[str, Field(pattern=r"^[0-9a-f]{40}$")]
+    data_version: Identifier
+    region: Literal["cn", "en"]
+    stages: dict[Identifier, SnapshotFile]
+    enemy_database: SnapshotFile
+
+    @model_validator(mode="after")
+    def absolute_root(self):
+        if not self.root.is_absolute():
+            raise ValueError("Raw snapshot root must be absolute")
+        return self
 
 
 class OperatorLoadout(StrictModel):

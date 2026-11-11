@@ -13,6 +13,7 @@ def get_stage(
     include_spawns: bool,
     routes_page: dict,
     spawns_page: dict,
+    mode: str | None = None,
 ) -> CallToolResult:
     assert routes_page == {"page": 2, "page_size": 50}
     assert spawns_page == {"page": 1, "page_size": 50}
@@ -29,6 +30,7 @@ def get_stage(
         "status": "ok",
         "server": server,
         "game_id": game_id,
+        "mode": mode,
         "provenance": {"build_id": "test-snapshot"},
         "routes_page": {"has_more": True},
     }
