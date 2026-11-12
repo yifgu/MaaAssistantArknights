@@ -210,6 +210,8 @@ PRTS には `{"provider":"prts","command":"prts-mcp","region":"cn"}` を使用�
 
 `terminal` は `victory`、`defeat`、`unknown`、`still_in_battle` を区別し、認識元、生の照合信頼度、`terminal_evidence_path` を返します。現在のリソースは中国語簡体字／英語の明確な成功・失敗タイトルのみで、全言語・画面の実機対応を保証しません。撃破数の達成、黒画面、戦闘からの離脱は勝利と見なしません。待機処理の成功と戦闘勝利も別です。非戦闘画面を確認したセッションは以後の入力を拒否し、メニューで停止を切り替えません。離脱時の証拠は通常の 128 枚の循環削除から除外され、手動整理が必要です。ユーザーの証言は画像証拠と分けてください。
 
+分割タイトルの補完は、操作可能な戦闘画面を観測済みで、現在も戦闘 UI が認識され、実行中ボタンが見えない場合に限り、上段の完全一致語 `MISSION` と下段の `ACCOMPLISHED` を受理します。両語は同一フレーム内で各スコアが 0.9 以上、文字枠の高さが近く、左揃えで上下に隣接する必要があります。別フレームの断片は結合しません。`terminal.split_victory` は文字枠、スコア、受理または拒否理由を保持し、受理時の認識元は `BattleControlVictorySplit`、信頼度は低い方のスコアです。完全な成功タイトルと分割成功タイトルは矛盾扱いしませんが、敗北も確認した場合は unknown と入力隔離を維持します。単独の `MISSION` や一般的な `MISSION RESULTS`／行动结束は勝利の証拠ではありません。合成回帰は実際のアニメーションタイトルや独立した結果画面の認識を保証しません。
+
 完全な静的問い合わせは `battle_attach(stage_name="act55side_ex01", mode="normal")` で明示的に紐付けてから、`intel_query(kind="stage", identifier="act55side_ex01", complete_stage=true, session_id="…")` を呼び出します。既存 provider を再利用し、ページキャッシュを使わず、最大 100 リクエスト／120 秒で収集します。リージョン、ステージ、モード、ページ間の出典と重複 ID を確認します。構造化契約は `game_id`、`server`、`mode`、`provenance`、`routes_page`／`spawns_page` の `page` と `has_more`（任意の `total`）、最上位の `routes`／`spawns` 配列またはページ内の `items` を要求します。経路は `route_id`、生成項目は `spawn_id`、`enemy_game_id`、`route_id`、`count` を使います。不明な provider 形式は推測しません。
 
 `coordinate_system="public_row_col"` は紐付けた高さで `x=col, y=height-1-row` に変換し、各点に `maa_location` を追加、二次元タイル配列の行順を反転します。元の応答は `pages` に残します。`maa_grid` は変換せず、他の座標系は不明のままです。項目・ページ不足や provider の partial は `partial` と節ごとの `completeness` を返し、欠落を空集合にしません。識別／バージョン不一致や provider 障害はエラーです。`expires_at` は Unix 秒で、有効期限切れを明示します。省略時は鮮度不明で、5 分キャッシュは最新ゲームデータの保証ではありません。実 provider の受け入れ確認が必要で、模擬サービスの成功は 5 分類の情報完備や動的召喚数を証明しません。

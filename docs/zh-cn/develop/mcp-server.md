@@ -210,6 +210,8 @@ PRTS 可使用 `{"provider":"prts","command":"prts-mcp","region":"cn"}`；适配
 
 返回的 `terminal` 区分 `victory`、`defeat`、`unknown`、`still_in_battle`，附识别来源、原始匹配置信度和 `terminal_evidence_path`。当前资源仅配置中文与英文的明确成功／失败标题；不是所有语言或界面的实机验证。击杀数达到总数、黑屏、离开战斗均不自动判胜，等待事务成功也不代表作战胜利。观察到非战斗画面后，该会话拒绝后续输入；不在菜单切换暂停。离场时的末段与边界／返回证据不参与普通 128 张轮换，需自行清理；用户证词不得替代截图来源。
 
+分行标题回退仅在曾观察到可操作战斗画面、当前仍识别到战斗界面且没有运行按钮时，接受上方完整词 `MISSION` 与下方完整词 `ACCOMPLISHED`。两词须来自同一帧、各自得分至少 0.9，字框高度相近、左侧对齐且上下相邻；不跨截图累计碎片。`terminal.split_victory` 保留字框、得分及采纳或拒绝原因，采纳时来源为 `BattleControlVictorySplit`，置信度取较低分。完整成功标题与分行成功标题不互相冲突，但同时确认失败时仍保持 unknown 和输入隔离。单独 `MISSION` 或通用的 `MISSION RESULTS`／行动结束不是胜利证据。合成回归不代表真实动画标题或独立结算页已通过识别验收。
+
 完整静态查询先显式 `battle_attach(stage_name="act55side_ex01", mode="normal")`，再调用 `intel_query(kind="stage", identifier="act55side_ex01", complete_stage=true, session_id="…")`。它复用已有 provider，绕过分页缓存，最多 100 次请求／120 秒；检查区服、关卡、模式、跨页来源及重复 ID。完整查询要求结构化输出包含 `game_id`、`server`、`mode`、`provenance`，`routes_page`／`spawns_page` 中的 `page`、`has_more`（可选 `total`），以及顶层 `routes`／`spawns` 数组或分页内 `items`。路线用 `route_id`；生成项用 `spawn_id`、`enemy_game_id`、`route_id`、`count`。未知 provider 结构不会被猜测为已适配。
 
 `coordinate_system="public_row_col"` 时，以绑定地图高度执行 `x=col, y=height-1-row`，点上添加 `maa_location`，二维格子数组翻转行序；原始响应保存在 `pages`。`maa_grid` 不转换，其他坐标系保持未知。缺字段、缺页或 provider partial 返回 `partial` 与逐节 `completeness`，不会用空集合替代缺失；身份／版本冲突及 provider 失败直接报错。`expires_at` 为 Unix 秒，过期明确标记；未提供时新鲜度未知，5 分钟缓存有效不代表游戏数据最新。此契约尚须用实际 provider 验收，模拟服务通过不能证明五类资料已齐全，静态生成数也不含所有动态召唤物。
