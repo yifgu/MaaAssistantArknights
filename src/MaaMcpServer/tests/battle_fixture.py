@@ -64,6 +64,23 @@ MARKERS = {
     "paused_bilingual": (35, 45, 55),
 }
 
+SPLIT_MODES = (
+    "split_victory",
+    "split_missing_mission",
+    "split_missing_accomplished",
+    "split_reversed",
+    "split_distant",
+    "split_unaligned",
+    "split_low_score",
+    "split_menu",
+    "split_running",
+    "split_conflict",
+    "split_and_full",
+    "split_tutorial",
+    "split_results",
+)
+MARKERS.update({mode: (50 + index, 100, 150) for index, mode in enumerate(SPLIT_MODES)})
+
 
 def prepare(settings, known):
     root = settings.user_dir / "fixture"
@@ -88,9 +105,15 @@ def prepare(settings, known):
         (8, "BattleControlPaused", 600, 320),
         (9, "BattleControlSpeedOne", 1075, 40),
         (10, "BattleSpeedUpCheck", 1085, 40),
+        (11, "BattleControlVictoryMission", 102, 329),
+        (12, "BattleControlVictoryAccomplished", 94, 353),
     ):
-        pixels = random.Random(seed).randbytes(8 * 8 * 3)
-        (templates / f"{name}.png").write_bytes(png(8, 8, pixels))
+        width, height = (116, 29) if seed == 11 else (203, 34) if seed == 12 else (8, 8)
+        pixels = random.Random(seed).randbytes(width * height * 3)
+        if seed == 11:
+            # The reported detection boxes overlap by five rows; mask that shared strip.
+            pixels = pixels[: -5 * width * 3] + bytes(5 * width * 3)
+        (templates / f"{name}.png").write_bytes(png(width, height, pixels))
         tasks[name] = {
             "algorithm": "MatchTemplate",
             "template": f"{name}.png",
@@ -101,7 +124,21 @@ def prepare(settings, known):
             tasks[name].update(baseTask="#none", roi=[200, 180, 880, 360])
         if "Speed" in name:
             tasks[name].update(baseTask="#none", roi=[1060, 20, 80, 70])
-        patches.append((name, x, y, 8, 8, pixels))
+        if seed in (11, 12):
+            tasks[name].update(roi=[0, 0, 1280, 720], templThreshold=0.5)
+        if seed == 11:
+            tasks[name]["maskRange"] = [1, 255]
+        patches.append((name, x, y, width, height, pixels))
+    if known == "terminal_ocr":
+        from PIL import Image, ImageDraw, ImageFont
+
+        font = ImageFont.load_default(size=24)
+        for name in (
+            "BattleControlVictory",
+            "BattleControlVictoryMission",
+            "BattleControlVictoryAccomplished",
+        ):
+            del tasks[name]
     avatar = random.Random(5).randbytes(60 * 60 * 3)
     patches.append(("avatar", 62, 628, 60, 60, avatar))
     patches.append(("running-brightness", 1200, 40, 16, 16, b"\xff" * 16 * 16 * 3))
@@ -153,21 +190,72 @@ def prepare(settings, known):
     for mode, marker in MARKERS.items():
         if mode in ocr_labels and known != "localized_ocr":
             continue
+        if mode in SPLIT_MODES and known not in ("terminal", "terminal_ocr"):
+            continue
+        if (
+            mode in SPLIT_MODES
+            and known == "terminal_ocr"
+            and mode
+            not in (
+                "split_victory",
+                "split_tutorial",
+                "split_results",
+            )
+        ):
+            continue
+        if known == "terminal" and mode in ("split_tutorial", "split_results"):
+            continue
         for speed in (1, 2):
             image = bytearray(1280 * 720 * 3)
             image[:3] = bytes(marker)
             for name, x, y, width, height, pixels in patches:
-                if name == "BattleHpFlag" and mode in ("unknown", "victory", "defeat"):
+                if name == "BattleHpFlag" and mode in (
+                    "unknown",
+                    "victory",
+                    "defeat",
+                    "split_menu",
+                ):
                     continue
                 if name == "BattleControlVictory" and mode not in (
                     "victory",
                     "victory_overlay",
                     "conflict",
                     "victory_localized",
+                    "split_and_full",
                 ):
                     continue
-                if name == "BattleControlDefeat" and mode not in ("defeat", "conflict"):
+                if name == "BattleControlDefeat" and mode not in (
+                    "defeat",
+                    "conflict",
+                    "split_conflict",
+                ):
                     continue
+                if name in (
+                    "BattleControlVictoryMission",
+                    "BattleControlVictoryAccomplished",
+                ):
+                    if mode not in SPLIT_MODES or known == "terminal_ocr":
+                        continue
+                    if (
+                        name.endswith("Mission") and mode == "split_missing_mission"
+                    ) or (
+                        name.endswith("Accomplished")
+                        and mode == "split_missing_accomplished"
+                    ):
+                        continue
+                    if mode == "split_reversed":
+                        y = 380 if name.endswith("Mission") else 329
+                    if name.endswith("Accomplished"):
+                        if mode == "split_distant":
+                            y = 450
+                        elif mode == "split_unaligned":
+                            x = 500
+                        elif mode == "split_low_score":
+                            noise = random.Random(13).randbytes(len(pixels))
+                            pixels = bytes(
+                                noise[i] if i % 4 == 0 else pixel
+                                for i, pixel in enumerate(pixels)
+                            )
                 if name == "BattleControlPaused" and mode not in (
                     "paused",
                     "paused_unknown_speed",
@@ -184,7 +272,7 @@ def prepare(settings, known):
                 if name in (
                     "BattleOfficiallyBegin",
                     "running-brightness",
-                ) and mode not in ("running", "running_localized"):
+                ) and mode not in ("running", "running_localized", "split_running"):
                     continue
                 if name in ("pause", "pausex", "paused-zh-cn", "paused-zh-cn-suffix"):
                     if name not in ocr_labels.get(mode, ()):
@@ -196,6 +284,26 @@ def prepare(settings, known):
                     image[start : start + width * 3] = pixels[
                         row * width * 3 : (row + 1) * width * 3
                     ]
+            if known == "terminal_ocr" and mode in SPLIT_MODES:
+                rendered = Image.frombytes("RGB", (1280, 720), bytes(image))
+                draw = ImageDraw.Draw(rendered)
+                mission = (
+                    "MISSION OBJECTIVES" if mode == "split_tutorial" else "MISSION"
+                )
+                accomplished = (
+                    "ACCOMPLISHED TASKS"
+                    if mode == "split_tutorial"
+                    else "RESULTS"
+                    if mode == "split_results"
+                    else "ACCOMPLISHED"
+                )
+                if mode != "split_missing_mission":
+                    draw.text((102, 329), mission, font=font, fill="white")
+                if mode != "split_missing_accomplished":
+                    draw.text((94, 359), accomplished, font=font, fill="white")
+                if mode == "split_results":
+                    draw.text((541, 17), "95/95", font=font, fill="white")
+                image = rendered.tobytes()
             (root / f"{mode}-{speed}x.png").write_bytes(png(1280, 720, image))
     tasks["BattleOperAvailable"] = {"specialParams": [0]}
     tasks["BattleOperRole"] = {"templThreshold": 0.99}

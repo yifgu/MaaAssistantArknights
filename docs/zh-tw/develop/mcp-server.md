@@ -210,6 +210,8 @@ PRTS 可使用 `{"provider":"prts","command":"prts-mcp","region":"cn"}`；配接
 
 `terminal` 區分 `victory`、`defeat`、`unknown`、`still_in_battle`，附識別來源、原始比對信心值和 `terminal_evidence_path`。目前資源僅設定簡體中文與英文的明確成功／失敗標題，並非所有語言或畫面均經實機驗證。擊殺數達總數、黑畫面或離開戰鬥都不自動判勝；等待交易成功也不代表作戰勝利。看到非戰鬥畫面後，會話拒絕後續輸入，不在選單切換暫停。離場證據不參與一般 128 張輪換，需自行清理；使用者證詞不得代替截圖來源。
 
+分行標題備援僅在曾觀察到可操作戰鬥畫面、目前仍辨識到戰鬥介面且沒有運行按鈕時，接受上方完整詞 `MISSION` 與下方完整詞 `ACCOMPLISHED`。兩詞須來自同一影格、各自得分至少 0.9，字框高度相近、左側對齊且上下相鄰；不跨截圖累積片段。`terminal.split_victory` 保留字框、得分及採納或拒絕原因，採納時來源為 `BattleControlVictorySplit`，信心值取較低分。完整成功標題與分行成功標題不互相衝突，但同時確認失敗時仍維持 unknown 與輸入隔離。單獨 `MISSION` 或通用的 `MISSION RESULTS`／行动结束不是勝利證據。合成回歸不代表真實動畫標題或獨立結算頁已通過辨識驗收。
+
 完整靜態查詢先明確 `battle_attach(stage_name="act55side_ex01", mode="normal")`，再呼叫 `intel_query(kind="stage", identifier="act55side_ex01", complete_stage=true, session_id="…")`。它重用既有 provider，略過分頁快取，最多 100 次請求／120 秒；檢查區服、關卡、模式、跨頁來源及重複 ID。結構化契約要求 `game_id`、`server`、`mode`、`provenance`，`routes_page`／`spawns_page` 中的 `page`、`has_more`（可選 `total`），以及頂層 `routes`／`spawns` 陣列或分頁內 `items`。路線用 `route_id`；生成項用 `spawn_id`、`enemy_game_id`、`route_id`、`count`。未知 provider 結構不會猜測為已適配。
 
 `coordinate_system="public_row_col"` 時依綁定地圖高度執行 `x=col, y=height-1-row`，點上新增 `maa_location`，二維格子陣列反轉列序；原始回應保留在 `pages`。`maa_grid` 不轉換，其他座標系保持未知。缺欄位、缺頁或 provider partial 回傳 `partial` 與逐節 `completeness`，不以空集合代替缺失；身分／版本衝突或 provider 失敗直接報錯。`expires_at` 為 Unix 秒，過期明確標記；省略代表新鮮度未知，5 分鐘快取不保證遊戲資料最新。仍須以實際 provider 驗收，模擬服務通過不證明五類資料齊全，靜態生成數也不含所有動態召喚物。

@@ -5,6 +5,14 @@
         "fullMatch": true,
         "roi": [0, 0, 1280, 720]
     },
+    "BattleControlVictoryMission": {
+        "baseTask": "BattleControlVictory",
+        "text": ["MISSION"]
+    },
+    "BattleControlVictoryAccomplished": {
+        "baseTask": "BattleControlVictory",
+        "text": ["ACCOMPLISHED"]
+    },
     "BattleControlDefeat": {
         "algorithm": "OcrDetect",
         "text": ["演习失败", "任务失败", "MISSION FAILED"],

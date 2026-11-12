@@ -79,6 +79,7 @@ private:
         const std::string& task_name,
         const json::value& match) const;
     json::value terminal_info(const CapturedFrame& frame, const json::value& snapshot) const;
+    json::value split_victory_evidence(const cv::Mat& image) const;
     json::value match_evidence(const cv::Mat& image, const std::string& task) const;
     json::value speed_info(const cv::Mat& image) const;
     json::value map_info() const;

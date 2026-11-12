@@ -582,7 +582,8 @@ json::value asst::BattleControlTask::terminal_info(const CapturedFrame& frame, c
     if (frame.image.empty()) {
         return result;
     }
-    int matches = 0;
+    bool victory = false;
+    bool defeat = false;
     for (const auto& [task, state] :
          { std::pair { "BattleControlVictory", "victory" }, std::pair { "BattleControlDefeat", "defeat" } }) {
         const auto evidence = match_evidence(frame.image, task);
@@ -590,18 +591,84 @@ json::value asst::BattleControlTask::terminal_info(const CapturedFrame& frame, c
             result["candidates"].as_array().emplace_back(evidence);
             const auto score = evidence.get("score", 0.0);
             if (score >= 0.9) {
-                ++matches;
+                victory = victory || std::string_view(state) == "victory";
+                defeat = defeat || std::string_view(state) == "defeat";
                 result["terminal_state"] = state;
                 result["result_source"] = task;
                 result["terminal_confidence"] = score;
             }
         }
     }
-    if (matches > 1) {
+    // Split words need battle context; never assemble a title across observations or on a menu.
+    if (m_battle_observed && snapshot.at("in_battle").as_boolean() &&
+        !snapshot.at("running_button_visible").as_boolean()) {
+        auto split = split_victory_evidence(frame.image);
+        if (split.get("accepted", false)) {
+            result["candidates"].as_array().emplace_back(split);
+            if (!victory) {
+                victory = true;
+                result["terminal_state"] = "victory";
+                result["result_source"] = split.at("source");
+                result["terminal_confidence"] = split.at("score");
+            }
+        }
+        result["split_victory"] = std::move(split);
+    }
+    if (victory && defeat) {
         result["terminal_state"] = "unknown";
         result["terminal_confidence"] = nullptr;
         result["result_source"] = "conflicting_titles";
     }
+    return result;
+}
+
+json::value asst::BattleControlTask::split_victory_evidence(const cv::Mat& image) const
+{
+    const auto mission = match_evidence(image, "BattleControlVictoryMission");
+    const auto accomplished = match_evidence(image, "BattleControlVictoryAccomplished");
+    json::value result = json::object {
+        { "source", "BattleControlVictorySplit" },
+        { "fragments", json::array { mission, accomplished } },
+        { "required_score", 0.9 },
+        { "accepted", false },
+        { "rejection_reason", "missing_fragment" },
+    };
+    if (!mission.is_object() || !accomplished.is_object()) {
+        return result;
+    }
+    const auto score = std::min(mission.get("score", 0.0), accomplished.get("score", 0.0));
+    result["score"] = score;
+    if (score < 0.9) {
+        result["rejection_reason"] = "low_confidence";
+        return result;
+    }
+    const auto to_rect = [](const json::value& evidence) {
+        const auto& rect = evidence.at("rect");
+        return Rect(rect[0].as_integer(), rect[1].as_integer(), rect[2].as_integer(), rect[3].as_integer());
+    };
+    const auto upper = to_rect(mission);
+    const auto lower = to_rect(accomplished);
+    const auto min_height = std::min(upper.height, lower.height);
+    const auto max_height = std::max(upper.height, lower.height);
+    // Detection boxes can overlap slightly, but the second line must advance downwards and stay left-aligned.
+    const bool adjacent = min_height > 0 && upper.width > 0 && lower.width > 0 && max_height <= 2 * min_height &&
+                          std::abs(upper.x - lower.x) <= max_height && lower.y - upper.y >= min_height / 2 &&
+                          lower.y + lower.height > upper.y + upper.height &&
+                          lower.y - (upper.y + upper.height) <= max_height / 2;
+    if (!adjacent) {
+        result["rejection_reason"] = "unexpected_layout";
+        return result;
+    }
+    const auto left = std::min(upper.x, lower.x);
+    result["rect"] = json::array {
+        left,
+        upper.y,
+        std::max(upper.x + upper.width, lower.x + lower.width) - left,
+        lower.y + lower.height - upper.y,
+    };
+    result["text"] = "MISSION ACCOMPLISHED";
+    result["accepted"] = true;
+    result["rejection_reason"] = nullptr;
     return result;
 }
 

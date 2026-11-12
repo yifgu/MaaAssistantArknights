@@ -306,6 +306,165 @@ async def test_terminal_overlay_wins_over_battle_ui(battle):
     )
 
 
+@pytest.mark.parametrize("battle", ["terminal", "terminal_ocr"], indirect=True)
+async def test_split_victory_survives_black_frame_and_keeps_input_quarantined(battle):
+    service, server, root = battle
+    (root / "transition.json").write_text(
+        json.dumps({"remaining": 3, "target": "split_victory"})
+    )
+    request = {
+        "session_id": service.session_id,
+        "operation_id": "split-title",
+        "action": "wait",
+        "duration_ms": 3_000,
+        "timeout_ms": 20_000,
+        "adopt_manual_pause": True,
+    }
+    value = (
+        await server.call_tool("battle_step", {"request": request})
+    ).structuredContent
+    assert value["status"] == "succeeded"
+    assert value["safe_state"] == "terminal"
+    assert value["pause_verified"] is False
+    terminal = value["terminal"]
+    assert terminal["terminal_state"] == "victory"
+    assert terminal["result_source"] == "BattleControlVictorySplit"
+    split = terminal["split_victory"]
+    assert split["accepted"] is True
+    assert split["rejection_reason"] is None
+    assert all(fragment["score"] >= 0.9 for fragment in split["fragments"])
+    assert terminal["terminal_confidence"] == min(
+        fragment["score"] for fragment in split["fragments"]
+    )
+    assert (
+        first_pixel(
+            service.evidence_path(
+                {"image_path": value["terminal_evidence_path"]}
+            ).read_bytes()
+        )
+        == MARKERS["split_victory"]
+    )
+    before = events(root)
+    replay = await server.call_tool("battle_step", {"request": request})
+    assert replay.structuredContent == value
+    assert events(root) == before
+
+    for mode in ("unknown", "paused", "paused"):
+        (root / "mode").write_text(mode)
+        snapshot = (await service.read(service.session_id, "capture"))["snapshot"]
+        assert snapshot["session_terminal"] == terminal
+        assert snapshot["input_block_reason"] == "terminal_or_safety_quarantine"
+    denied = await wait_step(battle, "after-split-title")
+    assert denied.structuredContent["error"]["code"] == "battle_ended"
+    recorded = events(root)
+    assert not any(
+        e["action"] in ("pause", "resume", "click", "swipe")
+        for e in recorded
+        if e["mode"] == "split_victory"
+    )
+    assert not any(
+        e["action"] in ("pause", "resume", "click", "swipe")
+        for e in recorded[len(before) :]
+    )
+
+
+@pytest.mark.parametrize("battle", ["terminal"], indirect=True)
+@pytest.mark.parametrize(
+    ("mode", "reason"),
+    [
+        ("split_missing_mission", "missing_fragment"),
+        ("split_missing_accomplished", "missing_fragment"),
+        ("split_reversed", "unexpected_layout"),
+        ("split_distant", "unexpected_layout"),
+        ("split_unaligned", "unexpected_layout"),
+        ("split_low_score", "low_confidence"),
+    ],
+)
+async def test_split_victory_rejects_incomplete_weak_or_unrelated_fragments(
+    battle, mode, reason
+):
+    service, _, root = battle
+    await service.read(service.session_id, "observe")
+    (root / "mode").write_text(mode)
+    terminal = (await service.read(service.session_id, "capture"))["snapshot"][
+        "terminal"
+    ]
+    assert terminal["terminal_state"] == "still_in_battle"
+    assert terminal["split_victory"]["accepted"] is False
+    assert terminal["split_victory"]["rejection_reason"] == reason
+    if reason == "low_confidence":
+        assert 0.5 <= terminal["split_victory"]["score"] < 0.9
+    assert not any(
+        e["action"] in ("pause", "resume", "click", "swipe") for e in events(root)
+    )
+
+
+@pytest.mark.parametrize("battle", ["terminal"], indirect=True)
+async def test_split_victory_needs_battle_context_and_never_joins_frames(battle):
+    service, _, root = battle
+    (root / "mode").write_text("split_victory")
+    cold = (await service.read(service.session_id, "capture"))["snapshot"]
+    assert cold["terminal"]["terminal_state"] == "still_in_battle"
+    (root / "mode").write_text("paused")
+    await service.read(service.session_id, "observe")
+    for mode in (
+        "split_missing_accomplished",
+        "split_missing_mission",
+        "split_running",
+        "split_menu",
+    ):
+        (root / "mode").write_text(mode)
+        snapshot = (await service.read(service.session_id, "capture"))["snapshot"]
+        assert snapshot["terminal"]["terminal_state"] not in ("victory", "defeat")
+        assert snapshot["session_terminal"]["terminal_state"] == "unknown"
+    assert not any(
+        e["action"] in ("pause", "resume", "click", "swipe") for e in events(root)
+    )
+
+
+@pytest.mark.parametrize("battle", ["terminal"], indirect=True)
+@pytest.mark.parametrize("mode", ["split_conflict", "split_and_full"])
+async def test_split_victory_conflicts_by_verdict_not_by_number_of_matches(
+    battle, mode
+):
+    service, _, root = battle
+    await service.read(service.session_id, "observe")
+    (root / "mode").write_text(mode)
+    snapshot = (await service.read(service.session_id, "capture"))["snapshot"]
+    terminal = snapshot["terminal"]
+    assert terminal["split_victory"]["accepted"] is True
+    assert terminal["terminal_state"] == (
+        "unknown" if mode == "split_conflict" else "victory"
+    )
+    if mode == "split_conflict":
+        assert terminal["result_source"] == "conflicting_titles"
+        assert terminal["terminal_confidence"] is None
+        (root / "mode").write_text("split_victory")
+        later = (await service.read(service.session_id, "capture"))["snapshot"]
+        assert later["session_terminal"]["result_source"] == "conflicting_titles"
+    assert snapshot["session_input_blocked"] is True
+    assert not any(
+        e["action"] in ("pause", "resume", "click", "swipe") for e in events(root)
+    )
+
+
+@pytest.mark.parametrize("battle", ["terminal_ocr"], indirect=True)
+@pytest.mark.parametrize("mode", ["split_tutorial", "split_results"])
+async def test_split_victory_uses_exact_ocr_words_not_tutorial_or_result_text(
+    battle, mode
+):
+    service, _, root = battle
+    await service.read(service.session_id, "observe")
+    (root / "mode").write_text(mode)
+    snapshot = (await service.read(service.session_id, "capture"))["snapshot"]
+    assert snapshot["terminal"]["terminal_state"] == "still_in_battle"
+    assert snapshot["terminal"]["split_victory"]["accepted"] is False
+    assert snapshot["session_terminal"]["terminal_state"] == "unknown"
+    assert not any(
+        e["action"] in ("pause", "resume", "click", "swipe") for e in events(root)
+    )
+
+
 async def test_intro_is_not_manual_pause(battle):
     service, _, root = battle
     (root / "mode").write_text("intro")
