@@ -24,20 +24,22 @@ Windows x64에서는 `linux-x64`를 `windows-x64`로, macOS에서는 `macos-arm6
 
 ## GitHub Actions 산출물 사용
 
-자신의 저장소에서 **Actions → Release Pipeline → Run workflow**를 열고 MCP 브랜치를 선택한 뒤 `mcp_only`를 켜고 `mcp_configuration`을 선택합니다.
+기존 빌드 경로와 일치하는 `dev-v2` push(PR 병합 포함)는 전체 Release Pipeline 대신 **Battle MCP Bundle**을 자동 실행하며, 기본적으로 Windows/Linux x64 `RelWithDebInfo` 패키지를 생성합니다. 문서만 변경한 경우 MCP 빌드를 실행하지 않습니다. 다른 문서 및 검증 워크플로, PR 전체 빌드, `v*` 태그 릴리스와 수동 전체 빌드는 기존 실행 조건을 유지합니다.
+
+수동으로 빌드하려면 자신의 저장소에서 **Actions → Battle MCP Bundle → Run workflow**를 열고 MCP 브랜치와 `configuration`을 선택합니다.
 
 - `RelWithDebInfo`: 기본 전체 실행 패키지입니다. Python, uv, ADB, Visual Studio를 별도로 설치할 필요가 없습니다.
 - `Debug`: 개발 및 테스트용입니다. Linux는 바로 실행할 수 있지만 Windows는 재배포할 수 없는 Debug CRT를 로컬에서 준비해야 합니다.
 
 두 설정 모두 먼저 Debug Core를 빌드하고 전체 테스트를 실행한 다음 선택한 구성을 패키징합니다. GUI 빌드나 Release 게시는 하지 않습니다.
 
-`mcp_platform`의 기본값은 `all`입니다. `win-x64` 또는 `linux-x64`를 선택하면 필요한 플랫폼만 빌드하여 runner 중복 사용을 피할 수 있습니다.
+`platform`의 기본값은 `all`입니다. `win-x64` 또는 `linux-x64`를 선택하면 필요한 플랫폼만 빌드하여 runner 중복 사용을 피할 수 있습니다.
 
 ```bash
-gh workflow run ci.yml --ref <branch> -f mcp_only=true -f mcp_configuration=RelWithDebInfo
+gh workflow run mcp-build.yml --ref <branch> -f configuration=RelWithDebInfo -f platform=all
 ```
 
-관련 PR도 같은 `Battle MCP` 작업을 실행합니다. `.github/workflows/mcp-build.yml`(**Battle MCP Bundle**)을 일반 및 Nightly 파이프라인이 공유합니다. 기본 브랜치에 병합되기 전에는 기존 Release Pipeline에서 수동 실행할 수 있습니다. 수동 MCP 빌드는 별도 동시 실행 그룹을 사용하므로 같은 브랜치의 PR 빌드에 의해 취소되지 않습니다.
+관련 PR은 계속 Release Pipeline을 통해 같은 `Battle MCP` 작업을 실행합니다. `.github/workflows/mcp-build.yml`은 일반 및 Nightly 파이프라인에서 계속 공유합니다. 기존 **Release Pipeline → Run workflow**도 사용할 수 있습니다. `mcp_only`를 켜고 `mcp_configuration`과 `mcp_platform`을 선택하거나, 전체 빌드가 필요하면 `mcp_only`를 끄세요. 수동 MCP 빌드는 같은 브랜치의 PR 빌드에 의해 취소되지 않습니다.
 
 성공한 실행의 **Artifacts**에서 `MAAMcp-win-x64-RelWithDebInfo` 또는 `MAAMcp-linux-x64-RelWithDebInfo`(Debug 선택 시 `-Debug`)를 다운로드하고 내부 `.zip` 또는 `.tar.gz`를 풉니다. `core/`(Core, 네이티브 의존성, 리소스, ADB ControlUnit), `python/`(독립 Python 및 잠긴 전체 실행/테스트 의존성), `adb/`, 시작 스크립트, 소스와 테스트, wheel/sdist, 의존성 라이선스, 소스 커밋과 실행 URL이 있는 `BUILD-INFO.json` 및 SHA-256을 제공합니다. Windows 실행 패키지에는 재배포 가능한 VC++ CRT도 포함됩니다. 저장소 복제, 재빌드, 온라인 Python 패키지 설치가 필요 없습니다. Linux는 호환 x64 OS와 시스템 glibc가 필요하며 컨테이너나 운영체제 자체는 포함하지 않습니다.
 

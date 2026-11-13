@@ -4,21 +4,6 @@ on:
   push:
     tags:
       - "v*"
-    branches:
-      - "dev-v2"
-    paths:
-      - ".github/workflows/ci.yml"
-      - ".github/workflows/mcp-build.yml"
-      - "3rdparty/include/**"
-      - "cmake/**"
-      - "CMakeLists.txt"
-      - "CMakePresets.json"
-      - "include/**"
-      - "src/**"
-      - "tools/**"
-      - "resource/**/inference.onnx"
-      - "resource_android/**"
-      - "!**/*.md"
   pull_request:
     branches:
       - "dev-v2"

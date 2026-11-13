@@ -24,20 +24,22 @@ Windows x64 では `linux-x64` を `windows-x64` に、macOS では `macos-arm64
 
 ## GitHub Actions の成果物を使う
 
-自分のリポジトリで **Actions → Release Pipeline → Run workflow** を開き、MCP ブランチを選択し、`mcp_only` を有効にして `mcp_configuration` を選びます。
+既存のビルド対象パスに一致する `dev-v2` への push（PR のマージを含む）では、全体の Release Pipeline の代わりに **Battle MCP Bundle** を自動実行し、既定で Windows/Linux x64 の `RelWithDebInfo` パッケージを生成します。ドキュメントのみの変更では MCP ビルドを実行しません。他のドキュメント・検証ワークフロー、PR の全体ビルド、`v*` タグのリリース、手動の全体ビルドは既存の起動条件を維持します。
+
+手動でビルドする場合は、自分のリポジトリで **Actions → Battle MCP Bundle → Run workflow** を開き、MCP ブランチと `configuration` を選びます。
 
 - `RelWithDebInfo`：既定の完全な実行パッケージ。Python、uv、ADB、Visual Studio の別途インストールは不要です。
 - `Debug`：開発・テスト用。Linux はそのまま実行でき、Windows は再配布できない Debug CRT をローカルで用意する必要があります。
 
 どちらも先に Debug Core をビルドして全テストを実行し、その後に選択した構成をパッケージ化します。GUI のビルドや Release 公開は行いません。
 
-`mcp_platform` の既定値は `all` です。`win-x64` または `linux-x64` を選ぶと必要なプラットフォームだけをビルドし、runner の重複使用を避けられます。
+`platform` の既定値は `all` です。`win-x64` または `linux-x64` を選ぶと必要なプラットフォームだけをビルドし、runner の重複使用を避けられます。
 
 ```bash
-gh workflow run ci.yml --ref <branch> -f mcp_only=true -f mcp_configuration=RelWithDebInfo
+gh workflow run mcp-build.yml --ref <branch> -f configuration=RelWithDebInfo -f platform=all
 ```
 
-関連 PR でも同じ `Battle MCP` ジョブが実行されます。`.github/workflows/mcp-build.yml`（**Battle MCP Bundle**）は通常と Nightly で共用します。既定ブランチへの反映前は既存の Release Pipeline から手動実行できます。手動 MCP ビルドは独立した並行実行グループを使うため、同じブランチの PR ビルドにキャンセルされません。
+関連 PR では引き続き Release Pipeline から同じ `Battle MCP` ジョブを実行します。`.github/workflows/mcp-build.yml` は通常と Nightly で引き続き共用します。既存の **Release Pipeline → Run workflow** も利用できます。`mcp_only` を有効にして `mcp_configuration` と `mcp_platform` を選び、全体ビルドが必要な場合は `mcp_only` を無効にしてください。手動 MCP ビルドは同じブランチの PR ビルドにキャンセルされません。
 
 成功した実行の **Artifacts** から `MAAMcp-win-x64-RelWithDebInfo` または `MAAMcp-linux-x64-RelWithDebInfo`（Debug 選択時は `-Debug`）を取得し、同名の `.zip` または `.tar.gz` を展開します。`core/`（Core、ネイティブ依存、リソース、ADB ControlUnit）、`python/`（独立した Python とロック済みの全実行・テスト依存）、`adb/`、起動スクリプト、ソースとテスト、wheel/sdist、依存ライセンス、コミットと実行 URL を記録した `BUILD-INFO.json`、SHA-256 が含まれます。Windows 実行パッケージには再配布可能な VC++ CRT も同梱されます。チェックアウト、再ビルド、オンラインでの Python パッケージインストールは不要です。Linux は互換性のある x64 OS とシステム glibc が必要であり、コンテナーや OS 自体は含みません。
 

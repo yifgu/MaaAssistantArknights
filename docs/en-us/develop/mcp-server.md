@@ -24,20 +24,22 @@ Replace `linux-x64` with `windows-x64`, `macos-arm64`, or `macos-x64` as appropr
 
 ## Use GitHub Actions artifacts
 
-In your repository, open **Actions → Release Pipeline → Run workflow**, select the MCP branch, enable `mcp_only`, and choose `mcp_configuration`:
+Pushes to `dev-v2` that match the existing build paths, including merged PRs, automatically run **Battle MCP Bundle**, producing Windows/Linux x64 `RelWithDebInfo` bundles by default instead of starting the full Release Pipeline. Documentation-only changes do not trigger MCP builds. Other documentation and validation workflows, full PR builds, `v*` tag releases, and manual full builds retain their existing triggers.
+
+For a manual build, open **Actions → Battle MCP Bundle → Run workflow** in your repository, select the MCP branch, and choose `configuration`:
 
 - `RelWithDebInfo`: the default complete runtime bundle; no local Python, uv, ADB, or Visual Studio installation is required.
 - `Debug`: a development/test bundle. Linux runs directly; Windows requires a locally installed, non-redistributable Debug CRT.
 
 Both configurations first build Debug Core and run the full test suite, then package the selected configuration. Neither builds the GUI nor publishes a release. Equivalent command:
 
-`mcp_platform` defaults to `all`; select `win-x64` or `linux-x64` to build only the platform you need and avoid duplicate runner usage.
+`platform` defaults to `all`; select `win-x64` or `linux-x64` to build only the platform you need and avoid duplicate runner usage.
 
 ```bash
-gh workflow run ci.yml --ref <branch> -f mcp_only=true -f mcp_configuration=RelWithDebInfo
+gh workflow run mcp-build.yml --ref <branch> -f configuration=RelWithDebInfo -f platform=all
 ```
 
-Relevant PRs run the same `Battle MCP` job. `.github/workflows/mcp-build.yml` (**Battle MCP Bundle**) is shared by the regular and Nightly pipelines. Use the existing Release Pipeline to dispatch it before the new workflow reaches the default branch. Manual MCP builds have a separate concurrency group so a PR build cannot cancel them.
+Relevant PRs still run the same `Battle MCP` job through Release Pipeline. `.github/workflows/mcp-build.yml` remains shared by the regular and Nightly pipelines. The existing **Release Pipeline → Run workflow** entry point also remains available: enable `mcp_only` and select `mcp_configuration` and `mcp_platform`, or leave `mcp_only` disabled for a full build. PR builds cannot cancel manual MCP builds on the same branch.
 
 Download `MAAMcp-win-x64-RelWithDebInfo` or `MAAMcp-linux-x64-RelWithDebInfo` from the successful run's **Artifacts** (or the corresponding `-Debug` artifact), then extract the enclosed `.zip` or `.tar.gz`. Included: `core/` (Core, native dependencies, resources, ADB ControlUnit), `python/` (standalone Python and all locked runtime/test dependencies), `adb/`, launchers, source/tests, wheel/sdist, dependency licenses, and `BUILD-INFO.json` with the source commit and run URL. SHA-256 checksums accompany the archives. The Windows runtime bundle includes the redistributable VC++ CRT. No checkout, compilation, or online Python package installation is needed. Linux still requires a compatible x64 OS and system glibc; this is not a container or an operating system.
 

@@ -1,6 +1,22 @@
 name: Battle MCP Bundle
 
 on:
+  push:
+    branches:
+      - "dev-v2"
+    paths:
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/mcp-build.yml"
+      - "3rdparty/include/**"
+      - "cmake/**"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "include/**"
+      - "src/**"
+      - "tools/**"
+      - "resource/**/inference.onnx"
+      - "resource_android/**"
+      - "!**/*.md"
   workflow_call:
     inputs:
       ref:
@@ -37,7 +53,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: ${{ fromJSON(inputs.platform == 'all' && '["win-x64","linux-x64"]' || format('["{0}"]', inputs.platform)) }}
+        platform: ${{ fromJSON((inputs.platform || 'all') == 'all' && '["win-x64","linux-x64"]' || format('["{0}"]', inputs.platform)) }}
     defaults:
       run:
         shell: bash

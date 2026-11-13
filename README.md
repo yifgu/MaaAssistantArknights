@@ -67,7 +67,9 @@ MAA 的意思是 MAA Assistant Arknights
 
 ### 安装与接入 Battle MCP
 
-在 [本仓库 Actions](https://github.com/yifgu/MaaAssistantArknights/actions) 的 **Release Pipeline → Run workflow** 中选择包含 MCP 的分支，启用 `mcp_only`，按需选择 `win-x64` 或 `linux-x64`。默认 `RelWithDebInfo` 完整包包含 Python、ADB、Core、资源和依赖，无需本地安装 uv 或重新编译；从成功运行的 Artifacts 下载 `MAAMcp-<platform>-RelWithDebInfo` 并解压内部压缩包。macOS 当前需源码构建，没有对应的完整 MCP 运行包。
+`dev-v2` 上匹配现有构建路径的推送（包括 PR 合并）自动运行 **Battle MCP Bundle**，默认生成 Windows/Linux x64 的 `RelWithDebInfo` 包，不再触发全量 Release Pipeline。纯文档改动不触发 MCP 构建；其它文档与验证工作流、PR 全量构建、`v*` 标签发布和手动全量构建保持原有触发规则。
+
+在 [本仓库 Actions](https://github.com/yifgu/MaaAssistantArknights/actions) 的 **Battle MCP Bundle → Run workflow** 中也可选择包含 MCP 的分支，按需设置 `platform` 为 `win-x64` 或 `linux-x64`。默认 `RelWithDebInfo` 完整包包含 Python、ADB、Core、资源和依赖，无需本地安装 uv 或重新编译；从成功运行的 Artifacts 下载 `MAAMcp-<platform>-RelWithDebInfo` 并解压内部压缩包。macOS 当前需源码构建，没有对应的完整 MCP 运行包。
 
 Windows 使用 `run-mcp.cmd --check`，Linux 使用 `./run-mcp.sh --check` 检查运行环境；检查不连接设备。随后用支持 MCP 的客户端启动包内 `run_mcp.py`，或通过源码安装的 `maa-battle-mcp` 入口启动。服务使用 **stdio，不提供网页或 HTTP 服务**；设备地址、资源目录和可写状态目录由受信任的启动配置指定。
 
