@@ -31,7 +31,7 @@ For a manual build, open **Actions → Battle MCP Bundle → Run workflow** in y
 - `RelWithDebInfo`: the default complete runtime bundle; no local Python, uv, ADB, or Visual Studio installation is required.
 - `Debug`: a development/test bundle. Linux runs directly; Windows requires a locally installed, non-redistributable Debug CRT.
 
-Both configurations first build Debug Core and run the full test suite, then package the selected configuration. Neither builds the GUI nor publishes a release. Equivalent command:
+Both configurations run the full Debug Core test suite before uploading a complete bundle. The Python environment and pure Python tests, Debug Core, and the standalone build's `RelWithDebInfo` Core run in separate parallel jobs; Debug builds compile Core only once. This workflow neither builds the GUI nor publishes a release. Equivalent command:
 
 `platform` defaults to `all`; select `win-x64` or `linux-x64` to build only the platform you need and avoid duplicate runner usage.
 
@@ -40,6 +40,8 @@ gh workflow run mcp-build.yml --ref <branch> -f configuration=RelWithDebInfo -f 
 ```
 
 Relevant PRs still run the same `Battle MCP` job through Release Pipeline. `.github/workflows/mcp-build.yml` remains shared by the regular and Nightly pipelines. The existing **Release Pipeline → Run workflow** entry point also remains available: enable `mcp_only` and select `mcp_configuration` and `mcp_platform`, or leave `mcp_only` disabled for a full build. PR builds cannot cancel manual MCP builds on the same branch.
+
+In a full Release Pipeline, `RelWithDebInfo` MCP jobs reuse the matching platform's x64 native runtime from the same run without waiting for the GUI, CLI, or other platforms. Standalone builds, `mcp_only`, and Nightly build their own Core. Reuse checks the source commit, platform, configuration, build options, dependencies, and Core version; `BUILD-INFO.json` records both the source commit and actual Core version. MCP's ADB ControlUnit remains pinned to MaaFramework `v5.13.0`, not the Linux release package's latest version. Test output includes durations and JUnit reports, with diagnostic artifacts retained on failure. `MCP-intermediate-*` and `MAARuntime-*` are short-lived internal artifacts, not runnable MCP bundles.
 
 Download `MAAMcp-win-x64-RelWithDebInfo` or `MAAMcp-linux-x64-RelWithDebInfo` from the successful run's **Artifacts** (or the corresponding `-Debug` artifact), then extract the enclosed `.zip` or `.tar.gz`. Included: `core/` (Core, native dependencies, resources, ADB ControlUnit), `python/` (standalone Python and all locked runtime/test dependencies), `adb/`, launchers, source/tests, wheel/sdist, dependency licenses, and `BUILD-INFO.json` with the source commit and run URL. SHA-256 checksums accompany the archives. The Windows runtime bundle includes the redistributable VC++ CRT. No checkout, compilation, or online Python package installation is needed. Linux still requires a compatible x64 OS and system glibc; this is not a container or an operating system.
 
