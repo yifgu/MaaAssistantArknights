@@ -1,0 +1,44 @@
+{
+    "BattlePreparationNameFlags": {
+        "baseTask": "BattleFormationOCRNameFlag",
+        "template": "BattleFormationOCRNameFlag.png",
+        "roi": [88, 264, 1150, 354]
+    },
+    "BattlePreparationLevel": {
+        "baseTask": "NumberOcrReplace",
+        "rectMove": [14, -2, 45, 24]
+    },
+    "BattlePreparationElite": {
+        "baseTask": "BattleQuickFormation-Elite",
+        "template": ["BattleQuickFormation-Elite1.png", "BattleQuickFormation-Elite2.png"],
+        "templThreshold": 0.9
+    },
+    "BattlePreparationDetail": {
+        "baseTask": "BattleQuickFormationConfirm",
+        "template": "BattleQuickFormationConfirm.png",
+        "action": "DoNothing",
+        "next": []
+    },
+    "BattlePreparationDetailName": {
+        "baseTask": "CharsNameOcrReplace",
+        "text": [],
+        "fullMatch": true,
+        "roi": [0, 0, 334, 320]
+    },
+    "BattlePreparationSkillAnchors": {
+        "template": "BattleQuickFormationSkillLevel-Base.png",
+        "templThreshold": 0.9
+    },
+    "BattlePreparationSkillSelected": {
+        "baseTask": "SupportList-DetailPanel-SkillSelected",
+        "template": "SupportList-DetailPanel-Selected.png",
+        "roi": [0, 365, 360, 355],
+        "templThreshold": 0.9
+    },
+    "BattlePreparationReturn": {
+        "baseTask": "Return",
+        "template": "Return.png",
+        "action": "DoNothing",
+        "next": []
+    }
+}

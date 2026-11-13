@@ -17,6 +17,8 @@ public:
         std::string name;
         cv::Mat avatar;
         Rect rect;
+        Rect flag_rect;
+        Rect avatar_rect;
     };
 
     using ResultsVec = std::vector<Result>;
@@ -27,6 +29,7 @@ public:
     virtual ~BattleFormationAnalyzer() override = default;
 
     ResultsVecOpt analyze() const;
+    ResultsVecOpt analyze_slots() const;
 
 protected:
     ResultsVec proc_ocr_result(const TemplDetOCRer::ResultsVec& ocr_result) const;

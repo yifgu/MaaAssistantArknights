@@ -179,3 +179,58 @@ def test_loadout_binding_sources_and_ambiguous_identity(settings, tmp_path):
     settings.client_type = "YoStarEN"
     with pytest.raises(DecisionError, match="binding"):
         context.validate_binding("act55side_ex01", "normal")
+
+
+def test_native_preparation_fields_preserve_supplied_values_and_conflicts(
+    settings, tmp_path
+):
+    path = tmp_path / "loadout.json"
+    path.write_text(
+        json.dumps(
+            {
+                "region": "cn",
+                "stage_id": "stage",
+                "mode": "normal",
+                "operators": [
+                    {
+                        "operator_game_id": "char_a",
+                        "actual_elite": 1,
+                        "equipped_skill_id": "supplied",
+                    }
+                ],
+            }
+        )
+    )
+    context = DecisionContext(settings, path)
+    observed = {
+        key: {
+            "value": value,
+            "source": "preparation_vision",
+            "verification": "observed",
+            "evidence": {"observation_id": "2", "image_path": "battle-control/s/2.png"},
+        }
+        for key, value in (
+            ("actual_elite", 2),
+            ("actual_level", 50),
+            ("selected_skill", 3),
+            ("equipped_skill_id", "native"),
+        )
+    }
+    context.preparation = {
+        "preparation_id": "p",
+        "snapshot": {"operators": [{"game_ids": ["char_a"], "fields": observed}]},
+    }
+    snapshot = {
+        "deployment": [{"game_ids": ["char_a"]}, {"game_ids": ["char_a", "char_b"]}]
+    }
+    context.enrich_snapshot(snapshot)
+    known, ambiguous = [u["decision_context"] for u in snapshot["deployment"]]
+    assert known["loadout"]["actual_elite"]["value"] == 1
+    assert known["loadout"]["equipped_skill_id"]["value"] == "supplied"
+    prep = known["preparation"]
+    assert prep["observed_fields"] == observed
+    assert prep["configuration_verified"] is True
+    assert prep["conflicts"]["actual_elite"]["preparation_observed"] == 2
+    assert prep["conflicts"]["equipped_skill_id"]["user_supplied"] == "supplied"
+    assert ambiguous["preparation"]["configuration_verified"] is False
+    assert "observed_fields" not in ambiguous["preparation"]

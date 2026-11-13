@@ -197,6 +197,7 @@ class NativeCore:
                 **provenance(settings),
             }
         if operation == "preparation":
+            started = time.monotonic()
             if self.task_id is None:
                 self.preparation_session = payload["session_id"]
                 self.task_id = self.lib.AsstAppendTask(
@@ -212,11 +213,27 @@ class NativeCore:
                 )
                 self._require(self.task_id, "BattleControl preparation initialization")
                 self._require(self.lib.AsstStart(self.handle), "AsstStart")
-                self._wait("BattleControlReady", 30)
+                self._wait("BattleControlReady", min(30, payload["timeout_ms"] / 1000))
             if self.preparation_session != payload["session_id"]:
                 raise NativeError(
                     "Preparation is only available before battle attachment"
                 )
+            if payload["action"] == "inspect_preparation":
+                remaining = payload["timeout_ms"] - int(
+                    (time.monotonic() - started) * 1000
+                )
+                if remaining <= 0:
+                    return {
+                        "status": "failed",
+                        "preparation_valid": False,
+                        "formation_restored": False,
+                        "input_sent": False,
+                        "error": {
+                            "code": "deadline_exceeded",
+                            "message": "Preparation initialization exhausted the deadline; no navigation sent",
+                        },
+                    }
+                payload = {**payload, "timeout_ms": remaining}
             return self.dispatch("command", payload, settings, cancelled)
         if operation == "attach":
             if (
@@ -274,7 +291,7 @@ class NativeCore:
                 "BattleControl command submission",
             )
             callback_timeout = payload["timeout_ms"] / 1000
-            if payload["action"] == "step":
+            if payload["action"] in ("step", "inspect_preparation"):
                 callback_timeout += 10
             return self._wait(
                 "BattleControlResult",
@@ -337,11 +354,14 @@ def _worker() -> None:
                         payload.get("session_id") == active_payload.get("session_id")
                         and payload.get("command_id")
                         == active_payload.get("command_id")
-                        and active_payload.get("action") == "step"
+                        and active_payload.get("action")
+                        in ("step", "inspect_preparation")
                     ):
                         cancellation.set()
                     else:
-                        logger.warning("Ignoring cancellation for an inactive step")
+                        logger.warning(
+                            "Ignoring cancellation for an inactive bounded operation"
+                        )
                     continue
                 if active is not None:
                     # The normal request channel stays serial; cancel is admitted above.
@@ -445,6 +465,8 @@ class NativeBackend:
             suffix = (
                 "; battle outcome unknown"
                 if operation == "command" and self.ready
+                else "; preparation navigation outcome unknown"
+                if operation == "preparation" and self.ready
                 else "; no battle command submitted"
             )
             raise NativeError(
@@ -477,7 +499,7 @@ class NativeBackend:
                         payload.get("command_id"),
                     )
                     if (
-                        operation == "command"
+                        operation in ("command", "preparation")
                         and isinstance(session_id, str)
                         and isinstance(command_id, str)
                     ):

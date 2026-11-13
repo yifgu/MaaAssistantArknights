@@ -125,7 +125,7 @@ class DecisionContext:
                         if resolved
                         else []
                     )
-                    unit["decision_context"]["preparation"] = {
+                    preparation = {
                         "preparation_id": self.preparation["preparation_id"],
                         "image_path": self.preparation.get("image_path"),
                         "identity_match": len(matches) == 1 if resolved else None,
@@ -136,6 +136,40 @@ class DecisionContext:
                         else "unknown",
                         "configuration_verified": False,
                     }
+                    unit["decision_context"]["preparation"] = preparation
+                    if (
+                        len(candidates) == 1
+                        and len(matches) == 1
+                        and matches[0]["game_ids"] == [resolved]
+                    ):
+                        observed = matches[0].get("fields", {})
+                        preparation["observed_fields"] = observed
+                        preparation["configuration_verified"] = all(
+                            observed.get(field, {}).get("value") is not None
+                            for field in (
+                                "actual_elite",
+                                "actual_level",
+                                "selected_skill",
+                            )
+                        )
+                        preparation["configuration_scope"] = (
+                            "preparation_observation_caller_reconfirmed_not_live_measurement"
+                        )
+                        preparation["conflicts"] = {
+                            field: {
+                                "user_supplied": fields[field]["value"],
+                                "preparation_observed": observed[field]["value"],
+                                "evidence": observed[field].get("evidence"),
+                            }
+                            for field in (
+                                "actual_elite",
+                                "actual_level",
+                                "equipped_skill_id",
+                            )
+                            if fields[field]["value"] is not None
+                            and observed.get(field, {}).get("value") is not None
+                            and fields[field]["value"] != observed[field]["value"]
+                        }
 
     def evaluate(self, map_info: dict, placements: list[Placement]) -> dict:
         path = self.settings.resource_dir / "resource/battle_data.json"

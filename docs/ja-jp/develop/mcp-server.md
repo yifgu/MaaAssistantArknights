@@ -172,7 +172,7 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 
 `battle_identify` は `identified_count`、`unresolved_count`、`ambiguous_count` とカードごとの `identity_reason` を返します。空の名前を持つキャッシュ項目が詳細 OCR を抑制することはなくなりました。その他の操作が `outcome_unknown` を返すと MCP の `isError=true` になります。`helper_returned=true` や `action_returned=true` でもゲーム内の成功は保証されません。再撮影して確認し、無条件に再試行しないでください。配置位置の情報源は `action_history_unverified`、敵の状態は null です。モデルによる状態の直接上書きには対応しません。単独の一時停止要求は停止確認と同じではなく、再開は本サーバーが要求または明示的に引き継いだ停止に限定されます。
 
-全コマンドの `timeout_ms` 上限は 30000 です。通常の期限切れ／キャンセルでは worker を終了してセッションを無効化し、不明な結果を保存します。step は停止後処理を待ちますが、端末故障時の停止は保証しません。`battle_close` は通常コマンドを中断、または step の後処理を待ち、それ自体では停止・終了しません。`battle_get_operation` は永続結果を読み、保存失敗時は明示的に報告して以後のコマンドを拒否します。`--user-dir` にログと `operations.sqlite3` を保存し、通常画像は直近 128 枚、重要証拠は別途保持します。手動整理が必要です。
+通常コマンドの `timeout_ms` 上限は 30000 で、後述の戦闘前一括確認は別の上限を使います。通常の期限切れ／キャンセルでは worker を終了してセッションを無効化し、不明な結果を保存します。step は停止後処理を待ちますが、端末故障時の停止は保証しません。`battle_close` は通常コマンドを中断、または step／戦闘前確認の後処理を待ち、それ自体では停止・終了しません。`battle_get_operation` は永続結果を読み、保存失敗時は明示的に報告して以後のコマンドを拒否します。`--user-dir` にログと `operations.sqlite3` を保存し、通常画像は直近 128 枚、重要証拠は別途保持します。手動整理が必要です。
 
 ## 任意の情報サーバー
 
@@ -247,6 +247,25 @@ PRTS には `{"provider":"prts","command":"prts-mcp","region":"cn"}` を使用�
 `skill_ready` は true または null で、分類器の否定を確認済みクールダウンと扱いません。`skill_evidence` は同一フレームの ID、時刻、ROI、基点、分類スコアと確率を残します。発動段階／弾薬／クールダウンは不明のままで構いません。スコアは校正済み正解率ではありません。`asst.log` の `Battle frame` / `Battle command result`、`battle-control/<session>/` の PNG、`operations.sqlite3` を保存してください。合成回帰は実 OCR、ROI、ボタンの対応確認とは別で、実機再確認が必要ですが、ローカル画像をクラウド開発の必須入力にはしません。
 
 接続後、attach 前の `battle_observe_preparation(stage_name, mode)` は手動で開いた編成画面を入力なしで読みます。名前、候補 ID、名前の矩形と証拠を返し、選択スキル、育成、サポートの識別は不明で、詳細画面を開きません。最新の結果を `battle_attach(..., preparation_id=..., confirm_preparation_unchanged=true)` で紐付けます。これは呼び出し側の再確認であり、連続観測ではありません。編成／スキル／ステージ／アカウント変更後は `battle_invalidate_preparation` と再取得が必要です。再取得、紐付け消費、切断後は旧結果を使えず、現場の識別不一致は `decision_context.preparation` に記録します。
+
+ネイティブの一括確認には、別の**変更型**ツール `battle_inspect_preparation` を 1 回呼び出します。
+
+```json
+{
+  "request": {
+    "operation_id": "preparation-001",
+    "stage_name": "main_01-07",
+    "mode": "normal",
+    "timeout_ms": 120000
+  }
+}
+```
+
+Core はレベル表示から配置済み枠を検出し、名前を読めない項目も残し、レベル OCR と昇進 1／2 の肯定的なテンプレートを読み取ります。その後、一意に識別した通常メンバーの顔を順に開き、詳細の名前を確認してスキルタブだけを開き、回数制限付きで一覧をスクロールします。完全な順序付き一覧内の選択マークが一意な場合だけ `selected_skill=1|2|3` を返します。`equipped_skill_id` にはさらに一意の識別と `battle_data.json` の順序付き `skillIds` が必要で、静的 ID だけで装備済みとは判定しません。選人カード、スキル選択肢、編成確定、開始ボタンは押しません。サポート詳細は未対応で、昇進テンプレート未検出は null のまま、**昇進 0 と推定しません**。レベル失敗も 1 に置き換えません。空枠はメンバーではなく、レベル表示の不検出は編成全体の完全性を証明しません。
+
+`snapshot.scan_status=complete|partial`、各メンバーの `fields`（値、出典、確認状態、理由、ROI、フレーム証拠）、`evidence_frames`、`formation_restored`、`roster_unchanged`、`preparation_valid` を確認してください。complete の対象は検出済みメンバーだけで、partial は完全な構成を意味しません。PNG パスと取得時刻は元フレームに対応し、選択スキルにはフレーム間のスクロール順序も付属します。既定期限は 120000 ms、**最大 180000 ms** で、通常命令の 30000 ms とは異なります。キャンセル／切断は Core に通知して有限の後処理を待ちます。名前の一致する確認済み詳細画面だけ、元の期限内に 1 回戻れます。不明画面は盲目的に閉じません。ワーカー失敗時の復帰状態は不明です。同じ操作 ID は同じ引数だけに使用し、再実行要求は元の証拠を返すだけで移動や無効化済み結果の再有効化は行いません。attach 前の永続結果は `battle_status.preparation_session_id` で `battle_get_operation` から取得できます。
+
+有効な最新結果だけを既存の明示的な再確認付き attach に使用できます。新しい観測は旧紐付けを無効化し、画面／編成の変化、証拠保存失敗、中断した走査は有効な紐付けを作りません。`decision_context.preparation.observed_fields` はネイティブ観測を入力された構成と分離して保持し、不一致を記録しますが双方を上書きしません。これは戦闘前の測定であり、アカウント／ステージ／構成の連続確認や戦闘中の測定ではありません。既存リソースを使う認識器には合成 Debug Core 回帰がありますが、**実機の動作確認ではありません**。実際の画面配置と選択マークの互換性はローカルで確認が必要です。
 
 通常のドラッグ配置が確認済みの召喚カードだけ、起動時に `--allow-summon GAME_ID` を繰り返し指定して許可します。`battle_step(action="deploy")` には通常引数に加えて観測した `card_id` が必要です。一意、利用可能、位置不変、取得後 30 秒以内を要求します。毎回独立した `instance:<operation_id>` を作り、同名を上書きしません。位置と存続は未確認の操作履歴で、不明な消滅から占有を自動解放しません。個体スキル／撤退、曖昧なカード、未許可装置は拒否し、helper の返却値を配置成功とは扱いません。
 

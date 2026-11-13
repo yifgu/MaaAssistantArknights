@@ -1,13 +1,66 @@
 #include "BattleFormationAnalyzer.h"
 
+#include <algorithm>
+#include <tuple>
+
 #include "Config/Miscellaneous/BattleDataConfig.h"
 #include "Config/TaskData.h"
 #include "MaaUtils/NoWarningCV.hpp"
 #include "Utils/Logger.hpp"
 #include "Vision/Miscellaneous/PipelineAnalyzer.h"
+#include "Vision/MultiMatcher.h"
+#include "Vision/RegionOCRer.h"
 #include "Vision/TemplDetOCRer.h"
 
 using namespace asst;
+
+BattleFormationAnalyzer::ResultsVecOpt BattleFormationAnalyzer::analyze_slots() const
+{
+    PipelineAnalyzer page(m_image);
+    page.set_tasks(Task.get("BattleStartAll")->next);
+    if (!page.analyze()) {
+        return std::nullopt;
+    }
+    MultiMatcher flags(m_image);
+    flags.set_task_info("BattlePreparationNameFlags");
+    const auto matches = flags.analyze();
+    if (!matches) {
+        return ResultsVec {};
+    }
+    if (matches->size() > 13) {
+        LogWarn << __FUNCTION__ << "Too many formation level flags" << matches->size();
+        return std::nullopt;
+    }
+    ResultsVec results;
+    for (const auto& flag : *matches) {
+        Result slot;
+        slot.flag_rect = flag.rect;
+        for (const auto& task : { "BattleFormationOperNames", "BattleFormationOperNamesOldVersion" }) {
+            RegionOCRer name(m_image);
+            name.set_task_info(task);
+            name.set_roi(flag.rect.move(Task.get(task)->roi));
+            const auto text = name.analyze();
+            if (text && !BattleData.is_name_invalid(battle::Role::Unknown, text->text)) {
+                slot.name = text->text;
+                slot.rect = text->rect;
+                break;
+            }
+        }
+        if (!slot.name.empty()) {
+            slot.avatar_rect = Rect { slot.rect.x + slot.rect.width, slot.rect.y, 0, 0 }.move(
+                Task.get("BattleFormationOperAvatarMove")->rect_move);
+            const auto& r = slot.avatar_rect;
+            if (r.x >= 0 && r.y >= 0 && r.x + r.width <= m_image.cols && r.y + r.height <= m_image.rows) {
+                slot.avatar = m_image(make_rect<cv::Rect>(r));
+            }
+        }
+        results.emplace_back(std::move(slot));
+    }
+    std::ranges::sort(results, [](const Result& a, const Result& b) {
+        return std::tie(a.flag_rect.y, a.flag_rect.x) < std::tie(b.flag_rect.y, b.flag_rect.x);
+    });
+    return results;
+}
 
 BattleFormationAnalyzer::ResultsVecOpt BattleFormationAnalyzer::analyze() const
 {

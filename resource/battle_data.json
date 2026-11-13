@@ -10,6 +10,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 5,
+            "skillIds": ["skcom_magic_rage[3]", "skchr_amiya_2", "skchr_amiya_3"],
             "sortIndex": 17,
             "subProfessionId": "corecaster"
         },
@@ -23,6 +24,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-3", "3-8", "3-10"],
             "rarity": 6,
+            "skillIds": ["skchr_kalts_1", "skchr_kalts_2", "skchr_kalts_3"],
             "sortIndex": 571,
             "subProfessionId": "physician"
         },
@@ -36,6 +38,7 @@
             "profession": "CASTER",
             "rangeId": ["2-3", "2-3", "2-3"],
             "rarity": 2,
+            "skillIds": [],
             "sortIndex": 255,
             "subProfessionId": "splashcaster"
         },
@@ -49,6 +52,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_chen_1", "skchr_chen_2", "skchr_chen_3"],
             "sortIndex": 144,
             "subProfessionId": "sword"
         },
@@ -62,6 +66,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_huang_1", "skchr_huang_2", "skchr_huang_3"],
             "sortIndex": 417,
             "subProfessionId": "centurion"
         },
@@ -75,6 +80,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_amiya2_1", "skchr_amiya2_2"],
             "sortIndex": 17,
             "subProfessionId": "artsfghter"
         },
@@ -88,6 +94,7 @@
             "profession": "CASTER",
             "rangeId": ["2-3", "3-6", "3-6"],
             "rarity": 5,
+            "skillIds": ["skchr_lava2_1", "skchr_lava2_2"],
             "sortIndex": 1200,
             "subProfessionId": "splashcaster"
         },
@@ -101,6 +108,7 @@
             "profession": "SUPPORT",
             "rangeId": ["x-4", "x-1", "x-1"],
             "rarity": 6,
+            "skillIds": ["skchr_skadi2_1", "skchr_skadi2_2", "skchr_skadi2_3"],
             "sortIndex": 1414,
             "subProfessionId": "bard"
         },
@@ -114,6 +122,7 @@
             "profession": "SNIPER",
             "rangeId": ["2-4", "2-5", "2-5"],
             "rarity": 6,
+            "skillIds": ["skchr_chen2_1", "skchr_chen2_2", "skchr_chen2_3"],
             "sortIndex": 475,
             "subProfessionId": "reaperrange"
         },
@@ -127,6 +136,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_nearl2_1", "skchr_nearl2_2", "skchr_nearl2_3"],
             "sortIndex": 1205,
             "subProfessionId": "fearless",
             "tokens": ["“耀阳”"]
@@ -145,6 +155,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "2-2", "2-2"],
             "rarity": 6,
+            "skillIds": ["skchr_aglna2_1", "skchr_aglna2_2", "skchr_aglna2_3"],
             "sortIndex": 1330,
             "subProfessionId": "skywalker",
             "tokens": ["“一会儿见！”"]
@@ -159,6 +170,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-3", "3-17", "3-17"],
             "rarity": 6,
+            "skillIds": ["skchr_agoat2_1", "skchr_agoat2_2", "skchr_agoat2_3"],
             "sortIndex": 171,
             "subProfessionId": "wandermedic"
         },
@@ -172,6 +184,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_siege2_1", "skchr_siege2_2", "skchr_siege2_3"],
             "sortIndex": 1058,
             "subProfessionId": "artsfghter",
             "tokens": ["黄金盟誓"]
@@ -186,6 +199,7 @@
             "profession": "SUPPORT",
             "rangeId": ["x-4", "x-1", "x-1"],
             "rarity": 5,
+            "skillIds": ["skchr_sora_1", "skchr_sora_2"],
             "sortIndex": 598,
             "subProfessionId": "bard"
         },
@@ -199,6 +213,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 6,
+            "skillIds": ["skcom_quickattack[3]", "skchr_reed2_2", "skchr_reed2_3"],
             "sortIndex": 1199,
             "subProfessionId": "incantationmedic"
         },
@@ -212,6 +227,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 5,
+            "skillIds": ["skchr_kroos2_1", "skchr_kroos2_2"],
             "sortIndex": 379,
             "subProfessionId": "fastshot"
         },
@@ -225,6 +241,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-6", "y-6"],
             "rarity": 5,
+            "skillIds": ["skchr_flwr2_1", "skchr_flwr2_2"],
             "sortIndex": 1127,
             "subProfessionId": "blessing"
         },
@@ -238,6 +255,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_ghost2_1", "skchr_ghost2_2", "skchr_ghost2_3"],
             "sortIndex": 366,
             "subProfessionId": "dollkeeper"
         },
@@ -251,6 +269,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 5,
+            "skillIds": ["skcom_atk_up[3]", "skchr_hbisc2_2"],
             "sortIndex": 1411,
             "subProfessionId": "incantationmedic"
         },
@@ -264,6 +283,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_gvial2_1", "skchr_gvial2_2", "skchr_gvial2_3"],
             "sortIndex": 37,
             "subProfessionId": "centurion"
         },
@@ -277,6 +297,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-3", "3-9", "3-9"],
             "rarity": 5,
+            "skillIds": ["skcom_quickattack[3]", "skchr_greyy2_2"],
             "sortIndex": 156,
             "subProfessionId": "bombarder"
         },
@@ -290,6 +311,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_texas2_1", "skchr_texas2_2", "skchr_texas2_3"],
             "sortIndex": 460,
             "subProfessionId": "executor"
         },
@@ -303,6 +325,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_yato2_1", "skchr_yato2_2", "skchr_yato2_3"],
             "sortIndex": 816,
             "subProfessionId": "executor"
         },
@@ -316,6 +339,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skcom_charge_cost[3]", "skchr_texas_2"],
             "sortIndex": 213,
             "subProfessionId": "pioneer"
         },
@@ -329,6 +353,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_noirc2_1", "skchr_noirc2_2"],
             "sortIndex": 438,
             "subProfessionId": "musha"
         },
@@ -342,6 +367,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-6", "y-6"],
             "rarity": 6,
+            "skillIds": ["skchr_slent2_1", "skchr_slent2_2", "skchr_slent2_3"],
             "sortIndex": 182,
             "subProfessionId": "blessing",
             "tokens": ["夜灯"]
@@ -356,6 +382,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-3", "1-3", "1-3"],
             "rarity": 6,
+            "skillIds": ["skchr_excu2_1", "skchr_excu2_2", "skchr_excu2_3"],
             "sortIndex": 906,
             "subProfessionId": "reaper"
         },
@@ -369,6 +396,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_swire2_1", "skchr_swire2_2", "skchr_swire2_3"],
             "sortIndex": 658,
             "subProfessionId": "merchant",
             "tokens": ["香槟炸弹"]
@@ -383,6 +411,7 @@
             "profession": "TANK",
             "rangeId": ["2-2", "2-2", "2-2"],
             "rarity": 6,
+            "skillIds": ["skchr_jesca2_1", "skchr_jesca2_2", "skchr_jesca2_3"],
             "sortIndex": 222,
             "subProfessionId": "shotprotector"
         },
@@ -396,6 +425,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-3", "3-9", "3-9"],
             "rarity": 6,
+            "skillIds": ["skchr_wisdel_1", "skchr_wisdel_2", "skchr_wisdel_3"],
             "sortIndex": 1059,
             "subProfessionId": "bombarder",
             "tokens": ["魂灵之影"]
@@ -410,6 +440,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_fang2_1", "skchr_fang2_2"],
             "sortIndex": 671,
             "subProfessionId": "charger"
         },
@@ -423,6 +454,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 5,
+            "skillIds": ["skchr_amiya3_1", "skchr_amiya3_2"],
             "sortIndex": 17,
             "subProfessionId": "incantationmedic"
         },
@@ -436,6 +468,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 6,
+            "skillIds": ["skchr_whitw2_1", "skchr_whitw2_2", "skchr_whitw2_3"],
             "sortIndex": 422,
             "subProfessionId": "funnel"
         },
@@ -449,6 +482,7 @@
             "profession": "SPECIAL",
             "rangeId": ["2-1", "2-1", "3-5"],
             "rarity": 6,
+            "skillIds": ["skchr_thorn2_1", "skchr_thorn2_2", "skchr_thorn2_3"],
             "sortIndex": 1264,
             "subProfessionId": "alchemist"
         },
@@ -462,6 +496,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 6,
+            "skillIds": ["skchr_angel_1", "skchr_angel_2", "skchr_angel_3"],
             "sortIndex": 769,
             "subProfessionId": "fastshot"
         },
@@ -475,6 +510,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 6,
+            "skillIds": ["skchr_blaze2_1", "skchr_blaze2_2", "skchr_blaze2_3"],
             "sortIndex": 1408,
             "subProfessionId": "primcaster"
         },
@@ -488,6 +524,7 @@
             "profession": "SPECIAL",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 6,
+            "skillIds": ["skchr_angel2_1", "skchr_angel2_2", "skchr_angel2_3"],
             "sortIndex": 1145,
             "subProfessionId": "geek",
             "tokens": ["投递坐标"]
@@ -502,6 +539,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-2", "y-2"],
             "rarity": 6,
+            "skillIds": ["skchr_phatm2_1", "skchr_phatm2_2", "skchr_phatm2_3"],
             "sortIndex": 549,
             "subProfessionId": "ritualist",
             "tokens": ["本能的召唤", "迷狂牢笼"]
@@ -516,6 +554,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-2", "1-2", "1-2"],
             "rarity": 6,
+            "skillIds": ["skchr_leizi2_1", "skchr_leizi2_2", "skchr_leizi2_3"],
             "sortIndex": 971,
             "subProfessionId": "librator"
         },
@@ -529,6 +568,7 @@
             "profession": "TANK",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_hsgma2_1", "skchr_hsgma2_2", "skchr_hsgma2_3"],
             "sortIndex": 1360,
             "subProfessionId": "artsprotector"
         },
@@ -542,6 +582,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_svash2_1", "skchr_svash2_2", "skchr_svash2_3"],
             "sortIndex": 664,
             "subProfessionId": "counsellor",
             "tokens": ["风雪之眼", "风雪之眼", "风雪之眼"]
@@ -556,6 +597,7 @@
             "profession": "CASTER",
             "rangeId": ["x-4", "x-1", "x-1"],
             "rarity": 6,
+            "skillIds": ["skchr_sbell2_1", "skchr_sbell2_2", "skchr_sbell2_3"],
             "sortIndex": 898,
             "subProfessionId": "phalanx",
             "tokens": ["保护目标（冻结状态）"]
@@ -570,6 +612,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-2", "y-2"],
             "rarity": 6,
+            "skillIds": ["skchr_halo2_1", "skchr_halo2_2", "skchr_halo2_3"],
             "sortIndex": 982,
             "subProfessionId": "slower"
         },
@@ -587,6 +630,7 @@
             "profession": "SNIPER",
             "rangeId": ["2-3", "3-6", "3-6"],
             "rarity": 6,
+            "skillIds": ["skchr_orchd2_1", "skchr_orchd2_2", "skchr_orchd2_3"],
             "sortIndex": 1191,
             "subProfessionId": "closerange"
         },
@@ -604,6 +648,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_catap2_1", "skchr_catap2_2"],
             "sortIndex": 628,
             "subProfessionId": "mercenary"
         },
@@ -617,6 +662,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_chen3_1", "skchr_chen3_2", "skchr_chen3_3"],
             "sortIndex": 163,
             "subProfessionId": "artsfghter"
         },
@@ -630,6 +676,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_headb2_1", "skchr_headb2_2", "skchr_headb2_3"],
             "sortIndex": 783,
             "subProfessionId": "hammer"
         },
@@ -643,6 +690,7 @@
             "profession": "MEDIC",
             "rangeId": ["y-2", "y-6", "y-6"],
             "rarity": 6,
+            "skillIds": ["skchr_kalts2_1", "skchr_kalts2_2", "skchr_kalts2_3"],
             "sortIndex": 572,
             "subProfessionId": "watchman",
             "tokens": ["战术锚点"]
@@ -657,6 +705,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skcom_quickattack[3]", "skchr_franka_2"],
             "sortIndex": 317,
             "subProfessionId": "fearless"
         },
@@ -670,6 +719,7 @@
             "profession": "TANK",
             "rangeId": ["2-2", "2-2", "2-2"],
             "rarity": 5,
+            "skillIds": ["skchr_liskam_1", "skchr_liskam_2"],
             "sortIndex": 631,
             "subProfessionId": "shotprotector"
         },
@@ -683,6 +733,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 5,
+            "skillIds": ["skcom_heal_up[3]", "skchr_silent_2"],
             "sortIndex": 394,
             "subProfessionId": "physician",
             "tokens": ["医疗探机"]
@@ -697,6 +748,7 @@
             "profession": "CASTER",
             "rangeId": ["2-3", "3-6", "3-6"],
             "rarity": 4,
+            "skillIds": ["skcom_magic_rage[2]", "skchr_fmout_2"],
             "sortIndex": 1281,
             "subProfessionId": "splashcaster"
         },
@@ -710,6 +762,7 @@
             "profession": "SUPPORT",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 4,
+            "skillIds": ["skchr_deepcl_1", "skchr_deepcl_2"],
             "sortIndex": 909,
             "subProfessionId": "summoner"
         },
@@ -723,6 +776,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skcom_charge_cost[3]", "skchr_siege_2", "skchr_siege_3"],
             "sortIndex": 1041,
             "subProfessionId": "pioneer"
         },
@@ -736,6 +790,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-3", "3-8", "3-10"],
             "rarity": 6,
+            "skillIds": ["skchr_cqbw_1", "skchr_cqbw_2", "skchr_cqbw_3"],
             "sortIndex": 1049,
             "subProfessionId": "aoesniper",
             "tokens": ["此面向敌"]
@@ -750,6 +805,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skcom_charge_cost[3]", "skchr_headbr_2"],
             "sortIndex": 647,
             "subProfessionId": "pioneer"
         },
@@ -763,6 +819,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 4,
+            "skillIds": ["skchr_myrrh_1", "skchr_myrrh_2"],
             "sortIndex": 749,
             "subProfessionId": "physician"
         },
@@ -776,6 +833,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-3", "3-8", "3-10"],
             "rarity": 4,
+            "skillIds": ["skchr_yuki_1", "skchr_yuki_2"],
             "sortIndex": 43,
             "subProfessionId": "aoesniper"
         },
@@ -789,6 +847,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-1", "3-3", "3-1"],
             "rarity": 3,
+            "skillIds": ["skcom_heal_up[1]"],
             "sortIndex": 318,
             "subProfessionId": "physician"
         },
@@ -802,6 +861,7 @@
             "profession": "CASTER",
             "rangeId": ["2-3", "3-6", "2-3"],
             "rarity": 3,
+            "skillIds": ["skcom_magic_rage[1]"],
             "sortIndex": 1193,
             "subProfessionId": "splashcaster"
         },
@@ -815,6 +875,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 3,
+            "skillIds": ["skcom_def_up[1]"],
             "sortIndex": 723,
             "subProfessionId": "protector"
         },
@@ -828,6 +889,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 3,
+            "skillIds": ["skcom_charge_cost[1]"],
             "sortIndex": 294,
             "subProfessionId": "pioneer"
         },
@@ -841,6 +903,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-1", "3-3", "3-1"],
             "rarity": 3,
+            "skillIds": ["skchr_kroos_1"],
             "sortIndex": 592,
             "subProfessionId": "fastshot"
         },
@@ -854,6 +917,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 4,
+            "skillIds": ["skchr_shotst_1", "skchr_shotst_2"],
             "sortIndex": 669,
             "subProfessionId": "fastshot"
         },
@@ -867,6 +931,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 4,
+            "skillIds": ["skcom_atk_up[2]", "skchr_estell_2"],
             "sortIndex": 11,
             "subProfessionId": "centurion"
         },
@@ -880,6 +945,7 @@
             "profession": "MEDIC",
             "rangeId": ["y-1", "y-2", "y-2"],
             "rarity": 5,
+            "skillIds": ["skcom_heal_up[3]", "skchr_plosis_2"],
             "sortIndex": 38,
             "subProfessionId": "ringhealer"
         },
@@ -893,6 +959,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 5,
+            "skillIds": ["skchr_bluep_1", "skchr_bluep_2"],
             "sortIndex": 619,
             "subProfessionId": "fastshot"
         },
@@ -906,6 +973,7 @@
             "profession": "WARRIOR",
             "rangeId": ["2-2", "2-2", "2-2"],
             "rarity": 4,
+            "skillIds": ["skchr_doberm_1", "skchr_doberm_2"],
             "sortIndex": 242,
             "subProfessionId": "instructor"
         },
@@ -919,6 +987,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_flameb_1", "skchr_flameb_2"],
             "sortIndex": 1192,
             "subProfessionId": "fearless"
         },
@@ -932,6 +1001,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 4,
+            "skillIds": ["skchr_mm_1", "skchr_mm_2"],
             "sortIndex": 706,
             "subProfessionId": "fastshot"
         },
@@ -945,6 +1015,7 @@
             "profession": "CASTER",
             "rangeId": ["4-1", "5-1", "5-1"],
             "rarity": 6,
+            "skillIds": ["skchr_ifrit_1", "skchr_ifrit_2", "skchr_ifrit_3"],
             "sortIndex": 1230,
             "subProfessionId": "blastcaster"
         },
@@ -958,6 +1029,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 5,
+            "skillIds": ["skchr_halo_1", "skchr_halo_2"],
             "sortIndex": 1139,
             "subProfessionId": "chain"
         },
@@ -971,6 +1043,7 @@
             "profession": "TANK",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_hsguma_1", "skchr_hsguma_2", "skchr_hsguma_3"],
             "sortIndex": 1138,
             "subProfessionId": "protector"
         },
@@ -984,6 +1057,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 4,
+            "skillIds": ["skchr_brownb_1", "skchr_brownb_2"],
             "sortIndex": 638,
             "subProfessionId": "fighter"
         },
@@ -997,6 +1071,7 @@
             "profession": "WARRIOR",
             "rangeId": ["2-3", "3-12", "3-12"],
             "rarity": 5,
+            "skillIds": ["skchr_whitew_1", "skchr_whitew_2"],
             "sortIndex": 626,
             "subProfessionId": "lord"
         },
@@ -1010,6 +1085,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 4,
+            "skillIds": ["skcom_atk_up[2]", "skchr_nights_2"],
             "sortIndex": 1220,
             "subProfessionId": "corecaster"
         },
@@ -1023,6 +1099,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skcom_atk_up[3]", "skchr_ghost_2"],
             "sortIndex": 1272,
             "subProfessionId": "centurion"
         },
@@ -1036,6 +1113,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_red_1", "skchr_red_2"],
             "sortIndex": 400,
             "subProfessionId": "executor"
         },
@@ -1049,6 +1127,7 @@
             "profession": "SNIPER",
             "rangeId": ["2-3", "3-6", "3-6"],
             "rarity": 5,
+            "skillIds": ["skchr_prove_1", "skchr_prove_2"],
             "sortIndex": 810,
             "subProfessionId": "closerange"
         },
@@ -1062,6 +1141,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 6,
+            "skillIds": ["skchr_shining_1", "skchr_shining_2", "skchr_shining_3"],
             "sortIndex": 885,
             "subProfessionId": "physician"
         },
@@ -1075,6 +1155,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 5,
+            "skillIds": ["skchr_nearl_1", "skchr_nearl_2"],
             "sortIndex": 653,
             "subProfessionId": "guardian"
         },
@@ -1088,6 +1169,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 4,
+            "skillIds": ["skcom_charge_cost[2]", "skchr_scave_2"],
             "sortIndex": 817,
             "subProfessionId": "pioneer"
         },
@@ -1101,6 +1183,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_crosly_1", "skchr_crosly_2", "skchr_crosly_3"],
             "sortIndex": 928,
             "subProfessionId": "executor"
         },
@@ -1114,6 +1197,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 4,
+            "skillIds": ["skcom_def_up[2]", "skchr_snakek_2"],
             "sortIndex": 917,
             "subProfessionId": "protector"
         },
@@ -1127,6 +1211,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 4,
+            "skillIds": ["skcom_assist_cost[2]", "skchr_myrtle_2"],
             "sortIndex": 1002,
             "subProfessionId": "bearer"
         },
@@ -1140,6 +1225,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_morgan_1", "skchr_morgan_2"],
             "sortIndex": 742,
             "subProfessionId": "fearless"
         },
@@ -1153,6 +1239,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_tiger_1", "skchr_tiger_2"],
             "sortIndex": 1262,
             "subProfessionId": "fighter"
         },
@@ -1166,6 +1253,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_dagda_1", "skchr_dagda_2"],
             "sortIndex": 186,
             "subProfessionId": "fighter"
         },
@@ -1179,6 +1267,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-3", "3-9", "3-9"],
             "rarity": 5,
+            "skillIds": ["skchr_milu_1", "skchr_milu_2"],
             "sortIndex": 950,
             "subProfessionId": "longrange"
         },
@@ -1192,6 +1281,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 4,
+            "skillIds": ["skchr_peacok_1", "skchr_peacok_2"],
             "sortIndex": 241,
             "subProfessionId": "fearless"
         },
@@ -1205,6 +1295,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 5,
+            "skillIds": ["skchr_hpsts_1", "skchr_hpsts_2"],
             "sortIndex": 441,
             "subProfessionId": "unyield"
         },
@@ -1218,6 +1309,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 5,
+            "skillIds": ["skchr_nightm_1", "skchr_nightm_2"],
             "sortIndex": 1215,
             "subProfessionId": "corecaster"
         },
@@ -1231,6 +1323,7 @@
             "profession": "CASTER",
             "rangeId": ["2-3", "3-6", "3-6"],
             "rarity": 5,
+            "skillIds": ["skcom_atk_up[3]", "skchr_skfire_2"],
             "sortIndex": 1014,
             "subProfessionId": "splashcaster"
         },
@@ -1244,6 +1337,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 5,
+            "skillIds": ["skchr_bldsk_1", "skchr_bldsk_2"],
             "sortIndex": 413,
             "subProfessionId": "physician"
         },
@@ -1257,6 +1351,7 @@
             "profession": "WARRIOR",
             "rangeId": ["2-3", "3-12", "3-12"],
             "rarity": 6,
+            "skillIds": ["skchr_svrash_1", "skchr_svrash_2", "skchr_svrash_3"],
             "sortIndex": 1255,
             "subProfessionId": "lord"
         },
@@ -1270,6 +1365,7 @@
             "profession": "SPECIAL",
             "rangeId": ["2-2", "3-2", "3-2"],
             "rarity": 5,
+            "skillIds": ["skchr_slchan_1", "skchr_slchan_2"],
             "sortIndex": 1208,
             "subProfessionId": "hookmaster"
         },
@@ -1283,6 +1379,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-6", "y-6"],
             "rarity": 5,
+            "skillIds": ["skchr_slbell_1", "skchr_slbell_2"],
             "sortIndex": 174,
             "subProfessionId": "underminer"
         },
@@ -1296,6 +1393,7 @@
             "profession": "MEDIC",
             "rangeId": ["y-1", "y-2", "y-2"],
             "rarity": 6,
+            "skillIds": ["skcom_heal_up[3]", "skchr_cgbird_2", "skchr_cgbird_3"],
             "sortIndex": 1222,
             "subProfessionId": "ringhealer"
         },
@@ -1309,6 +1407,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 6,
+            "skillIds": ["skchr_amgoat_1", "skchr_amgoat_2", "skchr_amgoat_3"],
             "sortIndex": 12,
             "subProfessionId": "corecaster"
         },
@@ -1322,6 +1421,7 @@
             "profession": "MEDIC",
             "rangeId": ["y-1", "y-2", "y-2"],
             "rarity": 4,
+            "skillIds": ["skcom_heal_up[2]", "skchr_flower_2"],
             "sortIndex": 1023,
             "subProfessionId": "ringhealer"
         },
@@ -1335,6 +1435,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-2", "y-2"],
             "rarity": 4,
+            "skillIds": ["skcom_atk_up[2]", "skchr_skgoat_2"],
             "sortIndex": 223,
             "subProfessionId": "slower"
         },
@@ -1348,6 +1449,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 4,
+            "skillIds": ["skchr_frncat_1", "skchr_frncat_2"],
             "sortIndex": 761,
             "subProfessionId": "artsfghter"
         },
@@ -1361,6 +1463,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 4,
+            "skillIds": ["skchr_ccheal_1", "skchr_ccheal_2"],
             "sortIndex": 479,
             "subProfessionId": "physician"
         },
@@ -1374,6 +1477,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_helage_1", "skchr_helage_2", "skchr_helage_3"],
             "sortIndex": 392,
             "subProfessionId": "musha"
         },
@@ -1387,6 +1491,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 4,
+            "skillIds": ["skcom_atk_up[2]", "skchr_clour_2"],
             "sortIndex": 410,
             "subProfessionId": "fastshot"
         },
@@ -1400,6 +1505,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 3,
+            "skillIds": ["skcom_quickattack[1]"],
             "sortIndex": 655,
             "subProfessionId": "charger"
         },
@@ -1413,6 +1519,7 @@
             "profession": "WARRIOR",
             "rangeId": ["2-3", "3-12", "3-12"],
             "rarity": 4,
+            "skillIds": ["skchr_frostl_1", "skchr_frostl_2"],
             "sortIndex": 957,
             "subProfessionId": "lord"
         },
@@ -1426,6 +1533,7 @@
             "profession": "WARRIOR",
             "rangeId": ["2-3", "3-12", "3-12"],
             "rarity": 5,
+            "skillIds": ["skcom_quickattack[3]", "skchr_leto_2"],
             "sortIndex": 642,
             "subProfessionId": "lord"
         },
@@ -1439,6 +1547,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-2", "y-2"],
             "rarity": 5,
+            "skillIds": ["skchr_glassb_1", "skchr_glassb_2"],
             "sortIndex": 1376,
             "subProfessionId": "slower"
         },
@@ -1452,6 +1561,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 4,
+            "skillIds": ["skchr_sunbr_1", "skchr_sunbr_2"],
             "sortIndex": 368,
             "subProfessionId": "guardian"
         },
@@ -1465,6 +1575,7 @@
             "profession": "SNIPER",
             "rangeId": ["4-4", "4-3", "4-3"],
             "rarity": 6,
+            "skillIds": ["skcom_atk_up[3]", "skchr_poca_2", "skchr_poca_3"],
             "sortIndex": 1338,
             "subProfessionId": "siegesniper"
         },
@@ -1478,6 +1589,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 4,
+            "skillIds": ["skcom_charge_cost[2]", "skchr_blackd_2"],
             "sortIndex": 1173,
             "subProfessionId": "pioneer"
         },
@@ -1491,6 +1603,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 4,
+            "skillIds": ["skchr_yak_1", "skchr_yak_2"],
             "sortIndex": 473,
             "subProfessionId": "protector"
         },
@@ -1504,6 +1617,7 @@
             "profession": "SNIPER",
             "rangeId": ["4-4", "4-3", "4-3"],
             "rarity": 6,
+            "skillIds": ["skcom_quickattack[3]", "skchr_typhon_2", "skchr_typhon_3"],
             "sortIndex": 1030,
             "subProfessionId": "siegesniper"
         },
@@ -1517,6 +1631,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 6,
+            "skillIds": ["skchr_cerber_1", "skchr_cerber_2", "skchr_cerber_3"],
             "sortIndex": 588,
             "subProfessionId": "corecaster"
         },
@@ -1530,6 +1645,7 @@
             "profession": "TANK",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_nian_1", "skchr_nian_2", "skchr_nian_3"],
             "sortIndex": 771,
             "subProfessionId": "protector"
         },
@@ -1543,6 +1659,7 @@
             "profession": "CASTER",
             "rangeId": ["2-3", "3-6", "3-6"],
             "rarity": 6,
+            "skillIds": ["skchr_dusk_1", "skchr_dusk_2", "skchr_dusk_3"],
             "sortIndex": 1090,
             "subProfessionId": "splashcaster",
             "tokens": ["“小自在”"]
@@ -1557,6 +1674,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 5,
+            "skillIds": ["skchr_moeshd_1", "skchr_moeshd_2"],
             "sortIndex": 596,
             "subProfessionId": "protector"
         },
@@ -1570,6 +1688,7 @@
             "profession": "SUPPORT",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 6,
+            "skillIds": ["skchr_ling_1", "skchr_ling_2", "skchr_ling_3"],
             "sortIndex": 648,
             "subProfessionId": "summoner",
             "tokens": ["“清平”", "“逍遥”", "“弦惊”"]
@@ -1584,6 +1703,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_chyue_1", "skchr_chyue_2", "skchr_chyue_3"],
             "sortIndex": 168,
             "subProfessionId": "fighter"
         },
@@ -1597,6 +1717,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 6,
+            "skillIds": ["skchr_shu_1", "skchr_shu_2", "skchr_shu_3"],
             "sortIndex": 952,
             "subProfessionId": "guardian"
         },
@@ -1610,6 +1731,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 6,
+            "skillIds": ["skchr_yu_1", "skchr_yu_2", "skchr_yu_3"],
             "sortIndex": 1279,
             "subProfessionId": "primprotector"
         },
@@ -1623,6 +1745,7 @@
             "profession": "SPECIAL",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 6,
+            "skillIds": ["skchr_wang_1", "skchr_wang_2", "skchr_wang_3"],
             "sortIndex": 1052,
             "subProfessionId": "traper",
             "tokens": ["棋子", "棋子", "棋子"]
@@ -1637,6 +1760,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 6,
+            "skillIds": ["skchr_demkni_1", "skchr_demkni_2", "skchr_demkni_3"],
             "sortIndex": 866,
             "subProfessionId": "guardian"
         },
@@ -1650,6 +1774,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 5,
+            "skillIds": ["skcom_atk_up[3]", "skchr_platnm_2"],
             "sortIndex": 36,
             "subProfessionId": "fastshot"
         },
@@ -1663,6 +1788,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-6", "y-6"],
             "rarity": 6,
+            "skillIds": ["skchr_gnosis_1", "skchr_gnosis_2", "skchr_gnosis_3"],
             "sortIndex": 656,
             "subProfessionId": "underminer"
         },
@@ -1676,6 +1802,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 3,
+            "skillIds": ["skcom_atk_up[1]"],
             "sortIndex": 709,
             "subProfessionId": "fearless"
         },
@@ -1689,6 +1816,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 3,
+            "skillIds": ["skcom_heal_self[1]"],
             "sortIndex": 580,
             "subProfessionId": "protector"
         },
@@ -1702,6 +1830,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-6"],
             "rarity": 3,
+            "skillIds": ["skchr_stward_1"],
             "sortIndex": 924,
             "subProfessionId": "corecaster"
         },
@@ -1715,6 +1844,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-1", "3-3", "3-1"],
             "rarity": 3,
+            "skillIds": ["skcom_atk_up[1]"],
             "sortIndex": 19,
             "subProfessionId": "fastshot"
         },
@@ -1728,6 +1858,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-1", "3-3", "3-1"],
             "rarity": 3,
+            "skillIds": ["skcom_range_extend"],
             "sortIndex": 22,
             "subProfessionId": "physician"
         },
@@ -1741,6 +1872,7 @@
             "profession": "CASTER",
             "rangeId": ["2-3", "3-6", "3-6"],
             "rarity": 6,
+            "skillIds": ["skcom_atk_up[3]", "skchr_mostma_2", "skchr_mostma_3"],
             "sortIndex": 747,
             "subProfessionId": "splashcaster"
         },
@@ -1754,6 +1886,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_kafka_1", "skchr_kafka_2"],
             "sortIndex": 570,
             "subProfessionId": "executor"
         },
@@ -1767,6 +1900,7 @@
             "profession": "SPECIAL",
             "rangeId": ["y-1", "y-1", "y-1"],
             "rarity": 5,
+            "skillIds": ["skchr_mantic_1", "skchr_mantic_2"],
             "sortIndex": 943,
             "subProfessionId": "stalker"
         },
@@ -1780,6 +1914,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-3", "3-9", "3-9"],
             "rarity": 5,
+            "skillIds": ["skcom_atk_up[3]", "skchr_cuttle_2"],
             "sortIndex": 24,
             "subProfessionId": "longrange"
         },
@@ -1793,6 +1928,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-3", "3-8", "3-10"],
             "rarity": 5,
+            "skillIds": ["skchr_meteo_1", "skchr_meteo_2"],
             "sortIndex": 1328,
             "subProfessionId": "aoesniper"
         },
@@ -1806,6 +1942,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skcom_def_up[3]", "skchr_grani_2"],
             "sortIndex": 343,
             "subProfessionId": "charger"
         },
@@ -1819,6 +1956,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skcom_quickattack[3]", "skchr_bpipe_2", "skchr_bpipe_3"],
             "sortIndex": 296,
             "subProfessionId": "charger"
         },
@@ -1832,6 +1970,7 @@
             "profession": "SPECIAL",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 6,
+            "skillIds": ["skchr_haak_1", "skchr_haak_2", "skchr_haak_3"],
             "sortIndex": 0,
             "subProfessionId": "geek"
         },
@@ -1845,6 +1984,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 5,
+            "skillIds": ["skchr_hmau_1", "skchr_hmau_2"],
             "sortIndex": 401,
             "subProfessionId": "guardian"
         },
@@ -1858,6 +1998,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_savage_1", "skchr_savage_2"],
             "sortIndex": 61,
             "subProfessionId": "centurion"
         },
@@ -1871,6 +2012,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 4,
+            "skillIds": ["skchr_jesica_1", "skchr_jesica_2"],
             "sortIndex": 501,
             "subProfessionId": "fastshot"
         },
@@ -1884,6 +2026,7 @@
             "profession": "SPECIAL",
             "rangeId": ["2-2", "3-2", "3-2"],
             "rarity": 4,
+            "skillIds": ["skchr_rope_1", "skchr_rope_2"],
             "sortIndex": 23,
             "subProfessionId": "hookmaster"
         },
@@ -1897,6 +2040,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 4,
+            "skillIds": ["skchr_gravel_1", "skchr_gravel_2"],
             "sortIndex": 634,
             "subProfessionId": "executor"
         },
@@ -1910,6 +2054,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 3,
+            "skillIds": ["skchr_wyvern_1"],
             "sortIndex": 1101,
             "subProfessionId": "pioneer"
         },
@@ -1923,6 +2068,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_panda_1", "skchr_panda_2"],
             "sortIndex": 941,
             "subProfessionId": "pusher"
         },
@@ -1936,6 +2082,7 @@
             "profession": "SUPPORT",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 5,
+            "skillIds": ["skchr_otter_1", "skchr_otter_2"],
             "sortIndex": 707,
             "subProfessionId": "summoner"
         },
@@ -1949,6 +2096,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_waaifu_1", "skchr_waaifu_2"],
             "sortIndex": 415,
             "subProfessionId": "executor"
         },
@@ -1962,6 +2110,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-2", "y-2"],
             "rarity": 6,
+            "skillIds": ["skchr_cello_1", "skchr_cello_2", "skchr_cello_3"],
             "sortIndex": 995,
             "subProfessionId": "ritualist"
         },
@@ -1975,6 +2124,7 @@
             "profession": "SUPPORT",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 6,
+            "skillIds": ["skchr_mgllan_1", "skchr_mgllan_2", "skchr_mgllan_3"],
             "sortIndex": 701,
             "subProfessionId": "summoner",
             "tokens": ["龙腾.F", "龙腾.L", "龙腾.A"]
@@ -1989,6 +2139,7 @@
             "profession": "PIONEER",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 6,
+            "skillIds": ["skchr_mlyss_1", "skchr_mlyss_2", "skchr_mlyss_3"],
             "sortIndex": 738,
             "subProfessionId": "tactician"
         },
@@ -2002,6 +2153,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_phatom_1", "skchr_phatom_2", "skchr_phatom_3"],
             "sortIndex": 610,
             "subProfessionId": "executor"
         },
@@ -2015,6 +2167,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_bibeak_1", "skchr_bibeak_2"],
             "sortIndex": 35,
             "subProfessionId": "sword"
         },
@@ -2028,6 +2181,7 @@
             "profession": "CASTER",
             "rangeId": ["2-3", "3-6", "3-6"],
             "rarity": 4,
+            "skillIds": ["skcom_magic_rage[2]", "skchr_greyy_2"],
             "sortIndex": 346,
             "subProfessionId": "splashcaster"
         },
@@ -2041,6 +2195,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-6", "y-6"],
             "rarity": 5,
+            "skillIds": ["skchr_vodfox_1", "skchr_vodfox_2"],
             "sortIndex": 1079,
             "subProfessionId": "underminer",
             "tokens": ["诅咒娃娃"]
@@ -2055,6 +2210,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-2", "y-2"],
             "rarity": 4,
+            "skillIds": ["skchr_podego_1", "skchr_podego_2"],
             "sortIndex": 99,
             "subProfessionId": "slower"
         },
@@ -2068,6 +2224,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 4,
+            "skillIds": ["skcom_atk_up[2]", "skchr_durnar_2"],
             "sortIndex": 459,
             "subProfessionId": "artsprotector"
         },
@@ -2081,6 +2238,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skcom_quickattack[3]", "skchr_sddrag_2"],
             "sortIndex": 1054,
             "subProfessionId": "charger"
         },
@@ -2094,6 +2252,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skcom_quickattack[3]", "skchr_skadi_2", "skchr_skadi_3"],
             "sortIndex": 968,
             "subProfessionId": "fearless"
         },
@@ -2107,6 +2266,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_f12yin_1", "skchr_f12yin_2", "skchr_f12yin_3"],
             "sortIndex": 877,
             "subProfessionId": "fighter"
         },
@@ -2120,6 +2280,7 @@
             "profession": "WARRIOR",
             "rangeId": ["2-2", "2-2", "2-2"],
             "rarity": 5,
+            "skillIds": ["skchr_sophia_1", "skchr_sophia_2"],
             "sortIndex": 77,
             "subProfessionId": "instructor"
         },
@@ -2133,6 +2294,7 @@
             "profession": "WARRIOR",
             "rangeId": ["2-3", "3-12", "3-12"],
             "rarity": 4,
+            "skillIds": ["skchr_spikes_1", "skchr_spikes_2"],
             "sortIndex": 262,
             "subProfessionId": "lord"
         },
@@ -2146,6 +2308,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 4,
+            "skillIds": ["skchr_strong_1", "skchr_strong_2"],
             "sortIndex": 492,
             "subProfessionId": "merchant"
         },
@@ -2159,6 +2322,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_astesi_1", "skchr_astesi_2"],
             "sortIndex": 1133,
             "subProfessionId": "artsfghter"
         },
@@ -2172,6 +2336,7 @@
             "profession": "MEDIC",
             "rangeId": ["y-1", "y-2", "y-2"],
             "rarity": 5,
+            "skillIds": ["skchr_breeze_1", "skchr_breeze_2"],
             "sortIndex": 1057,
             "subProfessionId": "ringhealer"
         },
@@ -2185,6 +2350,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 4,
+            "skillIds": ["skchr_sqrrel_1", "skchr_sqrrel_2"],
             "sortIndex": 31,
             "subProfessionId": "pusher"
         },
@@ -2198,6 +2364,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-2", "y-2"],
             "rarity": 3,
+            "skillIds": ["skcom_quickattack[1]"],
             "sortIndex": 1418,
             "subProfessionId": "slower"
         },
@@ -2211,6 +2378,7 @@
             "profession": "SNIPER",
             "rangeId": ["2-4", "2-5", "2-5"],
             "rarity": 5,
+            "skillIds": ["skchr_excu_1", "skchr_excu_2"],
             "sortIndex": 976,
             "subProfessionId": "reaperrange"
         },
@@ -2224,6 +2392,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 3,
+            "skillIds": ["skcom_atk_up[1]"],
             "sortIndex": 793,
             "subProfessionId": "centurion"
         },
@@ -2237,6 +2406,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-3", "3-8", "3-3"],
             "rarity": 3,
+            "skillIds": ["skchr_catap_1"],
             "sortIndex": 599,
             "subProfessionId": "aoesniper"
         },
@@ -2250,6 +2420,7 @@
             "profession": "WARRIOR",
             "rangeId": ["2-3", "3-12", "2-3"],
             "rarity": 3,
+            "skillIds": ["skchr_midn_1"],
             "sortIndex": 1316,
             "subProfessionId": "lord"
         },
@@ -2263,6 +2434,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 3,
+            "skillIds": ["skchr_spot_1"],
             "sortIndex": 44,
             "subProfessionId": "guardian"
         },
@@ -2276,6 +2448,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-1", "3-1", "3-1"],
             "rarity": 1,
+            "skillIds": [],
             "sortIndex": 618,
             "subProfessionId": "physician"
         },
@@ -2289,6 +2462,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 1,
+            "skillIds": [],
             "sortIndex": 135,
             "subProfessionId": "fearless"
         },
@@ -2302,6 +2476,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 4,
+            "skillIds": ["skcom_heal_self[2]", "skchr_gyuki_2"],
             "sortIndex": 139,
             "subProfessionId": "fearless"
         },
@@ -2315,6 +2490,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 4,
+            "skillIds": ["skchr_vigna_1", "skchr_vigna_2"],
             "sortIndex": 404,
             "subProfessionId": "charger"
         },
@@ -2328,6 +2504,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-2", "y-2"],
             "rarity": 6,
+            "skillIds": ["skchr_aglina_1", "skchr_aglina_2", "skchr_aglina_3"],
             "sortIndex": 20,
             "subProfessionId": "slower"
         },
@@ -2341,6 +2518,7 @@
             "profession": "WARRIOR",
             "rangeId": ["2-3", "3-12", "3-12"],
             "rarity": 6,
+            "skillIds": ["skcom_atk_up[3]", "skchr_thorns_2", "skchr_thorns_3"],
             "sortIndex": 485,
             "subProfessionId": "lord"
         },
@@ -2354,6 +2532,7 @@
             "profession": "WARRIOR",
             "rangeId": ["2-3", "3-12", "3-12"],
             "rarity": 5,
+            "skillIds": ["skchr_ayer_1", "skchr_ayer_2"],
             "sortIndex": 239,
             "subProfessionId": "lord"
         },
@@ -2367,6 +2546,7 @@
             "profession": "CASTER",
             "rangeId": ["3-13", "3-14", "3-14"],
             "rarity": 5,
+            "skillIds": ["skchr_hamoni_1", "skchr_hamoni_2"],
             "sortIndex": 397,
             "subProfessionId": "mystic"
         },
@@ -2380,6 +2560,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 4,
+            "skillIds": ["skcom_heal_up[2]", "skchr_susuro_2"],
             "sortIndex": 994,
             "subProfessionId": "physician"
         },
@@ -2393,6 +2574,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-3", "3-8", "3-10"],
             "rarity": 6,
+            "skillIds": ["skchr_phenxi_1", "skchr_phenxi_2", "skchr_phenxi_3"],
             "sortIndex": 293,
             "subProfessionId": "aoesniper"
         },
@@ -2406,6 +2588,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 4,
+            "skillIds": ["skchr_cutter_1", "skchr_cutter_2"],
             "sortIndex": 587,
             "subProfessionId": "sword"
         },
@@ -2419,6 +2602,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-3", "3-9", "3-9"],
             "rarity": 4,
+            "skillIds": ["skchr_glaze_1", "skchr_glaze_2"],
             "sortIndex": 18,
             "subProfessionId": "longrange"
         },
@@ -2432,6 +2616,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 5,
+            "skillIds": ["skchr_zebra_1", "skchr_zebra_2"],
             "sortIndex": 62,
             "subProfessionId": "protector"
         },
@@ -2445,6 +2630,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 5,
+            "skillIds": ["skcom_atk_up[3]", "skchr_leizi_2"],
             "sortIndex": 530,
             "subProfessionId": "chain"
         },
@@ -2458,6 +2644,7 @@
             "profession": "WARRIOR",
             "rangeId": ["2-2", "2-2", "2-2"],
             "rarity": 5,
+            "skillIds": ["skchr_swire_1", "skchr_swire_2"],
             "sortIndex": 927,
             "subProfessionId": "instructor"
         },
@@ -2471,6 +2658,7 @@
             "profession": "TANK",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skcom_def_up[3]", "skchr_mudrok_2", "skchr_mudrok_3"],
             "sortIndex": 780,
             "subProfessionId": "unyield"
         },
@@ -2484,6 +2672,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_lmlee_1", "skchr_lmlee_2", "skchr_lmlee_3"],
             "sortIndex": 623,
             "subProfessionId": "merchant"
         },
@@ -2497,6 +2686,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 5,
+            "skillIds": ["skcom_def_up[3]", "skchr_bison_2"],
             "sortIndex": 39,
             "subProfessionId": "protector"
         },
@@ -2510,6 +2700,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-2", "y-2"],
             "rarity": 5,
+            "skillIds": ["skchr_glacus_1", "skchr_glacus_2"],
             "sortIndex": 344,
             "subProfessionId": "slower"
         },
@@ -2523,6 +2714,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 4,
+            "skillIds": ["skcom_atk_up[2]", "skchr_cammou_2"],
             "sortIndex": 569,
             "subProfessionId": "funnel"
         },
@@ -2536,6 +2728,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 6,
+            "skillIds": ["skchr_archet_1", "skchr_archet_2", "skchr_archet_3"],
             "sortIndex": 603,
             "subProfessionId": "fastshot"
         },
@@ -2549,6 +2742,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skcom_heal_self[3]", "skchr_sidero_2"],
             "sortIndex": 1415,
             "subProfessionId": "artsfghter"
         },
@@ -2562,6 +2756,7 @@
             "profession": "SUPPORT",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 5,
+            "skillIds": ["skchr_folivo_1", "skchr_folivo_2"],
             "sortIndex": 1152,
             "subProfessionId": "summoner"
         },
@@ -2575,6 +2770,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 4,
+            "skillIds": ["skchr_utage_1", "skchr_utage_2"],
             "sortIndex": 1185,
             "subProfessionId": "musha"
         },
@@ -2588,6 +2784,7 @@
             "profession": "CASTER",
             "rangeId": ["3-13", "3-14", "3-14"],
             "rarity": 5,
+            "skillIds": ["skchr_iris_1", "skchr_iris_2"],
             "sortIndex": 10,
             "subProfessionId": "mystic"
         },
@@ -2601,6 +2798,7 @@
             "profession": "SNIPER",
             "rangeId": ["2-3", "3-6", "3-6"],
             "rarity": 6,
+            "skillIds": ["skchr_shwaz_1", "skchr_shwaz_2", "skchr_shwaz_3"],
             "sortIndex": 388,
             "subProfessionId": "closerange"
         },
@@ -2614,6 +2812,7 @@
             "profession": "CASTER",
             "rangeId": ["2-3", "3-6", "3-6"],
             "rarity": 5,
+            "skillIds": ["skcom_quickattack[3]", "skchr_sntlla_2"],
             "sortIndex": 381,
             "subProfessionId": "splashcaster"
         },
@@ -2627,6 +2826,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-6", "y-6"],
             "rarity": 5,
+            "skillIds": ["skchr_tknogi_1", "skchr_tknogi_2"],
             "sortIndex": 1315,
             "subProfessionId": "blessing"
         },
@@ -2640,6 +2840,7 @@
             "profession": "CASTER",
             "rangeId": ["x-4", "x-1", "x-1"],
             "rarity": 5,
+            "skillIds": ["skchr_beewax_1", "skchr_beewax_2"],
             "sortIndex": 726,
             "subProfessionId": "phalanx",
             "tokens": ["沙之碑"]
@@ -2654,6 +2855,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 5,
+            "skillIds": ["skchr_folnic_1", "skchr_folnic_2"],
             "sortIndex": 1209,
             "subProfessionId": "physician"
         },
@@ -2667,6 +2869,7 @@
             "profession": "SNIPER",
             "rangeId": ["2-4", "2-5", "2-5"],
             "rarity": 5,
+            "skillIds": ["skcom_quickattack[3]", "skchr_aosta_2"],
             "sortIndex": 29,
             "subProfessionId": "reaperrange"
         },
@@ -2680,6 +2883,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 4,
+            "skillIds": ["skchr_jaksel_1", "skchr_jaksel_2"],
             "sortIndex": 499,
             "subProfessionId": "fighter"
         },
@@ -2693,6 +2897,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-3", "3-4", "3-4"],
             "rarity": 5,
+            "skillIds": ["skchr_ceylon_1", "skchr_ceylon_2"],
             "sortIndex": 1129,
             "subProfessionId": "healer"
         },
@@ -2706,6 +2911,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skcom_charge_cost[3]", "skchr_chiave_2"],
             "sortIndex": 478,
             "subProfessionId": "pioneer"
         },
@@ -2719,6 +2925,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_surtr_1", "skchr_surtr_2", "skchr_surtr_3"],
             "sortIndex": 925,
             "subProfessionId": "artsfghter"
         },
@@ -2732,6 +2939,7 @@
             "profession": "SPECIAL",
             "rangeId": ["y-1", "y-1", "y-1"],
             "rarity": 4,
+            "skillIds": ["skchr_ethan_1", "skchr_ethan_2"],
             "sortIndex": 1266,
             "subProfessionId": "stalker"
         },
@@ -2745,6 +2953,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_broca_1", "skchr_broca_2"],
             "sortIndex": 122,
             "subProfessionId": "centurion"
         },
@@ -2758,6 +2967,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-2", "y-2"],
             "rarity": 6,
+            "skillIds": ["skchr_lisa_1", "skchr_lisa_2", "skchr_lisa_3"],
             "sortIndex": 651,
             "subProfessionId": "slower"
         },
@@ -2771,6 +2981,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skcom_charge_cost[3]", "skchr_saga_2", "skchr_saga_3"],
             "sortIndex": 183,
             "subProfessionId": "pioneer"
         },
@@ -2784,6 +2995,7 @@
             "profession": "SNIPER",
             "rangeId": ["4-4", "4-3", "4-3"],
             "rarity": 5,
+            "skillIds": ["skchr_toddi_1", "skchr_toddi_2"],
             "sortIndex": 856,
             "subProfessionId": "siegesniper"
         },
@@ -2797,6 +3009,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 5,
+            "skillIds": ["skchr_aprl_1", "skchr_aprl_2"],
             "sortIndex": 973,
             "subProfessionId": "fastshot"
         },
@@ -2810,6 +3023,7 @@
             "profession": "SNIPER",
             "rangeId": ["2-3", "3-6", "3-6"],
             "rarity": 4,
+            "skillIds": ["skchr_acdrop_1", "skchr_acdrop_2"],
             "sortIndex": 980,
             "subProfessionId": "closerange"
         },
@@ -2823,6 +3037,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 5,
+            "skillIds": ["skchr_swllow_1", "skchr_swllow_2"],
             "sortIndex": 429,
             "subProfessionId": "fastshot"
         },
@@ -2836,6 +3051,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_bena_1", "skchr_bena_2"],
             "sortIndex": 65,
             "subProfessionId": "dollkeeper"
         },
@@ -2849,6 +3065,7 @@
             "profession": "CASTER",
             "rangeId": ["2-3", "3-6", "3-6"],
             "rarity": 5,
+            "skillIds": ["skcom_atk_up[3]", "skchr_lionhd_2"],
             "sortIndex": 614,
             "subProfessionId": "splashcaster"
         },
@@ -2862,6 +3079,7 @@
             "profession": "SPECIAL",
             "rangeId": ["x-4", "x-4", "x-4"],
             "rarity": 1,
+            "skillIds": [],
             "sortIndex": 1011,
             "subProfessionId": "executor"
         },
@@ -2875,6 +3093,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 6,
+            "skillIds": ["skchr_gdglow_1", "skchr_gdglow_2", "skchr_gdglow_3"],
             "sortIndex": 153,
             "subProfessionId": "funnel"
         },
@@ -2888,6 +3107,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 5,
+            "skillIds": ["skchr_asbest_1", "skchr_asbest_2"],
             "sortIndex": 932,
             "subProfessionId": "artsprotector"
         },
@@ -2901,6 +3121,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-3", "3-8", "3-10"],
             "rarity": 5,
+            "skillIds": ["skcom_atk_up[3]", "skchr_sesa_2"],
             "sortIndex": 915,
             "subProfessionId": "aoesniper"
         },
@@ -2914,6 +3135,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 4,
+            "skillIds": ["skcom_def_up[2]", "skchr_bubble_2"],
             "sortIndex": 792,
             "subProfessionId": "protector"
         },
@@ -2927,6 +3149,7 @@
             "profession": "SPECIAL",
             "rangeId": ["2-2", "3-2", "3-2"],
             "rarity": 5,
+            "skillIds": ["skchr_snsant_1", "skchr_snsant_2"],
             "sortIndex": 1163,
             "subProfessionId": "hookmaster"
         },
@@ -2940,6 +3163,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-3", "3-4", "3-4"],
             "rarity": 4,
+            "skillIds": ["skchr_finlpp_1", "skchr_finlpp_2"],
             "sortIndex": 819,
             "subProfessionId": "healer"
         },
@@ -2953,6 +3177,7 @@
             "profession": "CASTER",
             "rangeId": ["x-4", "x-1", "x-1"],
             "rarity": 5,
+            "skillIds": ["skchr_mint_1", "skchr_mint_2"],
             "sortIndex": 101,
             "subProfessionId": "phalanx"
         },
@@ -2966,6 +3191,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-3", "3-9", "3-9"],
             "rarity": 6,
+            "skillIds": ["skchr_rosmon_1", "skchr_rosmon_2", "skchr_rosmon_3"],
             "sortIndex": 721,
             "subProfessionId": "bombarder",
             "tokens": ["迷迭香的战术装备"]
@@ -2984,6 +3210,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-6", "y-6"],
             "rarity": 5,
+            "skillIds": ["skchr_toledo_1", "skchr_toledo_2"],
             "sortIndex": 214,
             "subProfessionId": "underminer",
             "tokens": ["征服者传说"]
@@ -2998,6 +3225,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_hadiya_1", "skchr_hadiya_2"],
             "sortIndex": 372,
             "subProfessionId": "mercenary"
         },
@@ -3011,6 +3239,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-1", "3-1", "3-1"],
             "rarity": 1,
+            "skillIds": [],
             "sortIndex": 1373,
             "subProfessionId": "fastshot"
         },
@@ -3024,6 +3253,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 4,
+            "skillIds": ["skcom_magic_rage[2]", "skchr_pudd_2"],
             "sortIndex": 105,
             "subProfessionId": "chain"
         },
@@ -3037,6 +3267,7 @@
             "profession": "SNIPER",
             "rangeId": ["2-3", "3-6", "3-6"],
             "rarity": 5,
+            "skillIds": ["skchr_melnte_1", "skchr_melnte_2"],
             "sortIndex": 708,
             "subProfessionId": "closerange"
         },
@@ -3050,6 +3281,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_irene_1", "skchr_irene_2", "skchr_irene_3"],
             "sortIndex": 9,
             "subProfessionId": "sword"
         },
@@ -3063,6 +3295,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_weedy_1", "skchr_weedy_2", "skchr_weedy_3"],
             "sortIndex": 1069,
             "subProfessionId": "pusher"
         },
@@ -3076,6 +3309,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-3", "1-3", "1-3"],
             "rarity": 6,
+            "skillIds": ["skchr_etlchi_1", "skchr_etlchi_2", "skchr_etlchi_3"],
             "sortIndex": 1237,
             "subProfessionId": "reaper"
         },
@@ -3089,6 +3323,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_lessng_1", "skchr_lessng_2", "skchr_lessng_3"],
             "sortIndex": 1396,
             "subProfessionId": "fearless"
         },
@@ -3102,6 +3337,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 5,
+            "skillIds": ["skcom_atk_up[3]", "skchr_kjera_2"],
             "sortIndex": 1213,
             "subProfessionId": "funnel"
         },
@@ -3115,6 +3351,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-3", "3-9", "3-9"],
             "rarity": 5,
+            "skillIds": ["skchr_lunacu_1", "skchr_lunacu_2"],
             "sortIndex": 1423,
             "subProfessionId": "longrange"
         },
@@ -3128,6 +3365,7 @@
             "profession": "SPECIAL",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 5,
+            "skillIds": ["skchr_spuria_1", "skchr_spuria_2"],
             "sortIndex": 600,
             "subProfessionId": "geek"
         },
@@ -3141,6 +3379,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_kazema_1", "skchr_kazema_2"],
             "sortIndex": 302,
             "subProfessionId": "dollkeeper",
             "tokens": ["纸偶"]
@@ -3155,6 +3394,7 @@
             "profession": "PIONEER",
             "rangeId": ["2-2", "2-2", "2-2"],
             "rarity": 5,
+            "skillIds": ["skchr_puzzle_1", "skchr_puzzle_2"],
             "sortIndex": 737,
             "subProfessionId": "agent"
         },
@@ -3168,6 +3408,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-6", "y-6"],
             "rarity": 5,
+            "skillIds": ["skchr_ncdeer_1", "skchr_ncdeer_2"],
             "sortIndex": 548,
             "subProfessionId": "blessing"
         },
@@ -3181,6 +3422,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skcom_assist_cost[3]", "skchr_elysm_2"],
             "sortIndex": 508,
             "subProfessionId": "bearer"
         },
@@ -3194,6 +3436,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skcom_charge_cost[3]", "skchr_rfalcn_2"],
             "sortIndex": 408,
             "subProfessionId": "pioneer"
         },
@@ -3207,6 +3450,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 5,
+            "skillIds": ["skchr_aprot2_1", "skchr_aprot2_2"],
             "sortIndex": 756,
             "subProfessionId": "artsprotector"
         },
@@ -3220,6 +3464,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_vulpis_1", "skchr_vulpis_2", "skchr_vulpis_3"],
             "sortIndex": 852,
             "subProfessionId": "pioneer"
         },
@@ -3233,6 +3478,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 6,
+            "skillIds": ["skchr_heyak_1", "skchr_heyak_2", "skchr_heyak_3"],
             "sortIndex": 437,
             "subProfessionId": "corecaster"
         },
@@ -3246,6 +3492,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 5,
+            "skillIds": ["skchr_tuye_1", "skchr_tuye_2"],
             "sortIndex": 1046,
             "subProfessionId": "physician"
         },
@@ -3259,6 +3506,7 @@
             "profession": "CASTER",
             "rangeId": ["2-3", "3-6", "3-6"],
             "rarity": 5,
+            "skillIds": ["skchr_liesel_1", "skchr_liesel_2"],
             "sortIndex": 320,
             "subProfessionId": "splashcaster"
         },
@@ -3272,6 +3520,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-2", "y-2"],
             "rarity": 5,
+            "skillIds": ["skchr_provs_1", "skchr_provs_2"],
             "sortIndex": 195,
             "subProfessionId": "slower"
         },
@@ -3285,6 +3534,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_forcer_1", "skchr_forcer_2"],
             "sortIndex": 465,
             "subProfessionId": "pusher"
         },
@@ -3298,6 +3548,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_demetr_1", "skchr_demetr_2", "skchr_demetr_3"],
             "sortIndex": 64,
             "subProfessionId": "fighter",
             "tokens": ["牵绊"]
@@ -3312,6 +3563,7 @@
             "profession": "TANK",
             "rangeId": ["4-5", "4-5", "4-6"],
             "rarity": 6,
+            "skillIds": ["skchr_horn_1", "skchr_horn_2", "skchr_horn_3"],
             "sortIndex": 383,
             "subProfessionId": "fortress"
         },
@@ -3325,6 +3577,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 5,
+            "skillIds": ["skcom_magic_rage[3]", "skchr_rockr_2"],
             "sortIndex": 687,
             "subProfessionId": "funnel"
         },
@@ -3338,6 +3591,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-3", "3-17", "3-17"],
             "rarity": 4,
+            "skillIds": ["skchr_chnut_1", "skchr_chnut_2"],
             "sortIndex": 387,
             "subProfessionId": "wandermedic"
         },
@@ -3351,6 +3605,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-3", "3-4", "3-4"],
             "rarity": 6,
+            "skillIds": ["skchr_lumen_1", "skchr_lumen_2", "skchr_lumen_3"],
             "sortIndex": 665,
             "subProfessionId": "healer"
         },
@@ -3364,6 +3619,7 @@
             "profession": "SNIPER",
             "rangeId": ["4-4", "4-3", "4-3"],
             "rarity": 5,
+            "skillIds": ["skchr_erato_1", "skchr_erato_2"],
             "sortIndex": 8,
             "subProfessionId": "siegesniper"
         },
@@ -3377,6 +3633,7 @@
             "profession": "SUPPORT",
             "rangeId": ["x-4", "x-1", "x-1"],
             "rarity": 5,
+            "skillIds": ["skchr_heidi_1", "skchr_heidi_2"],
             "sortIndex": 373,
             "subProfessionId": "bard"
         },
@@ -3390,6 +3647,7 @@
             "profession": "CASTER",
             "rangeId": ["3-13", "3-14", "3-14"],
             "rarity": 6,
+            "skillIds": ["skchr_ebnhlz_1", "skchr_ebnhlz_2", "skchr_ebnhlz_3"],
             "sortIndex": 389,
             "subProfessionId": "mystic",
             "tokens": ["旧日残影"]
@@ -3404,6 +3662,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 5,
+            "skillIds": ["skchr_pianst_1", "skchr_pianst_2"],
             "sortIndex": 143,
             "subProfessionId": "artsprotector"
         },
@@ -3417,6 +3676,7 @@
             "profession": "SPECIAL",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 6,
+            "skillIds": ["skchr_doroth_1", "skchr_doroth_2", "skchr_doroth_3"],
             "sortIndex": 250,
             "subProfessionId": "traper"
         },
@@ -3430,6 +3690,7 @@
             "profession": "CASTER",
             "rangeId": ["4-1", "5-1", "5-1"],
             "rarity": 4,
+            "skillIds": ["skchr_akkord_1", "skchr_akkord_2"],
             "sortIndex": 1122,
             "subProfessionId": "blastcaster"
         },
@@ -3443,6 +3704,7 @@
             "profession": "PIONEER",
             "rangeId": ["2-2", "2-2", "2-2"],
             "rarity": 5,
+            "skillIds": ["skchr_surfer_1", "skchr_surfer_2"],
             "sortIndex": 1171,
             "subProfessionId": "agent"
         },
@@ -3456,6 +3718,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 5,
+            "skillIds": ["skcom_quickattack[3]", "skchr_malist_2"],
             "sortIndex": 1383,
             "subProfessionId": "funnel"
         },
@@ -3469,6 +3732,7 @@
             "profession": "SNIPER",
             "rangeId": ["2-3", "3-6", "3-6"],
             "rarity": 6,
+            "skillIds": ["skchr_bgsnow_1", "skchr_bgsnow_2", "skchr_bgsnow_3"],
             "sortIndex": 409,
             "subProfessionId": "closerange"
         },
@@ -3482,6 +3746,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 6,
+            "skillIds": ["skchr_titi_1", "skchr_titi_2", "skchr_titi_3"],
             "sortIndex": 1032,
             "subProfessionId": "incantationmedic"
         },
@@ -3495,6 +3760,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_pepe_1", "skchr_pepe_2", "skchr_pepe_3"],
             "sortIndex": 799,
             "subProfessionId": "hammer"
         },
@@ -3508,6 +3774,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 5,
+            "skillIds": ["skchr_absin_1", "skchr_absin_2"],
             "sortIndex": 607,
             "subProfessionId": "corecaster"
         },
@@ -3521,6 +3788,7 @@
             "profession": "SNIPER",
             "rangeId": ["4-4", "4-3", "4-3"],
             "rarity": 4,
+            "skillIds": ["skchr_totter_1", "skchr_totter_2"],
             "sortIndex": 812,
             "subProfessionId": "siegesniper"
         },
@@ -3534,6 +3802,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 4,
+            "skillIds": ["skcom_atk_up[2]", "skchr_quartz_2"],
             "sortIndex": 947,
             "subProfessionId": "crusher"
         },
@@ -3547,6 +3816,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-2", "1-2", "1-2"],
             "rarity": 6,
+            "skillIds": ["skchr_mlynar_1", "skchr_mlynar_2", "skchr_mlynar_3"],
             "sortIndex": 695,
             "subProfessionId": "librator"
         },
@@ -3560,6 +3830,7 @@
             "profession": "TANK",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_judge_1", "skchr_judge_2", "skchr_judge_3"],
             "sortIndex": 165,
             "subProfessionId": "unyield"
         },
@@ -3573,6 +3844,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-3", "1-3", "1-3"],
             "rarity": 5,
+            "skillIds": ["skchr_highmo_1", "skchr_highmo_2"],
             "sortIndex": 375,
             "subProfessionId": "reaper"
         },
@@ -3586,6 +3858,7 @@
             "profession": "WARRIOR",
             "rangeId": ["2-3", "3-12", "3-12"],
             "rarity": 4,
+            "skillIds": ["skchr_lolxh_1", "skchr_lolxh_2"],
             "sortIndex": 689,
             "subProfessionId": "lord"
         },
@@ -3599,6 +3872,7 @@
             "profession": "MEDIC",
             "rangeId": ["y-1", "y-2", "y-2"],
             "rarity": 5,
+            "skillIds": ["skcom_heal_rage[3]", "skchr_peper_2"],
             "sortIndex": 732,
             "subProfessionId": "chainhealer"
         },
@@ -3612,6 +3886,7 @@
             "profession": "SUPPORT",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_ironmn_1", "skchr_ironmn_2", "skchr_ironmn_3"],
             "sortIndex": 40,
             "subProfessionId": "craftsman",
             "tokens": ["白铁™多功能平台", "白铁™多功能平台", "铁钳号·原型机"]
@@ -3626,6 +3901,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-3", "3-3", "3-3"],
             "rarity": 1,
+            "skillIds": [],
             "sortIndex": 996,
             "subProfessionId": "bombarder"
         },
@@ -3639,6 +3915,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-3", "3-8", "3-10"],
             "rarity": 5,
+            "skillIds": ["skchr_bdhkgt_1", "skchr_bdhkgt_2"],
             "sortIndex": 502,
             "subProfessionId": "aoesniper"
         },
@@ -3652,6 +3929,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-6", "y-6"],
             "rarity": 5,
+            "skillIds": ["skchr_haini_1", "skchr_haini_2"],
             "sortIndex": 376,
             "subProfessionId": "underminer"
         },
@@ -3665,6 +3943,7 @@
             "profession": "CASTER",
             "rangeId": ["x-4", "x-1", "x-1"],
             "rarity": 6,
+            "skillIds": ["skchr_lin_1", "skchr_lin_2", "skchr_lin_3"],
             "sortIndex": 645,
             "subProfessionId": "phalanx"
         },
@@ -3678,6 +3957,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 5,
+            "skillIds": ["skchr_warmy_1", "skchr_warmy_2"],
             "sortIndex": 1073,
             "subProfessionId": "primcaster"
         },
@@ -3691,6 +3971,7 @@
             "profession": "WARRIOR",
             "rangeId": ["2-3", "3-12", "3-12"],
             "rarity": 6,
+            "skillIds": ["skchr_qiubai_1", "skchr_qiubai_2", "skchr_qiubai_3"],
             "sortIndex": 829,
             "subProfessionId": "lord"
         },
@@ -3704,6 +3985,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skcom_atk_up[3]", "skchr_chimes_2"],
             "sortIndex": 249,
             "subProfessionId": "crusher"
         },
@@ -3717,6 +3999,7 @@
             "profession": "PIONEER",
             "rangeId": ["2-2", "2-2", "2-2"],
             "rarity": 6,
+            "skillIds": ["skchr_ines_1", "skchr_ines_2", "skchr_ines_3"],
             "sortIndex": 1238,
             "subProfessionId": "agent"
         },
@@ -3730,6 +4013,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_hodrer_1", "skchr_hodrer_2", "skchr_hodrer_3"],
             "sortIndex": 386,
             "subProfessionId": "crusher"
         },
@@ -3743,6 +4027,7 @@
             "profession": "SUPPORT",
             "rangeId": ["x-4", "x-4", "x-4"],
             "rarity": 1,
+            "skillIds": [],
             "sortIndex": 1048,
             "subProfessionId": "bard"
         },
@@ -3756,6 +4041,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 1,
+            "skillIds": [],
             "sortIndex": 314,
             "subProfessionId": "protector"
         },
@@ -3769,6 +4055,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_vvana_1", "skchr_vvana_2", "skchr_vvana_3"],
             "sortIndex": 1063,
             "subProfessionId": "artsfghter"
         },
@@ -3782,6 +4069,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-3", "y-7", "y-7"],
             "rarity": 4,
+            "skillIds": ["skchr_caper_1", "skchr_caper_2"],
             "sortIndex": 1318,
             "subProfessionId": "loopshooter"
         },
@@ -3795,6 +4083,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-2", "y-2"],
             "rarity": 5,
+            "skillIds": ["skchr_threye_1", "skchr_threye_2"],
             "sortIndex": 659,
             "subProfessionId": "ritualist"
         },
@@ -3808,6 +4097,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-12", "4-9", "4-9"],
             "rarity": 5,
+            "skillIds": ["skcom_atk_up[3]", "skchr_coldst_2"],
             "sortIndex": 92,
             "subProfessionId": "hunter"
         },
@@ -3821,6 +4111,7 @@
             "profession": "SPECIAL",
             "rangeId": ["2-2", "3-2", "3-2"],
             "rarity": 5,
+            "skillIds": ["skchr_almond_1", "skchr_almond_2"],
             "sortIndex": 1135,
             "subProfessionId": "hookmaster"
         },
@@ -3834,6 +4125,7 @@
             "profession": "WARRIOR",
             "rangeId": ["2-2", "2-2", "2-2"],
             "rarity": 5,
+            "skillIds": ["skchr_bryota_1", "skchr_bryota_2"],
             "sortIndex": 132,
             "subProfessionId": "instructor"
         },
@@ -3847,6 +4139,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 4,
+            "skillIds": ["skchr_vrdant_1", "skchr_vrdant_2"],
             "sortIndex": 1055,
             "subProfessionId": "dollkeeper"
         },
@@ -3860,6 +4153,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 5,
+            "skillIds": ["skchr_baslin_1", "skchr_baslin_2"],
             "sortIndex": 912,
             "subProfessionId": "guardian"
         },
@@ -3873,6 +4167,7 @@
             "profession": "CASTER",
             "rangeId": ["3-13", "3-14", "3-14"],
             "rarity": 5,
+            "skillIds": ["skchr_delphn_1", "skchr_delphn_2"],
             "sortIndex": 189,
             "subProfessionId": "mystic"
         },
@@ -3886,6 +4181,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-3", "3-17", "3-17"],
             "rarity": 5,
+            "skillIds": ["skcom_heal_up[3]", "skchr_harold_2"],
             "sortIndex": 377,
             "subProfessionId": "wandermedic"
         },
@@ -3899,6 +4195,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_blkkgt_1", "skchr_blkkgt_2", "skchr_blkkgt_3"],
             "sortIndex": 447,
             "subProfessionId": "sword"
         },
@@ -3912,6 +4209,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-12", "4-9", "4-9"],
             "rarity": 6,
+            "skillIds": ["skchr_ray_1", "skchr_ray_2", "skchr_ray_3"],
             "sortIndex": 617,
             "subProfessionId": "hunter",
             "tokens": ["沙地兽"]
@@ -3926,6 +4224,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skcom_assist_cost[3]", "skchr_wanqin_2"],
             "sortIndex": 1053,
             "subProfessionId": "bearer"
         },
@@ -3939,6 +4238,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 5,
+            "skillIds": ["skchr_tomimi_1", "skchr_tomimi_2"],
             "sortIndex": 1007,
             "subProfessionId": "corecaster"
         },
@@ -3952,6 +4252,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_zuole_1", "skchr_zuole_2", "skchr_zuole_3"],
             "sortIndex": 1432,
             "subProfessionId": "musha"
         },
@@ -3965,6 +4266,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-2", "y-2"],
             "rarity": 5,
+            "skillIds": ["skchr_grabds_1", "skchr_grabds_2"],
             "sortIndex": 1114,
             "subProfessionId": "slower"
         },
@@ -3978,6 +4280,7 @@
             "profession": "SPECIAL",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 6,
+            "skillIds": ["skchr_ela_1", "skchr_ela_2", "skchr_ela_3"],
             "sortIndex": 7,
             "subProfessionId": "traper"
         },
@@ -3991,6 +4294,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_iana_1", "skchr_iana_2"],
             "sortIndex": 958,
             "subProfessionId": "dollkeeper"
         },
@@ -4004,6 +4308,7 @@
             "profession": "WARRIOR",
             "rangeId": ["2-2", "2-2", "2-2"],
             "rarity": 5,
+            "skillIds": ["skchr_rdoc_1", "skchr_rdoc_2"],
             "sortIndex": 1267,
             "subProfessionId": "instructor"
         },
@@ -4017,6 +4322,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_fuze_1", "skchr_fuze_2"],
             "sortIndex": 202,
             "subProfessionId": "centurion"
         },
@@ -4030,6 +4336,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 4,
+            "skillIds": ["skchr_luton_1", "skchr_luton_2"],
             "sortIndex": 691,
             "subProfessionId": "unyield"
         },
@@ -4043,6 +4350,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_odda_1", "skchr_odda_2"],
             "sortIndex": 25,
             "subProfessionId": "hammer"
         },
@@ -4056,6 +4364,7 @@
             "profession": "SPECIAL",
             "rangeId": ["y-1", "y-1", "y-1"],
             "rarity": 6,
+            "skillIds": ["skchr_ascln_1", "skchr_ascln_2", "skchr_ascln_3"],
             "sortIndex": 30,
             "subProfessionId": "stalker"
         },
@@ -4069,6 +4378,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 6,
+            "skillIds": ["skchr_logos_1", "skchr_logos_2", "skchr_logos_3"],
             "sortIndex": 686,
             "subProfessionId": "corecaster"
         },
@@ -4082,6 +4392,7 @@
             "profession": "SUPPORT",
             "rangeId": ["x-4", "x-1", "x-1"],
             "rarity": 6,
+            "skillIds": ["skchr_cetsyr_1", "skchr_cetsyr_2", "skchr_cetsyr_3"],
             "sortIndex": 748,
             "subProfessionId": "bard"
         },
@@ -4095,6 +4406,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-2", "y-2"],
             "rarity": 1,
+            "skillIds": [],
             "sortIndex": 803,
             "subProfessionId": "ritualist"
         },
@@ -4108,6 +4420,7 @@
             "profession": "TANK",
             "rangeId": ["2-2", "2-2", "2-2"],
             "rarity": 5,
+            "skillIds": ["skchr_udflow_1", "skchr_udflow_2"],
             "sortIndex": 914,
             "subProfessionId": "shotprotector"
         },
@@ -4121,6 +4434,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-3", "y-7", "y-7"],
             "rarity": 6,
+            "skillIds": ["skchr_narant_1", "skchr_narant_2", "skchr_narant_3"],
             "sortIndex": 762,
             "subProfessionId": "loopshooter"
         },
@@ -4134,6 +4448,7 @@
             "profession": "MEDIC",
             "rangeId": ["y-1", "y-2", "y-2"],
             "rarity": 5,
+            "skillIds": ["skchr_papyrs_1", "skchr_papyrs_2"],
             "sortIndex": 993,
             "subProfessionId": "chainhealer"
         },
@@ -4147,6 +4462,7 @@
             "profession": "SUPPORT",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 5,
+            "skillIds": ["skchr_lasher_1", "skchr_lasher_2"],
             "sortIndex": 396,
             "subProfessionId": "summoner"
         },
@@ -4160,6 +4476,7 @@
             "profession": "CASTER",
             "rangeId": ["2-3", "3-6", "3-6"],
             "rarity": 6,
+            "skillIds": ["skchr_marcil_1", "skchr_marcil_2", "skchr_marcil_3"],
             "sortIndex": 702,
             "subProfessionId": "splashcaster"
         },
@@ -4173,6 +4490,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_laios_1", "skchr_laios_2"],
             "sortIndex": 615,
             "subProfessionId": "fearless"
         },
@@ -4186,6 +4504,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 5,
+            "skillIds": ["skchr_sensi_1", "skchr_sensi_2"],
             "sortIndex": 874,
             "subProfessionId": "guardian"
         },
@@ -4199,6 +4518,7 @@
             "profession": "PIONEER",
             "rangeId": ["2-2", "2-2", "2-2"],
             "rarity": 5,
+            "skillIds": ["skchr_chilc_1", "skchr_chilc_2"],
             "sortIndex": 814,
             "subProfessionId": "agent"
         },
@@ -4212,6 +4532,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_ulpia_1", "skchr_ulpia_2", "skchr_ulpia_3"],
             "sortIndex": 1076,
             "subProfessionId": "crusher",
             "tokens": ["从不混淆的方向"]
@@ -4226,6 +4547,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 6,
+            "skillIds": ["skchr_nymph_1", "skchr_nymph_2", "skchr_nymph_3"],
             "sortIndex": 775,
             "subProfessionId": "primcaster"
         },
@@ -4239,6 +4561,7 @@
             "profession": "PIONEER",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 5,
+            "skillIds": ["skchr_mitm_1", "skchr_mitm_2"],
             "sortIndex": 251,
             "subProfessionId": "tactician"
         },
@@ -4252,6 +4575,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 5,
+            "skillIds": ["skchr_philae_1", "skchr_philae_2"],
             "sortIndex": 288,
             "subProfessionId": "primprotector"
         },
@@ -4265,6 +4589,7 @@
             "profession": "SPECIAL",
             "rangeId": ["2-1", "2-1", "3-5"],
             "rarity": 5,
+            "skillIds": ["skchr_tinman_1", "skchr_tinman_2"],
             "sortIndex": 1146,
             "subProfessionId": "alchemist"
         },
@@ -4278,6 +4603,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_talr_1", "skchr_talr_2"],
             "sortIndex": 130,
             "subProfessionId": "merchant"
         },
@@ -4291,6 +4617,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_flint_1", "skchr_flint_2"],
             "sortIndex": 985,
             "subProfessionId": "fighter"
         },
@@ -4304,6 +4631,7 @@
             "profession": "SUPPORT",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_cathy_1", "skchr_cathy_2"],
             "sortIndex": 573,
             "subProfessionId": "craftsman"
         },
@@ -4317,6 +4645,7 @@
             "profession": "MEDIC",
             "rangeId": ["y-1", "y-2", "y-2"],
             "rarity": 5,
+            "skillIds": ["skchr_rosesa_1", "skchr_rosesa_2"],
             "sortIndex": 367,
             "subProfessionId": "ringhealer"
         },
@@ -4330,6 +4659,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 5,
+            "skillIds": ["skchr_tecno_1", "skchr_tecno_2"],
             "sortIndex": 1004,
             "subProfessionId": "soulcaster"
         },
@@ -4343,6 +4673,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "2-2", "2-2"],
             "rarity": 4,
+            "skillIds": ["skchr_ctrail_1", "skchr_ctrail_2"],
             "sortIndex": 1327,
             "subProfessionId": "skywalker"
         },
@@ -4356,6 +4687,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_varkis_1", "skchr_varkis_2"],
             "sortIndex": 34,
             "subProfessionId": "centurion"
         },
@@ -4373,6 +4705,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 5,
+            "skillIds": ["skchr_caledo_1", "skchr_caledo_2"],
             "sortIndex": 518,
             "subProfessionId": "primprotector"
         },
@@ -4386,6 +4719,7 @@
             "profession": "TANK",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_zumama_1", "skchr_zumama_2", "skchr_zumama_3"],
             "sortIndex": 873,
             "subProfessionId": "duelist"
         },
@@ -4403,6 +4737,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 4,
+            "skillIds": ["skchr_hdbell_1", "skchr_hdbell_2"],
             "sortIndex": 1134,
             "subProfessionId": "dispatcher"
         },
@@ -4416,6 +4751,7 @@
             "profession": "SPECIAL",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 5,
+            "skillIds": ["skchr_wulfen_1", "skchr_wulfen_2"],
             "sortIndex": 759,
             "subProfessionId": "traper"
         },
@@ -4429,6 +4765,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-6", "y-6"],
             "rarity": 5,
+            "skillIds": ["skchr_xingzh_1", "skchr_xingzh_2"],
             "sortIndex": 1141,
             "subProfessionId": "blessing"
         },
@@ -4442,6 +4779,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-3", "3-4", "3-4"],
             "rarity": 5,
+            "skillIds": ["skchr_nowell_1", "skchr_nowell_2"],
             "sortIndex": 784,
             "subProfessionId": "healer"
         },
@@ -4455,6 +4793,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-3", "y-7", "y-7"],
             "rarity": 5,
+            "skillIds": ["skchr_brigid_1", "skchr_brigid_2"],
             "sortIndex": 964,
             "subProfessionId": "loopshooter"
         },
@@ -4468,6 +4807,7 @@
             "profession": "SUPPORT",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_alanna_1", "skchr_alanna_2"],
             "sortIndex": 13,
             "subProfessionId": "craftsman"
         },
@@ -4481,6 +4821,7 @@
             "profession": "MEDIC",
             "rangeId": ["y-1", "y-2", "y-2"],
             "rarity": 6,
+            "skillIds": ["skchr_monstr_1", "skchr_monstr_2", "skchr_monstr_3"],
             "sortIndex": 746,
             "subProfessionId": "chainhealer"
         },
@@ -4494,6 +4835,7 @@
             "profession": "WARRIOR",
             "rangeId": ["2-3", "3-12", "3-12"],
             "rarity": 6,
+            "skillIds": ["skchr_oblvns_1", "skchr_oblvns_2", "skchr_oblvns_3"],
             "sortIndex": 295,
             "subProfessionId": "lord"
         },
@@ -4507,6 +4849,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_mortis_1", "skchr_mortis_2"],
             "sortIndex": 861,
             "subProfessionId": "dollkeeper"
         },
@@ -4520,6 +4863,7 @@
             "profession": "SUPPORT",
             "rangeId": ["x-4", "x-1", "x-1"],
             "rarity": 5,
+            "skillIds": ["skchr_dolris_1", "skchr_dolris_2"],
             "sortIndex": 871,
             "subProfessionId": "bard"
         },
@@ -4533,6 +4877,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_amoris_1", "skchr_amoris_2"],
             "sortIndex": 1273,
             "subProfessionId": "hammer"
         },
@@ -4546,6 +4891,7 @@
             "profession": "SPECIAL",
             "rangeId": ["y-1", "y-1", "y-1"],
             "rarity": 5,
+            "skillIds": ["skchr_tmoris_1", "skchr_tmoris_2"],
             "sortIndex": 33,
             "subProfessionId": "stalker"
         },
@@ -4559,6 +4905,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_graceb_1", "skchr_graceb_2"],
             "sortIndex": 654,
             "subProfessionId": "primguard"
         },
@@ -4572,6 +4919,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 1,
+            "skillIds": [],
             "sortIndex": 177,
             "subProfessionId": "pioneer"
         },
@@ -4585,6 +4933,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "2-2", "2-2"],
             "rarity": 5,
+            "skillIds": ["skchr_tippi_1", "skchr_tippi_2"],
             "sortIndex": 221,
             "subProfessionId": "skywalker"
         },
@@ -4598,6 +4947,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-3", "3-9", "3-9"],
             "rarity": 6,
+            "skillIds": ["skchr_lemuen_1", "skchr_lemuen_2", "skchr_lemuen_3"],
             "sortIndex": 630,
             "subProfessionId": "longrange"
         },
@@ -4611,6 +4961,7 @@
             "profession": "TANK",
             "rangeId": ["2-2", "2-2", "2-2"],
             "rarity": 6,
+            "skillIds": ["skchr_rmixer_1", "skchr_rmixer_2", "skchr_rmixer_3"],
             "sortIndex": 1144,
             "subProfessionId": "shotprotector"
         },
@@ -4624,6 +4975,7 @@
             "profession": "SUPPORT",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 6,
+            "skillIds": ["skchr_radian_1", "skchr_radian_2", "skchr_radian_3"],
             "sortIndex": 215,
             "subProfessionId": "summoner",
             "tokens": ["戴乌", "赛柯", "桑特拉"]
@@ -4638,6 +4990,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 5,
+            "skillIds": ["skchr_reckpr_1", "skchr_reckpr_2"],
             "sortIndex": 692,
             "subProfessionId": "physician"
         },
@@ -4651,6 +5004,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 5,
+            "skillIds": ["skchr_christ_1", "skchr_christ_2"],
             "sortIndex": 736,
             "subProfessionId": "primcaster"
         },
@@ -4664,6 +5018,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_makiri_1", "skchr_makiri_2"],
             "sortIndex": 975,
             "subProfessionId": "counsellor"
         },
@@ -4677,6 +5032,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-6", "y-6"],
             "rarity": 6,
+            "skillIds": ["skchr_haruka_1", "skchr_haruka_2", "skchr_haruka_3"],
             "sortIndex": 1202,
             "subProfessionId": "blessing"
         },
@@ -4690,6 +5046,7 @@
             "profession": "SNIPER",
             "rangeId": ["2-4", "2-5", "2-5"],
             "rarity": 5,
+            "skillIds": ["skchr_kichi_1", "skchr_kichi_2"],
             "sortIndex": 552,
             "subProfessionId": "reaperrange"
         },
@@ -4703,6 +5060,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 6,
+            "skillIds": ["skchr_mantra_1", "skchr_mantra_2", "skchr_mantra_3"],
             "sortIndex": 1378,
             "subProfessionId": "primcaster"
         },
@@ -4716,6 +5074,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 5,
+            "skillIds": ["skchr_branch_1", "skchr_branch_2"],
             "sortIndex": 1379,
             "subProfessionId": "unyield"
         },
@@ -4729,6 +5088,7 @@
             "profession": "PIONEER",
             "rangeId": ["2-2", "2-2", "2-2"],
             "rarity": 4,
+            "skillIds": ["skchr_wintim_1", "skchr_wintim_2"],
             "sortIndex": 234,
             "subProfessionId": "agent"
         },
@@ -4742,6 +5102,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_flamtl_1", "skchr_flamtl_2", "skchr_flamtl_3"],
             "sortIndex": 1197,
             "subProfessionId": "pioneer"
         },
@@ -4755,6 +5116,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-12", "4-9", "4-9"],
             "rarity": 5,
+            "skillIds": ["skchr_snhunt_1", "skchr_snhunt_2"],
             "sortIndex": 1159,
             "subProfessionId": "hunter"
         },
@@ -4768,6 +5130,7 @@
             "profession": "SUPPORT",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_nasti_1", "skchr_nasti_2", "skchr_nasti_3"],
             "sortIndex": 763,
             "subProfessionId": "craftsman",
             "tokens": ["“质检专员”", "“监工专员”", "“应急承重小组”"]
@@ -4782,6 +5145,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 5,
+            "skillIds": ["skchr_skybx_1", "skchr_skybx_2"],
             "sortIndex": 1015,
             "subProfessionId": "skybreaker"
         },
@@ -4795,6 +5159,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 5,
+            "skillIds": ["skchr_cairn_1", "skchr_cairn_2"],
             "sortIndex": 1103,
             "subProfessionId": "primprotector"
         },
@@ -4812,6 +5177,7 @@
             "profession": "PIONEER",
             "rangeId": ["3-1", "3-1", "3-1"],
             "rarity": 1,
+            "skillIds": [],
             "sortIndex": 685,
             "subProfessionId": "tactician"
         },
@@ -4829,6 +5195,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_makoto_1", "skchr_makoto_2", "skchr_makoto_3"],
             "sortIndex": 494,
             "subProfessionId": "dollkeeper"
         },
@@ -4846,6 +5213,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 5,
+            "skillIds": ["skchr_aigis_1", "skchr_aigis_2"],
             "sortIndex": 5,
             "subProfessionId": "skybreaker"
         },
@@ -4863,6 +5231,7 @@
             "profession": "SUPPORT",
             "rangeId": ["3-1", "3-18", "3-18"],
             "rarity": 5,
+            "skillIds": ["skchr_yukari_1", "skchr_yukari_2"],
             "sortIndex": 1319,
             "subProfessionId": "supportiveranger"
         },
@@ -4876,6 +5245,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-3", "1-3", "1-3"],
             "rarity": 5,
+            "skillIds": ["skchr_crow_1", "skchr_crow_2"],
             "sortIndex": 1326,
             "subProfessionId": "reaper"
         },
@@ -4893,6 +5263,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 1,
+            "skillIds": [],
             "sortIndex": 433,
             "subProfessionId": "sword"
         },
@@ -4906,6 +5277,7 @@
             "profession": "SNIPER",
             "rangeId": ["4-4", "4-3", "4-3"],
             "rarity": 5,
+            "skillIds": ["skchr_ju_1", "skchr_ju_2"],
             "sortIndex": 557,
             "subProfessionId": "siegesniper"
         },
@@ -4919,6 +5291,7 @@
             "profession": "MEDIC",
             "rangeId": ["y-2", "y-6", "y-6"],
             "rarity": 5,
+            "skillIds": ["skchr_taraxa_1", "skchr_taraxa_2"],
             "sortIndex": 303,
             "subProfessionId": "watchman"
         },
@@ -4932,6 +5305,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-2", "y-2"],
             "rarity": 5,
+            "skillIds": ["skchr_botany_1", "skchr_botany_2"],
             "sortIndex": 104,
             "subProfessionId": "ritualist"
         },
@@ -4945,6 +5319,7 @@
             "profession": "MEDIC",
             "rangeId": ["y-1", "y-2", "y-2"],
             "rarity": 5,
+            "skillIds": ["skchr_turdus_1", "skchr_turdus_2"],
             "sortIndex": 1077,
             "subProfessionId": "chainhealer"
         },
@@ -4958,6 +5333,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 5,
+            "skillIds": ["skchr_tanya_1", "skchr_tanya_2"],
             "sortIndex": 643,
             "subProfessionId": "primprotector"
         },
@@ -4971,6 +5347,7 @@
             "profession": "CASTER",
             "rangeId": ["3-13", "3-14", "3-14"],
             "rarity": 6,
+            "skillIds": ["skchr_veen_1", "skchr_veen_2", "skchr_veen_3"],
             "sortIndex": 1066,
             "subProfessionId": "mystic"
         },
@@ -4984,6 +5361,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-6", "3-6"],
             "rarity": 1,
+            "skillIds": [],
             "sortIndex": 325,
             "subProfessionId": "corecaster"
         },
@@ -4997,6 +5375,7 @@
             "profession": "PIONEER",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 6,
+            "skillIds": ["skchr_closur_1", "skchr_closur_2", "skchr_closur_3"],
             "sortIndex": 594,
             "subProfessionId": "tactician"
         },
@@ -5014,6 +5393,7 @@
             "profession": "CASTER",
             "rangeId": ["4-1", "5-1", "5-1"],
             "rarity": 6,
+            "skillIds": ["skchr_aphris_1", "skchr_aphris_2", "skchr_aphris_3"],
             "sortIndex": 739,
             "subProfessionId": "blastcaster"
         },
@@ -5027,6 +5407,7 @@
             "profession": "TANK",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_aurora_1", "skchr_aurora_2"],
             "sortIndex": 503,
             "subProfessionId": "duelist"
         },
@@ -5044,6 +5425,7 @@
             "profession": "TANK",
             "rangeId": ["2-2", "2-2", "2-2"],
             "rarity": 6,
+            "skillIds": ["skchr_mcnist_1", "skchr_mcnist_2", "skchr_mcnist_3"],
             "sortIndex": 550,
             "subProfessionId": "shotprotector"
         },
@@ -5061,6 +5443,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_clemnt_1", "skchr_clemnt_2", "skchr_clemnt_3"],
             "sortIndex": 591,
             "subProfessionId": "primguard"
         },
@@ -5078,6 +5461,7 @@
             "profession": "SPECIAL",
             "rangeId": ["2-1", "2-1", "3-5"],
             "rarity": 5,
+            "skillIds": ["skchr_hbound_1", "skchr_hbound_2"],
             "sortIndex": 694,
             "subProfessionId": "alchemist"
         },
@@ -5095,6 +5479,7 @@
             "profession": "SUPPORT",
             "rangeId": ["3-1", "3-18", "3-18"],
             "rarity": 5,
+            "skillIds": ["skchr_pedro_1", "skchr_pedro_2"],
             "sortIndex": 797,
             "subProfessionId": "supportiveranger"
         },
@@ -5112,6 +5497,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 6,
+            "skillIds": ["skchr_thumpy_1", "skchr_thumpy_2", "skchr_thumpy_3"],
             "sortIndex": 878,
             "subProfessionId": "primprotector"
         },
@@ -5129,6 +5515,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 5,
+            "skillIds": ["skcom_atk_up[3]", "skchr_tmslot_2"],
             "sortIndex": 942,
             "subProfessionId": "funnel"
         },
@@ -5146,6 +5533,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skcom_assist_cost[3]", "skchr_jcinta_2"],
             "sortIndex": 480,
             "subProfessionId": "bearer"
         },
@@ -5159,6 +5547,7 @@
             "profession": "TANK",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_blemsh_1", "skchr_blemsh_2", "skchr_blemsh_3"],
             "sortIndex": 1093,
             "subProfessionId": "guardian"
         },
@@ -5176,6 +5565,7 @@
             "profession": "SUPPORT",
             "rangeId": ["3-1", "3-18", "3-18"],
             "rarity": 6,
+            "skillIds": ["skchr_tocka_1", "skchr_tocka_2", "skchr_tocka_3"],
             "sortIndex": 229,
             "subProfessionId": "supportiveranger"
         },
@@ -5193,6 +5583,7 @@
             "profession": "WARRIOR",
             "rangeId": ["2-2", "2-2", "2-2"],
             "rarity": 5,
+            "skillIds": ["skchr_alga_1", "skchr_alga_2"],
             "sortIndex": 26,
             "subProfessionId": "instructor"
         },
@@ -5210,6 +5601,7 @@
             "profession": "SPECIAL",
             "rangeId": ["y-1", "y-1", "y-1"],
             "rarity": 6,
+            "skillIds": ["skchr_dminon_1", "skchr_dminon_2", "skchr_dminon_3"],
             "sortIndex": 370,
             "subProfessionId": "stalker"
         },
@@ -5227,6 +5619,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_oxi_1", "skchr_oxi_2", "skchr_oxi_3"],
             "sortIndex": 997,
             "subProfessionId": "primguard"
         },
@@ -5240,6 +5633,7 @@
             "profession": "CASTER",
             "rangeId": ["x-4", "x-1", "x-1"],
             "rarity": 6,
+            "skillIds": ["skchr_billro_1", "skchr_billro_2", "skchr_billro_3"],
             "sortIndex": 577,
             "subProfessionId": "phalanx"
         },
@@ -5253,6 +5647,7 @@
             "profession": "PIONEER",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 6,
+            "skillIds": ["skchr_vigil_1", "skchr_vigil_2", "skchr_vigil_3"],
             "sortIndex": 972,
             "subProfessionId": "tactician"
         },
@@ -5266,6 +5661,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-3", "3-9", "3-9"],
             "rarity": 6,
+            "skillIds": ["skcom_quickattack[3]", "skchr_fartth_2", "skchr_fartth_3"],
             "sortIndex": 1298,
             "subProfessionId": "longrange"
         },
@@ -5279,6 +5675,7 @@
             "profession": "TANK",
             "rangeId": ["4-5", "4-5", "4-6"],
             "rarity": 5,
+            "skillIds": ["skcom_atk_up[3]", "skchr_ashlok_2"],
             "sortIndex": 428,
             "subProfessionId": "fortress"
         },
@@ -5292,6 +5689,7 @@
             "profession": "SUPPORT",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_windft_1", "skchr_windft_2"],
             "sortIndex": 693,
             "subProfessionId": "craftsman"
         },
@@ -5305,6 +5703,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-3", "3-4", "3-4"],
             "rarity": 5,
+            "skillIds": ["skchr_whispr_1", "skchr_whispr_2"],
             "sortIndex": 1177,
             "subProfessionId": "healer"
         },
@@ -5318,6 +5717,7 @@
             "profession": "SPECIAL",
             "rangeId": ["y-1", "y-1", "y-1"],
             "rarity": 6,
+            "skillIds": ["skchr_mizuki_1", "skchr_mizuki_2", "skchr_mizuki_3"],
             "sortIndex": 966,
             "subProfessionId": "stalker"
         },
@@ -5331,6 +5731,7 @@
             "profession": "SNIPER",
             "rangeId": ["2-4", "2-5", "2-5"],
             "rarity": 4,
+            "skillIds": ["skchr_pinecn_1", "skchr_pinecn_2"],
             "sortIndex": 974,
             "subProfessionId": "reaperrange"
         },
@@ -5344,6 +5745,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-2", "1-2", "1-2"],
             "rarity": 4,
+            "skillIds": ["skchr_wscoot_1", "skchr_wscoot_2"],
             "sortIndex": 148,
             "subProfessionId": "librator"
         },
@@ -5357,6 +5759,7 @@
             "profession": "CASTER",
             "rangeId": ["4-1", "5-1", "5-1"],
             "rarity": 5,
+            "skillIds": ["skchr_aroma_1", "skchr_aroma_2"],
             "sortIndex": 15,
             "subProfessionId": "blastcaster"
         },
@@ -5370,6 +5773,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-3", "3-17", "3-17"],
             "rarity": 5,
+            "skillIds": ["skchr_glider_1", "skchr_glider_2"],
             "sortIndex": 729,
             "subProfessionId": "wandermedic"
         },
@@ -5383,6 +5787,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 6,
+            "skillIds": ["skchr_necras_1", "skchr_necras_2", "skchr_necras_3"],
             "sortIndex": 970,
             "subProfessionId": "soulcaster"
         },
@@ -5396,6 +5801,7 @@
             "profession": "SPECIAL",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 5,
+            "skillIds": ["skchr_robin_1", "skchr_robin_2"],
             "sortIndex": 681,
             "subProfessionId": "traper"
         },
@@ -5409,6 +5815,7 @@
             "profession": "PIONEER",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 4,
+            "skillIds": ["skchr_bstalk_1", "skchr_bstalk_2"],
             "sortIndex": 235,
             "subProfessionId": "tactician"
         },
@@ -5422,6 +5829,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_nothin_1", "skchr_nothin_2"],
             "sortIndex": 1086,
             "subProfessionId": "merchant"
         },
@@ -5435,6 +5843,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 6,
+            "skillIds": ["skchr_ash_1", "skchr_ash_2", "skchr_ash_3"],
             "sortIndex": 430,
             "subProfessionId": "fastshot"
         },
@@ -5448,6 +5857,7 @@
             "profession": "TANK",
             "rangeId": ["2-2", "2-2", "2-2"],
             "rarity": 5,
+            "skillIds": ["skchr_blitz_1", "skchr_blitz_2"],
             "sortIndex": 882,
             "subProfessionId": "shotprotector"
         },
@@ -5461,6 +5871,7 @@
             "profession": "SPECIAL",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 5,
+            "skillIds": ["skchr_rfrost_1", "skchr_rfrost_2"],
             "sortIndex": 953,
             "subProfessionId": "traper"
         },
@@ -5474,6 +5885,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_tachak_1", "skchr_tachak_2"],
             "sortIndex": 1346,
             "subProfessionId": "sword"
         },
@@ -5487,6 +5899,7 @@
             "profession": "TANK",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_cement_1", "skchr_cement_2"],
             "sortIndex": 1188,
             "subProfessionId": "duelist"
         },
@@ -5500,6 +5913,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 5,
+            "skillIds": ["skchr_qanik_1", "skchr_qanik_2"],
             "sortIndex": 1160,
             "subProfessionId": "corecaster"
         },
@@ -5513,6 +5927,7 @@
             "profession": "CASTER",
             "rangeId": ["3-13", "3-14", "3-14"],
             "rarity": 4,
+            "skillIds": ["skchr_indigo_1", "skchr_indigo_2"],
             "sortIndex": 894,
             "subProfessionId": "mystic"
         },
@@ -5526,6 +5941,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 6,
+            "skillIds": ["skchr_pasngr_1", "skchr_pasngr_2", "skchr_pasngr_3"],
             "sortIndex": 1234,
             "subProfessionId": "chain"
         },
@@ -5539,6 +5955,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-3", "3-17", "3-17"],
             "rarity": 5,
+            "skillIds": ["skchr_mberry_1", "skchr_mberry_2"],
             "sortIndex": 869,
             "subProfessionId": "wandermedic"
         },
@@ -5552,6 +5969,7 @@
             "profession": "SPECIAL",
             "rangeId": ["2-2", "3-2", "3-2"],
             "rarity": 6,
+            "skillIds": ["skchr_glady_1", "skchr_glady_2", "skchr_glady_3"],
             "sortIndex": 345,
             "subProfessionId": "hookmaster"
         },
@@ -5565,6 +5983,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_akafyu_1", "skchr_akafyu_2"],
             "sortIndex": 159,
             "subProfessionId": "musha"
         },
@@ -5578,6 +5997,7 @@
             "profession": "PIONEER",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 5,
+            "skillIds": ["skchr_blkngt_1", "skchr_blkngt_2"],
             "sortIndex": 1210,
             "subProfessionId": "tactician"
         },
@@ -5591,6 +6011,7 @@
             "profession": "SPECIAL",
             "rangeId": ["y-1", "y-1", "y-1"],
             "rarity": 5,
+            "skillIds": ["skchr_kirara_1", "skchr_kirara_2"],
             "sortIndex": 815,
             "subProfessionId": "stalker"
         },
@@ -5604,6 +6025,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skcom_assist_cost[3]", "skchr_sleach_2", "skchr_sleach_3"],
             "sortIndex": 825,
             "subProfessionId": "bearer"
         },
@@ -5617,6 +6039,7 @@
             "profession": "SUPPORT",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 4,
+            "skillIds": ["skchr_robrta_1", "skchr_robrta_2"],
             "sortIndex": 680,
             "subProfessionId": "craftsman"
         },
@@ -5630,6 +6053,7 @@
             "profession": "WARRIOR",
             "rangeId": ["2-2", "2-2", "2-2"],
             "rarity": 6,
+            "skillIds": ["skchr_pallas_1", "skchr_pallas_2", "skchr_pallas_3"],
             "sortIndex": 788,
             "subProfessionId": "instructor"
         },
@@ -5643,6 +6067,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-2", "1-2", "1-2"],
             "rarity": 5,
+            "skillIds": ["skchr_takila_1", "skchr_takila_2"],
             "sortIndex": 674,
             "subProfessionId": "librator"
         },
@@ -5656,6 +6081,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-2", "y-2"],
             "rarity": 5,
+            "skillIds": ["skchr_bobb_1", "skchr_bobb_2"],
             "sortIndex": 97,
             "subProfessionId": "ritualist"
         },
@@ -5669,6 +6095,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skcom_charge_cost[3]", "skchr_buildr_2"],
             "sortIndex": 824,
             "subProfessionId": "pioneer"
         },
@@ -5682,6 +6109,7 @@
             "profession": "CASTER",
             "rangeId": ["4-1", "5-1", "5-1"],
             "rarity": 5,
+            "skillIds": ["skchr_serum_1", "skchr_serum_2"],
             "sortIndex": 936,
             "subProfessionId": "blastcaster"
         },
@@ -5695,6 +6123,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-3", "1-3", "1-3"],
             "rarity": 4,
+            "skillIds": ["skchr_humus_1", "skchr_humus_2"],
             "sortIndex": 1149,
             "subProfessionId": "reaper"
         },
@@ -5708,6 +6137,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-6", "y-6"],
             "rarity": 5,
+            "skillIds": ["skchr_quercu_1", "skchr_quercu_2"],
             "sortIndex": 1094,
             "subProfessionId": "blessing"
         },
@@ -5721,6 +6151,7 @@
             "profession": "TANK",
             "rangeId": ["4-5", "4-5", "4-6"],
             "rarity": 5,
+            "skillIds": ["skchr_firwhl_1", "skchr_firwhl_2"],
             "sortIndex": 440,
             "subProfessionId": "fortress"
         },
@@ -5734,6 +6165,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 5,
+            "skillIds": ["skcom_magic_rage[3]", "skchr_vendla_2"],
             "sortIndex": 175,
             "subProfessionId": "incantationmedic"
         },
@@ -5747,6 +6179,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_wildmn_1", "skchr_wildmn_2"],
             "sortIndex": 1225,
             "subProfessionId": "charger"
         },
@@ -5760,6 +6193,7 @@
             "profession": "PIONEER",
             "rangeId": ["2-2", "2-2", "2-2"],
             "rarity": 5,
+            "skillIds": ["skchr_ctable_1", "skchr_ctable_2"],
             "sortIndex": 1111,
             "subProfessionId": "agent"
         },
@@ -5773,6 +6207,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 5,
+            "skillIds": ["skchr_inside_1", "skchr_inside_2"],
             "sortIndex": 1263,
             "subProfessionId": "fastshot"
         },
@@ -5786,6 +6221,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 5,
+            "skillIds": ["skchr_kaitou_1", "skchr_kaitou_2"],
             "sortIndex": 1366,
             "subProfessionId": "primcaster"
         },
@@ -5799,6 +6235,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 2,
+            "skillIds": [],
             "sortIndex": 390,
             "subProfessionId": "protector"
         },
@@ -5812,6 +6249,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-6", "3-6"],
             "rarity": 2,
+            "skillIds": [],
             "sortIndex": 243,
             "subProfessionId": "corecaster"
         },
@@ -5825,6 +6263,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 2,
+            "skillIds": [],
             "sortIndex": 1211,
             "subProfessionId": "pioneer"
         },
@@ -5838,6 +6277,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-1", "3-1", "3-1"],
             "rarity": 2,
+            "skillIds": [],
             "sortIndex": 1172,
             "subProfessionId": "fastshot"
         },
@@ -5851,6 +6291,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 3,
+            "skillIds": [],
             "sortIndex": 1303,
             "subProfessionId": "pioneer"
         },
@@ -5864,6 +6305,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-6"],
             "rarity": 3,
+            "skillIds": [],
             "sortIndex": 1306,
             "subProfessionId": "corecaster"
         },
@@ -5877,6 +6319,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-1", "3-3", "3-1"],
             "rarity": 3,
+            "skillIds": [],
             "sortIndex": 1301,
             "subProfessionId": "physician"
         },
@@ -5890,6 +6333,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-1", "3-3", "3-1"],
             "rarity": 3,
+            "skillIds": [],
             "sortIndex": 1304,
             "subProfessionId": "fastshot"
         },
@@ -5903,6 +6347,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_aguard_1"],
             "sortIndex": 889,
             "subProfessionId": "fearless"
         },
@@ -5916,6 +6361,7 @@
             "profession": "CASTER",
             "rangeId": ["2-3", "3-6", "3-6"],
             "rarity": 5,
+            "skillIds": ["skchr_acast_1"],
             "sortIndex": 807,
             "subProfessionId": "splashcaster"
         },
@@ -5929,6 +6375,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 5,
+            "skillIds": ["skchr_amedic_1"],
             "sortIndex": 1036,
             "subProfessionId": "physician"
         },
@@ -5942,6 +6389,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 5,
+            "skillIds": ["skchr_asnipe_1"],
             "sortIndex": 977,
             "subProfessionId": "fastshot"
         },
@@ -5955,6 +6403,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 5,
+            "skillIds": ["skchr_aprot_1"],
             "sortIndex": 757,
             "subProfessionId": "artsprotector"
         },
@@ -5968,6 +6417,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 5,
+            "skillIds": ["skchr_apionr_1"],
             "sortIndex": 1320,
             "subProfessionId": "pioneer"
         },
@@ -5981,6 +6431,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 3,
+            "skillIds": [],
             "sortIndex": 1311,
             "subProfessionId": "protector"
         },
@@ -5994,6 +6445,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 4,
+            "skillIds": ["skcom_charge_cost[1]", "skcom_charge_cost[2]", "skcom_charge_cost[3]"],
             "sortIndex": 1309,
             "subProfessionId": "pioneer"
         },
@@ -6007,6 +6459,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 4,
+            "skillIds": ["skcom_atk_up[1]", "skcom_atk_up[2]", "skcom_atk_up[3]"],
             "sortIndex": 1302,
             "subProfessionId": "fearless"
         },
@@ -6020,6 +6473,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 4,
+            "skillIds": ["skcom_def_up[1]", "skcom_def_up[2]", "skcom_def_up[3]"],
             "sortIndex": 1312,
             "subProfessionId": "protector"
         },
@@ -6033,6 +6487,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 4,
+            "skillIds": ["skcom_atk_up[1]", "skcom_atk_up[2]", "skcom_atk_up[3]"],
             "sortIndex": 1305,
             "subProfessionId": "fastshot"
         },
@@ -6046,6 +6501,7 @@
             "profession": "CASTER",
             "rangeId": ["3-6", "3-1", "3-1"],
             "rarity": 4,
+            "skillIds": ["skcom_magic_rage[1]", "skcom_magic_rage[2]", "skcom_magic_rage[3]"],
             "sortIndex": 1307,
             "subProfessionId": "corecaster"
         },
@@ -6059,6 +6515,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 4,
+            "skillIds": ["skcom_heal_up[1]", "skcom_heal_up[2]", "skcom_heal_up[3]"],
             "sortIndex": 1310,
             "subProfessionId": "physician"
         },
@@ -6072,6 +6529,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-2", "y-2"],
             "rarity": 4,
+            "skillIds": ["skcom_magic_rage[1]", "skcom_magic_rage[2]", "skcom_magic_rage[3]"],
             "sortIndex": 1300,
             "subProfessionId": "slower"
         },
@@ -6085,6 +6543,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 4,
+            "skillIds": ["skcom_born_up[1]", "skcom_born_up[2]", "skcom_born_up[3]"],
             "sortIndex": 1308,
             "subProfessionId": "executor"
         },
@@ -6098,6 +6557,7 @@
             "profession": "PIONEER",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_acpion_1", "skchr_acpion_2", "skchr_acpion_3"],
             "sortIndex": 1321,
             "subProfessionId": "pioneer"
         },
@@ -6111,6 +6571,7 @@
             "profession": "WARRIOR",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_acguad_1", "skchr_acguad_2", "skchr_acguad_3"],
             "sortIndex": 888,
             "subProfessionId": "fearless"
         },
@@ -6124,6 +6585,7 @@
             "profession": "TANK",
             "rangeId": ["0-1", "0-1", "0-1"],
             "rarity": 6,
+            "skillIds": ["skchr_acfend_1", "skchr_acfend_2", "skchr_acfend_3"],
             "sortIndex": 705,
             "subProfessionId": "protector"
         },
@@ -6137,6 +6599,7 @@
             "profession": "SNIPER",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 6,
+            "skillIds": ["skchr_acnipe_1", "skchr_acnipe_2", "skchr_acnipe_3"],
             "sortIndex": 979,
             "subProfessionId": "fastshot"
         },
@@ -6150,6 +6613,7 @@
             "profession": "CASTER",
             "rangeId": ["2-3", "3-6", "3-6"],
             "rarity": 6,
+            "skillIds": ["skchr_accast_1", "skchr_accast_2", "skchr_accast_3"],
             "sortIndex": 806,
             "subProfessionId": "splashcaster"
         },
@@ -6163,6 +6627,7 @@
             "profession": "MEDIC",
             "rangeId": ["3-1", "3-3", "3-3"],
             "rarity": 6,
+            "skillIds": ["skchr_acmedc_1", "skchr_acmedc_2", "skchr_acmedc_3"],
             "sortIndex": 1035,
             "subProfessionId": "physician"
         },
@@ -6176,6 +6641,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-2", "y-2"],
             "rarity": 6,
+            "skillIds": ["skchr_acsupo_1", "skchr_acsupo_2", "skchr_acsupo_3"],
             "sortIndex": 848,
             "subProfessionId": "slower"
         },
@@ -6189,6 +6655,7 @@
             "profession": "SPECIAL",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_acspec_1", "skchr_acspec_2", "skchr_acspec_3"],
             "sortIndex": 735,
             "subProfessionId": "executor"
         },
@@ -6202,6 +6669,7 @@
             "profession": "SUPPORT",
             "rangeId": ["y-2", "y-2", "y-2"],
             "rarity": 4,
+            "skillIds": ["skchr_pithst_1"],
             "sortIndex": 714,
             "subProfessionId": "ritualist"
         },
@@ -6215,6 +6683,7 @@
             "profession": "WARRIOR",
             "rangeId": ["2-3", "3-12", "3-12"],
             "rarity": 6,
+            "skillIds": ["skchr_sharp2_1"],
             "sortIndex": 657,
             "subProfessionId": "lord"
         },
@@ -6232,6 +6701,7 @@
             "profession": "TANK",
             "rangeId": ["1-1", "1-1", "1-1"],
             "rarity": 6,
+            "skillIds": ["skchr_acrbot_1"],
             "sortIndex": 63,
             "subProfessionId": "unyield"
         },

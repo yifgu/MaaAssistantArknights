@@ -172,7 +172,7 @@ For a single tactical action, prefer `battle_step`, which performs preflight, an
 
 `battle_identify` returns `identified_count`, `unresolved_count`, `ambiguous_count`, and per-card `identity_reason`; blank-name cache entries no longer suppress detail OCR. For other actions, `outcome_unknown` sets MCP `isError=true`; neither `helper_returned=true` nor `action_returned=true` proves in-game success. Inspect evidence instead of blindly retrying. Positions have `action_history_unverified` provenance, enemies are null, and model-supplied state overwrites are not supported. A standalone pause request is not confirmation; resume is guarded to pauses requested or explicitly adopted by this server.
 
-All commands cap `timeout_ms` at 30000. Ordinary timeout/cancellation terminates the worker and invalidates the session with an unknown outcome; a step waits for pause cleanup, which cannot guarantee pause during device failure. `battle_close` interrupts ordinary commands or waits for step cleanup; it does not itself pause or exit the game. `battle_get_operation` reads durable results; persistence failure explicitly blocks further commands in this service. Logs and `operations.sqlite3` live in `--user-dir`; ordinary images rotate after 128 captures, while critical evidence is retained separately and requires manual cleanup.
+Ordinary commands cap `timeout_ms` at 30000; the batch preparation inspection below has a separate limit. Ordinary timeout/cancellation terminates the worker and invalidates the session with an unknown outcome; a step waits for pause cleanup, which cannot guarantee pause during device failure. `battle_close` interrupts ordinary commands or waits for step/preparation cleanup; it does not itself pause or exit the game. `battle_get_operation` reads durable results; persistence failure explicitly blocks further commands in this service. Logs and `operations.sqlite3` live in `--user-dir`; ordinary images rotate after 128 captures, while critical evidence is retained separately and requires manual cleanup.
 
 ## Optional intelligence
 
@@ -247,6 +247,25 @@ When pause recognition fails, `pause_diagnostics` preserves the same-frame ID/ti
 `skill_ready` is true or null; classifier negatives no longer claim confirmed cooldown. `skill_evidence` preserves the same-frame ID, time, ROI, base point, class score and probabilities. Active phase, ammo and cooldown can remain unknown; scores are not calibrated accuracy. Preserve `Battle frame` / `Battle command result` entries in `asst.log`, PNGs in `battle-control/<session>/`, and `operations.sqlite3`. Synthetic regression does not establish real OCR, ROI or button compatibility; local validation remains necessary, but local screenshots are not required inputs for cloud development.
 
 After connecting and before attach, `battle_observe_preparation(stage_name, mode)` reads the manually opened formation page without device input. It returns names, candidate IDs, name rectangles and evidence; selected skills, progression and support identity remain unknown, with no detail navigation. Bind the latest snapshot using `battle_attach(..., preparation_id=..., confirm_preparation_unchanged=true)`. This is caller reconfirmation, not continuous visual verification. After roster/skill/stage/account changes, call `battle_invalidate_preparation` and recapture. Recapture, binding consumption or close prevents old snapshot reuse; live identity discrepancies appear as conflicts in `decision_context.preparation`.
+
+For a native batch inspection, call the separate **mutating** tool `battle_inspect_preparation` once:
+
+```json
+{
+  "request": {
+    "operation_id": "preparation-001",
+    "stage_name": "main_01-07",
+    "mode": "normal",
+    "timeout_ms": 120000
+  }
+}
+```
+
+Core detects occupied level-label slots, preserves unreadable names, reads level OCR and positive E1/E2 templates, then opens each uniquely identified ordinary member's portrait. It verifies the detail-page identity, opens only the skill tab, and scrolls the skill list with fixed attempt limits. A unique selected marker in a complete, ordered list yields `selected_skill=1|2|3`; `equipped_skill_id` additionally requires unique identity and bundled `battle_data.json` ordered `skillIds`. Static IDs alone never establish an equipped skill. No operator-selection card, skill option, formation confirmation or start button is clicked. Support details are currently skipped; missing promotion templates remain null, **not E0**, and unreadable levels never become 1. Empty slots are not members; absent level flags cannot prove roster completeness.
+
+Inspect `snapshot.scan_status=complete|partial`, per-operator `fields` (value, source, verification, reason, ROI and frame evidence), `evidence_frames`, `formation_restored`, `roster_unchanged` and `preparation_valid`. Completion covers detected members only; partial evidence is not a full loadout. PNG paths and acquisition times identify original frames; selected-skill evidence includes the ordered cross-frame scroll history. The operation has a 120000 ms default and a **180000 ms maximum**, unlike ordinary 30000 ms commands. Cancellation/close signals Core and waits for bounded cleanup; only a recognized matching detail page permits one back action, within the original deadline. Unknown pages are never blindly dismissed. Worker failure reports unknown restoration. Reuse an operation ID only with identical parameters; replay returns the original evidence without navigation or revalidating an invalidated snapshot. `battle_status.preparation_session_id` supports durable `battle_get_operation` lookup before attach.
+
+Only a valid latest result can use the existing explicit attach reconfirmation. New observations invalidate the previous binding; page/roster changes, failed evidence or interrupted scans do not create a valid binding. `decision_context.preparation.observed_fields` preserves native observations separately from supplied loadout fields and records conflicting values without overwriting either. These are preparation-time measurements, not continuous account/stage/configuration verification or live battle measurements. The UI recognizers reuse existing resources and have synthetic Debug Core regression coverage, **not real-device acceptance**; game layouts and selected-marker compatibility still need local validation.
 
 Repeat startup option `--allow-summon GAME_ID` only for cards confirmed to use ordinary drag deployment. Use `battle_step(action="deploy")` with the usual arguments plus the observed `card_id`; it must identify a unique, available, unchanged card no older than 30 seconds. Each attempt creates `instance:<operation_id>` without overwriting same-name instances. Position/lifecycle are unverified action history; uncertain disappearance never automatically frees a tile. Instance skills/retreat, ambiguous cards and unapproved devices remain rejected; a helper return does not prove deployment.
 

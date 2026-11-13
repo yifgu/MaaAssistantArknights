@@ -29,8 +29,14 @@ async def test_stdio_handshake_tools_and_errors(tmp_path):
         async with ClientSession(read, write) as session:
             await session.initialize()
             tools = {tool.name: tool for tool in (await session.list_tools()).tools}
-            assert len(tools) == 20
+            assert len(tools) == 21
             assert tools["battle_observe_preparation"].annotations.readOnlyHint is True
+            assert tools["battle_inspect_preparation"].annotations.readOnlyHint is False
+            preparation = tools["battle_inspect_preparation"].inputSchema["$defs"][
+                "PreparationRequest"
+            ]
+            assert preparation["properties"]["timeout_ms"]["maximum"] == 180_000
+            assert "session_id" not in preparation["properties"]
             assert tools["battle_collect_terminal"].annotations.readOnlyHint is True
             assert tools["battle_set_speed"].annotations.readOnlyHint is False
             assert tools["battle_evaluate_placement"].annotations.readOnlyHint is True
