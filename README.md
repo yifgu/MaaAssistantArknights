@@ -65,6 +65,10 @@ MAA 的意思是 MAA Assistant Arknights
 
 `--intel-config` 可接入独立的 Intelligence／PRTS stdio 服务，或经过哈希校验的本地 raw 关卡与敌人快照；外部程序和数据不随运行包捆绑，也不自动下载。`--loadout-config` 可提供本场练度／技能配置，来源与原生观察分开记录，冲突显式报告，用户填写或确认不等于现场视觉验证。
 
+战前批量检查保留原始 `game_ids`，按静态实体职业筛选普通干员后唯一化身份，并返回筛选依据；不会用战前名单消除战斗现场的身份歧义。详情打开／返回均在原期限内用新帧有界验证，过渡／未知页只读等待，不重复点击头像；已识别错误成员或编队改变立即停止，只有身份匹配的已识别详情页允许受保护返回。`evidence_frames.purpose` 是采样用途，`page` 是实际识别结果；原始错误与 `recovery_error` 分别保留。仍在原编队且名单未变时不发送返回。失败／中断／证据写入失败不建立有效绑定；合成回归不等于真实 OCR、点击或页面布局已验收。
+
+PRTS 适配器请求 stdio 双通道，分别保留上游结构化数据与内容；不修复上游未替换 token、缺失文本或不完整条件。干员查询实际使用 `get_operator_basic_info(action=skills)`，不代表完整基础资料／天赋或本账号练度；PRTS 不支持完整关卡地图、路线、波次，也不自动拼接 raw 数据。
+
 ### 安装与接入 Battle MCP
 
 `dev-v2` 上匹配现有构建路径的推送（包括 PR 合并）自动运行 **Battle MCP Bundle**，默认生成 Windows/Linux x64 的 `RelWithDebInfo` 包，不再触发全量 Release Pipeline。纯文档改动不触发 MCP 构建；其它文档与验证工作流、PR 全量构建、`v*` 标签发布和手动全量构建保持原有触发规则。

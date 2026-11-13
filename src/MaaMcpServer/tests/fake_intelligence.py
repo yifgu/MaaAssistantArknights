@@ -1,3 +1,8 @@
+import json
+import os
+from pathlib import Path
+from typing import Literal
+
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, TextContent
 
@@ -35,6 +40,69 @@ def get_stage(
         "routes_page": {"has_more": True},
     }
     return CallToolResult(content=[], structuredContent=data)
+
+
+def prts_result(tool: str, arguments: dict, identifier: str) -> CallToolResult:
+    assert os.environ["PRTS_TRANSPORT"] == "stdio"
+    assert os.environ["PRTS_OUTPUT_CHANNEL"] == "both"
+    log = os.environ.get("PRTS_TEST_LOG")
+    if log:
+        with Path(log).open("a", encoding="utf-8") as output:
+            output.write(json.dumps({"tool": tool, "arguments": arguments}) + "\n")
+    # Self-authored provider payload: placeholders and conditional candidates stay raw.
+    content = [
+        TextContent(
+            type="text",
+            text="<fixture> {normal_interval:0.00}",
+            annotations={"audience": ["assistant"], "priority": 0.5},
+            _meta={"fixture": "preserve"},
+        ),
+        TextContent(type="text", text="second channel fragment"),
+    ]
+    if identifier == "unstructured":
+        return CallToolResult(content=content)
+    if identifier == "error":
+        return CallToolResult(
+            content=content,
+            structuredContent={"status": "fixture_error", "detail": "<unavailable>"},
+            isError=True,
+        )
+    return CallToolResult(
+        content=content,
+        structuredContent={
+            "received": {"tool": tool, "arguments": arguments},
+            "description": "<fixture> {normal_interval:0.00}",
+            "skills": [
+                {
+                    "blackboard": [{"key": "normal_interval", "value": 7.5}],
+                    "condition": {"phase": 2, "level": 1},
+                }
+            ],
+            "talents": {
+                "candidates": [
+                    {"requiredPotentialRank": 0, "description": "<first>"},
+                    {"description": "<unspecified potential>"},
+                ]
+            },
+        },
+    )
+
+
+@server.tool()
+def get_stage_enemies(stage_id: str) -> CallToolResult:
+    return prts_result("get_stage_enemies", {"stage_id": stage_id}, stage_id)
+
+
+@server.tool()
+def get_operator_basic_info(name: str, action: Literal["skills"]) -> CallToolResult:
+    return prts_result(
+        "get_operator_basic_info", {"name": name, "action": action}, name
+    )
+
+
+@server.tool()
+def get_enemy_info(name: str) -> CallToolResult:
+    return prts_result("get_enemy_info", {"name": name}, name)
 
 
 if __name__ == "__main__":

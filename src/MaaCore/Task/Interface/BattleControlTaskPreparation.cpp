@@ -35,13 +35,27 @@ json::value asst::BattleControlTask::inspect_preparation(const Command& command)
     };
     json::array evidence;
     bool evidence_ok = true;
-    auto retain = [&](const CapturedFrame& captured, const std::string& page) {
+
+    struct PageState
+    {
+        std::string page = "unknown";
+        BattleFormationAnalyzer::ResultsVecOpt slots;
+        std::string target_name;
+        bool identity_matches = false;
+    };
+
+    auto retain = [&](const CapturedFrame& captured, const std::string& purpose, const PageState& state) {
         json::value observed = json::object {
             { "observation_id", std::to_string(++m_observation_id) },
             { "captured_at_ms",
               std::chrono::duration_cast<std::chrono::milliseconds>(captured.captured_at.time_since_epoch()).count() },
-            { "page", page },
+            { "page", state.page },
+            { "purpose", purpose },
         };
+        if (state.page == "operator_detail") {
+            observed["target_name"] = state.target_name;
+            observed["target_identity_verified"] = state.identity_matches;
+        }
         auto saved = save_evidence(captured, observed, true);
         evidence_ok = evidence_ok && saved.get("status", "") == "succeeded";
         observed["image_path"] = saved.get("image_path", json::value(nullptr));
@@ -51,7 +65,7 @@ json::value asst::BattleControlTask::inspect_preparation(const Command& command)
         evidence.emplace_back(observed);
         return observed;
     };
-    const auto initial_evidence = retain(frame, "formation");
+    const auto initial_evidence = retain(frame, "formation_initial", PageState { "formation", initial_slots });
     auto rect_json = [](const Rect& rect) {
         return json::array { rect.x, rect.y, rect.width, rect.height };
     };
@@ -75,20 +89,48 @@ json::value asst::BattleControlTask::inspect_preparation(const Command& command)
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
         }
     };
-    auto detail_matches = [&](const CapturedFrame& captured, const std::string& name) {
+    auto classify = [&](const CapturedFrame& captured, const std::string& name) {
+        PageState state;
         if (captured.image.empty()) {
-            return false;
+            return state;
+        }
+        state.slots = BattleFormationAnalyzer(captured.image).analyze_slots();
+        if (state.slots) {
+            state.page = "formation";
+            return state;
         }
         Matcher page(captured.image);
         page.set_task_info("BattlePreparationDetail");
         if (!page.analyze()) {
-            return false;
+            return state;
         }
+        state.page = "operator_detail";
+        state.target_name = name;
         OCRer identity(captured.image);
         identity.set_task_info("BattlePreparationDetailName");
         identity.set_required({ name });
         const auto found = identity.analyze();
-        return found && found->size() == 1 && found->front().text == name;
+        state.identity_matches = found && found->size() == 1 && found->front().text == name;
+        return state;
+    };
+    auto same_roster = [&](const BattleFormationAnalyzer::ResultsVecOpt& slots) {
+        if (!slots || slots->size() != initial_slots->size()) {
+            return false;
+        }
+        for (size_t i = 0; i < slots->size(); ++i) {
+            const auto& before = initial_slots->at(i);
+            const auto& after = slots->at(i);
+            if (before.name != after.name || std::abs(before.flag_rect.x - after.flag_rect.x) > 5 ||
+                std::abs(before.flag_rect.y - after.flag_rect.y) > 5) {
+                return false;
+            }
+        }
+        return true;
+    };
+    auto stop_reason = [&]() -> std::string {
+        return !evidence_ok                        ? "evidence_write_failed"
+               : m_cancel_requested || need_exit() ? "cancelled"
+                                                   : "deadline_exceeded";
     };
     const auto& skill_roi = Task.get("BattleQuickFormationSkillLevel-Base")->roi;
     auto unchanged = [&](const cv::Mat& a, const cv::Mat& b) {
@@ -101,20 +143,26 @@ json::value asst::BattleControlTask::inspect_preparation(const Command& command)
     bool restored = true;
     bool roster_unchanged = true;
     std::string error;
+    std::string recovery_error;
     size_t complete = 0;
     for (size_t index = 0; index < initial_slots->size(); ++index) {
         const auto& slot = initial_slots->at(index);
         json::array ids;
-        for (const auto& id : BattleData.get_ids(battle::Role::Unknown, slot.name)) {
-            ids.emplace_back(id);
+        json::array ordinary_ids;
+        for (const auto& candidate : BattleData.find_opers(battle::Role::Unknown, slot.name)) {
+            ids.emplace_back(candidate->id);
+            if (candidate->role != battle::Role::Drone && candidate->role != battle::Role::Unknown) {
+                ordinary_ids.emplace_back(candidate->id);
+            }
         }
+        const auto resolved_id = ordinary_ids.size() == 1 ? ordinary_ids[0] : json::value(nullptr);
         const auto& ordinary_roi = Task.get("BattleFormationOCRNameFlag")->roi;
         const bool support = slot.flag_rect.x >= ordinary_roi.x + ordinary_roi.width;
         json::value oper = json::object {
             { "slot", index },
             { "name", slot.name.empty() ? json::value(nullptr) : json::value(slot.name) },
             { "game_ids", ids },
-            { "operator_game_id", ids.size() == 1 ? ids[0] : json::value(nullptr) },
+            { "operator_game_id", resolved_id },
             { "name_rect", rect_json(slot.rect) },
             { "flag_rect", rect_json(slot.flag_rect) },
             { "support", support },
@@ -123,26 +171,39 @@ json::value asst::BattleControlTask::inspect_preparation(const Command& command)
         auto& fields = oper["fields"];
         fields["identity"] = field(
             oper.at("operator_game_id"),
-            slot.name.empty() ? "name_unreadable"
-            : ids.size() != 1 ? "identity_ambiguous"
-                              : "unique_name_mapping",
+            slot.name.empty()          ? "name_unreadable"
+            : ordinary_ids.empty()     ? "no_ordinary_operator_candidate"
+            : ordinary_ids.size() != 1 ? "identity_ambiguous"
+                                       : "unique_ordinary_operator_name_mapping",
             initial_evidence,
             slot.rect);
+        fields["identity"]["ordinary_operator_game_ids"] = ordinary_ids;
+        fields["identity"]["mapping_source"] = "bundled_battle_data_roles";
+        if (!resolved_id.is_null()) {
+            fields["identity"]["source"] = "preparation_vision_with_static_identity_mapping";
+            fields["identity"]["verification"] = "derived_from_observed_name_and_ordinary_operator_class";
+        }
         const Rect level_roi = slot.flag_rect.move(Task.get("BattlePreparationLevel")->rect_move);
         RegionOCRer level(formation_image);
         level.set_task_info("BattlePreparationLevel");
         level.set_roi(level_roi);
         int actual_level = -1;
-        const auto level_text = level.analyze();
+        const bool level_roi_in_frame = !level_roi.empty() && level_roi.x >= 0 && level_roi.y >= 0 &&
+                                        level_roi.x + level_roi.width <= formation_image.cols &&
+                                        level_roi.y + level_roi.height <= formation_image.rows;
+        const auto level_text = level_roi_in_frame ? level.analyze() : std::nullopt;
         if (!level_text || !utils::chars_to_number(level_text->text, actual_level) || actual_level < 1 ||
             actual_level > 90) {
             actual_level = -1;
         }
         fields["actual_level"] = field(
             actual_level == -1 ? json::value(nullptr) : json::value(actual_level),
-            actual_level == -1 ? "level_unreadable_or_out_of_range" : "level_ocr",
+            !level_roi_in_frame  ? "level_roi_out_of_bounds"
+            : actual_level == -1 ? "level_unreadable_or_out_of_range"
+                                 : "level_ocr",
             initial_evidence,
             level_roi);
+        fields["actual_level"]["roi_within_frame"] = level_roi_in_frame;
         if (level_text) {
             fields["actual_level"]["text"] = level_text->text;
             fields["actual_level"]["score"] = level_text->score;
@@ -179,13 +240,17 @@ json::value asst::BattleControlTask::inspect_preparation(const Command& command)
             fields["actual_elite"]["score"] = elite_match->score;
         }
         fields["selected_skill"] = field(nullptr, "not_inspected", nullptr, skill_roi);
-        fields["equipped_skill_id"] = field(nullptr, "skill_id_mapping_unavailable", nullptr, skill_roi);
-        const auto& skill_ids = BattleData.get_skill_ids(ids.size() == 1 ? ids[0].as_string() : "");
+        fields["equipped_skill_id"] = field(
+            nullptr,
+            resolved_id.is_null() ? "identity_unresolved" : "selected_skill_not_observed",
+            nullptr,
+            skill_roi);
+        const auto& skill_ids = BattleData.get_skill_ids(resolved_id.is_null() ? "" : resolved_id.as_string());
 
         if (error.empty() && (!can_scan() || !evidence_ok)) {
-            error = !evidence_ok ? "evidence_write_failed" : m_cancel_requested ? "cancelled" : "deadline_exceeded";
+            error = stop_reason();
         }
-        if (error.empty() && !support && ids.size() == 1 && !slot.avatar.empty()) {
+        if (error.empty() && !support && !resolved_id.is_null() && !slot.avatar.empty()) {
             // Only the formation portrait is clicked, never a card on the selection page.
             const Rect portrait_center { slot.avatar_rect.x + slot.avatar_rect.width / 2,
                                          slot.avatar_rect.y + slot.avatar_rect.height / 2,
@@ -197,31 +262,76 @@ json::value asst::BattleControlTask::inspect_preparation(const Command& command)
             snapshot["input_sent"] = true;
             restored = false;
             roster_unchanged = false;
-            delay(500);
-            auto detail = capture_frame();
-            auto detail_evidence = retain(detail, "operator_detail");
-            if (detail_matches(detail, slot.name) && can_scan()) {
+            CapturedFrame detail;
+            PageState page;
+            json::value detail_evidence;
+            auto refresh = [&](const std::string& purpose) {
+                if (Clock::now() >= command.deadline || need_exit()) {
+                    return;
+                }
+                detail = capture_frame();
+                page = classify(detail, slot.name);
+                detail_evidence = retain(detail, purpose, page);
+            };
+            auto wait_for_transition = [&](const std::string& purpose, Clock::time_point until, bool cleanup) {
+                auto pending = [&] {
+                    return page.page == "unknown" ||
+                           (cleanup ? page.identity_matches : page.page == "formation" && same_roster(page.slots));
+                };
+                auto may_wait = [&] {
+                    return evidence_ok && !need_exit() && Clock::now() < until &&
+                           (cleanup || (error.empty() && can_scan()));
+                };
+                while (pending() && may_wait()) {
+                    delay(100, cleanup);
+                    if (may_wait()) {
+                        refresh(purpose);
+                    }
+                }
+            };
+            const auto open_until =
+                std::min(command.deadline - std::chrono::seconds(5), Clock::now() + std::chrono::seconds(3));
+            refresh("detail_open_verify");
+            wait_for_transition("detail_open_verify", open_until, false);
+            if (error.empty() && !can_scan()) {
+                error = stop_reason();
+            }
+            if (error.empty() && !page.identity_matches) {
+                error = page.page == "formation"
+                            ? (same_roster(page.slots) ? "detail_transition_timeout" : "roster_changed")
+                        : page.page == "operator_detail" ? "detail_identity_not_verified"
+                                                         : "detail_page_not_verified";
+            }
+            if (error.empty() && page.identity_matches && can_scan()) {
                 PipelineAnalyzer tab(detail.image);
                 tab.set_tasks({ "BattleQuickFormationSkillPage" });
                 const auto found = tab.analyze();
-                if (found && can_scan() && ctrler()->click(found->rect)) {
-                    delay(300);
-                    detail = capture_frame();
-                    detail_evidence = retain(detail, "operator_detail");
+                if (found && can_scan()) {
+                    if (!ctrler()->click(found->rect)) {
+                        error = "skill_page_input_failed";
+                    }
+                    else {
+                        delay(300);
+                        if (can_scan()) {
+                            refresh("skill_page_verify");
+                        }
+                    }
                 }
                 bool top = false;
-                std::string skill_error = "skill_list_top_unverified";
-                for (int attempt = 0; attempt < 3 && can_scan() && detail_matches(detail, slot.name); ++attempt) {
+                std::string skill_error = error.empty() ? "skill_list_top_unverified" : error;
+                for (int attempt = 0; attempt < 3 && error.empty() && can_scan() && page.identity_matches; ++attempt) {
                     const auto previous = detail.image;
                     const auto& swipe = Task.get("BattleQuickFormationSkill-SwipeToTheUp");
                     if (!can_scan() || !ctrler()->swipe(swipe->specific_rect, swipe->rect_move, 150)) {
-                        skill_error = "skill_scroll_failed";
+                        error = skill_error = "skill_scroll_failed";
                         break;
                     }
                     delay(swipe->post_delay);
-                    detail = capture_frame();
-                    detail_evidence = retain(detail, "operator_detail");
-                    if (detail_matches(detail, slot.name) && unchanged(previous, detail.image)) {
+                    if (!can_scan()) {
+                        break;
+                    }
+                    refresh("skill_list_top_verify");
+                    if (page.identity_matches && unchanged(previous, detail.image)) {
                         top = true;
                         break;
                     }
@@ -233,17 +343,19 @@ json::value asst::BattleControlTask::inspect_preparation(const Command& command)
                     panorama = make_roi(detail.image, skill_roi).clone();
                     skill_frames.emplace_back(json::object { { "frame", detail_evidence }, { "offset_y", 0 } });
                     skill_error = "skill_list_incomplete";
-                    for (int attempt = 0; attempt < 6 && can_scan(); ++attempt) {
+                    for (int attempt = 0; attempt < 6 && can_scan() && page.identity_matches; ++attempt) {
                         const auto previous = detail.image;
                         const auto& swipe = Task.get("BattleQuickFormationSkillLevel-Swipe");
                         if (!ctrler()->swipe(swipe->specific_rect, swipe->rect_move, 300)) {
-                            skill_error = "skill_scroll_failed";
+                            error = skill_error = "skill_scroll_failed";
                             break;
                         }
                         delay(swipe->post_delay);
-                        detail = capture_frame();
-                        detail_evidence = retain(detail, "operator_detail");
-                        if (!detail_matches(detail, slot.name)) {
+                        if (!can_scan()) {
+                            break;
+                        }
+                        refresh("skill_list_scroll_verify");
+                        if (!page.identity_matches) {
                             skill_error = "detail_identity_changed";
                             break;
                         }
@@ -281,7 +393,7 @@ json::value asst::BattleControlTask::inspect_preparation(const Command& command)
                             json::object { { "frame", detail_evidence }, { "offset_y", offset } });
                     }
                 }
-                if (top && bottom) {
+                if (top && bottom && can_scan() && page.identity_matches) {
                     MultiMatcher rows(panorama);
                     rows.set_task_info("BattlePreparationSkillAnchors");
                     rows.set_roi({ 0, 0, panorama.cols, panorama.rows });
@@ -330,6 +442,10 @@ json::value asst::BattleControlTask::inspect_preparation(const Command& command)
                                         fields["equipped_skill_id"]["mapping_source"] =
                                             "bundled_battle_data_ordered_skill_ids";
                                     }
+                                    else {
+                                        fields["equipped_skill_id"]["reason"] = "skill_id_mapping_unavailable";
+                                        fields["equipped_skill_id"]["evidence"] = source.at("frame");
+                                    }
                                     skill_error.clear();
                                     break;
                                 }
@@ -342,44 +458,54 @@ json::value asst::BattleControlTask::inspect_preparation(const Command& command)
                     fields["selected_skill"]["evidence"] = detail_evidence;
                     fields["selected_skill"]["row_order_frames"] = skill_frames;
                 }
+                if (error.empty() && !can_scan()) {
+                    error = stop_reason();
+                }
+                if (error.empty() && !page.identity_matches) {
+                    error = "detail_page_or_identity_changed";
+                }
             }
             else {
-                fields["selected_skill"]["reason"] = "detail_page_or_identity_not_verified";
+                fields["selected_skill"]["reason"] = error;
                 fields["selected_skill"]["evidence"] = detail_evidence;
             }
-            // Cancel still permits one visually guarded back action within the original deadline.
-            if (Clock::now() < command.deadline && detail_matches(detail, slot.name)) {
+            // Cleanup uses a fresh frame, even after cancellation or evidence failure, but never extends the deadline.
+            if (Clock::now() < command.deadline && !need_exit()) {
+                refresh("recovery_check");
+            }
+            restored = page.slots.has_value();
+            roster_unchanged = same_roster(page.slots);
+            if (!restored && Clock::now() < command.deadline && !need_exit() && page.identity_matches) {
                 Matcher back(detail.image);
                 back.set_task_info("BattlePreparationReturn");
                 const auto button = back.analyze();
                 if (button && Clock::now() < command.deadline && ctrler()->click(button->rect)) {
-                    delay(500, true);
-                    frame = capture_frame();
-                    retain(frame, "formation_return");
-                    const auto returned = BattleFormationAnalyzer(frame.image).analyze_slots();
-                    restored = returned.has_value();
-                    roster_unchanged = restored && returned->size() == initial_slots->size();
-                    if (roster_unchanged) {
-                        for (size_t i = 0; i < returned->size(); ++i) {
-                            const auto& before = initial_slots->at(i);
-                            const auto& after = returned->at(i);
-                            if (before.name != after.name || std::abs(before.flag_rect.x - after.flag_rect.x) > 5 ||
-                                std::abs(before.flag_rect.y - after.flag_rect.y) > 5) {
-                                roster_unchanged = false;
-                            }
-                        }
+                    const auto return_until = std::min(command.deadline, Clock::now() + std::chrono::seconds(3));
+                    delay(100, true);
+                    if (Clock::now() < return_until && !need_exit()) {
+                        refresh("formation_return_verify");
+                        wait_for_transition("formation_return_verify", return_until, true);
                     }
+                    restored = page.slots.has_value();
+                    roster_unchanged = same_roster(page.slots);
                 }
             }
+            if (error.empty() &&
+                (!evidence_ok || m_cancel_requested || need_exit() || Clock::now() >= command.deadline)) {
+                error = stop_reason();
+            }
             if (!restored || !roster_unchanged) {
-                error = !restored ? "formation_not_restored" : "roster_changed";
+                recovery_error = !restored ? "formation_not_restored" : "roster_changed";
+                if (error.empty()) {
+                    error = recovery_error;
+                }
             }
         }
         else {
-            fields["selected_skill"]["reason"] = !error.empty()    ? error
-                                                 : support         ? "support_detail_navigation_unsupported"
-                                                 : ids.size() != 1 ? "identity_not_unique"
-                                                                   : "portrait_not_localized";
+            fields["selected_skill"]["reason"] = !error.empty()          ? error
+                                                 : support               ? "support_detail_navigation_unsupported"
+                                                 : resolved_id.is_null() ? "identity_not_unique"
+                                                                         : "portrait_not_localized";
         }
         bool configured = true;
         for (const auto& key : { "identity", "actual_elite", "actual_level", "selected_skill" }) {
@@ -424,6 +550,11 @@ json::value asst::BattleControlTask::inspect_preparation(const Command& command)
             json::object { { "code", error },
                            { "message", "Inspect evidence and recovery state; do not blindly retry navigation" } };
         LogWarn << __FUNCTION__ << result;
+    }
+    if (!recovery_error.empty()) {
+        result["recovery_error"] =
+            json::object { { "code", recovery_error },
+                           { "message", "Inspect fresh page and roster evidence before recovery" } };
     }
     return result;
 }

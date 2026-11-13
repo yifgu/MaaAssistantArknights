@@ -132,6 +132,11 @@ class IntelligenceClient:
             warnings.append(
                 "PRTS stage query returns enemies, not tiles, routes or waves."
             )
+        if self.config.provider == "prts" and kind == "operator":
+            warnings.append(
+                "PRTS operator query uses action=skills, not complete basic information or talents. "
+                "Returned candidates are static data, not this account's measured configuration."
+            )
         data = result.structuredContent
         if self.config.provider == "intelligence" and data is not None:
             status = data.get("status")
@@ -154,7 +159,9 @@ class IntelligenceClient:
             "cached": False,
             "cache_age_seconds": 0,
             "data": data,
-            "content": [item.model_dump(mode="json") for item in result.content],
+            "content": [
+                item.model_dump(mode="json", by_alias=True) for item in result.content
+            ],
             "warnings": warnings,
         }
         if len(self.cache) >= 128:
