@@ -30,6 +30,7 @@ from .models import (
     UnitRequest,
 )
 from .service import BattleError, BattleService
+from .unit_data import UnitCatalog
 
 READ_ONLY = ToolAnnotations(
     readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
@@ -105,6 +106,12 @@ def create_server(
         ),
         lifespan=lifespan,
     )
+    catalog = UnitCatalog(service.settings.resource_dir)
+
+    @server.tool(annotations=READ_ONLY)
+    async def battle_get_unit_info(game_id: Identifier) -> CallToolResult:
+        """Query bundled unit kinds, effects, base key frames, skills/talents, token ID relations and adapter capabilities. No connection, input or intelligence provider required."""
+        return tool_result(catalog.get(game_id))
 
     @server.tool(annotations=READ_ONLY)
     async def battle_status() -> CallToolResult:
@@ -121,7 +128,10 @@ def create_server(
                 "limitations": [
                     "Only a single caller-supplied fixed map; no camera movement or stage recognition.",
                     "Battlefield positions are unverified action history; no mid-battle reconstruction.",
-                    "Summon deployment requires a trusted startup allowlist and fresh card_id; instance skills/retreat remain unsupported.",
+                    "Reviewed summon adapters need a fresh concrete card_id, not a startup ID enumeration. Explicit legacy allowlists remain restrictions.",
+                    "Instance presence and requested location are separate. Selected-name evidence alone never verifies a tile or authorizes retreat.",
+                    "Retreat requires a positive selected identity/button and a verified tile anchor; no production tile-anchor adapter is available yet.",
+                    "TL/act55side dynamic terrain and grenade disappearance/explosion remain unsupported; deployment is refused rather than using stale static terrain.",
                     "Mutations are not automatically confirmed; inspect evidence after each action.",
                     "battle_step bounds one action or host-time wait; pause and terminal evidence are returned separately.",
                     "Terminal OCR currently recognizes configured CN/English titles only; other screens remain unknown.",
@@ -238,8 +248,8 @@ def create_server(
 
     @server.tool(annotations=MUTATING)
     async def battle_deploy(request: DeployRequest) -> CallToolResult:
-        """Deploy a uniquely recognized unit to a MaaCore grid tile. No waiting for cost/cooldown; resume first."""
-        return tool_result(
+        """Legacy deployment entry; same bounded preflight and pause cleanup as battle_step. Resume first; summons require card_id."""
+        return evidence_result(
             await service.command(
                 "deploy",
                 request,
@@ -247,15 +257,24 @@ def create_server(
                     "unit_id": request.unit_id,
                     "location": request.location,
                     "direction": request.direction,
+                    **(
+                        {"card_id": request.card_id}
+                        if request.card_id is not None
+                        else {}
+                    ),
                 },
-            )
+            ),
+            "return_image_path",
+            "capture_image_path",
         )
 
     @server.tool(annotations=MUTATING)
     async def battle_retreat(request: UnitRequest) -> CallToolResult:
-        """Attempt retreat at the unit's tracked position. Confirm the position with evidence first."""
-        return tool_result(
-            await service.command("retreat", request, {"unit_id": request.unit_id})
+        """Legacy entry with the same instance capability, selection and tile-anchor guards as battle_step. Resume first."""
+        return evidence_result(
+            await service.command("retreat", request, {"unit_id": request.unit_id}),
+            "return_image_path",
+            "capture_image_path",
         )
 
     @server.tool(annotations=MUTATING)
@@ -368,10 +387,19 @@ def main() -> None:
     parser.add_argument("--intel-config", type=Path)
     parser.add_argument("--loadout-config", type=Path)
     parser.add_argument(
-        "--allow-summon", action="append", default=[], metavar="GAME_ID"
+        "--allow-summon",
+        action="append",
+        default=None,
+        metavar="GAME_ID",
+        help="Deprecated: restrict reviewed summon adapters to these IDs; never authorizes unsupported interactions",
     )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
+    if args.allow_summon is not None:
+        logging.getLogger(__name__).warning(
+            "--allow-summon is deprecated and retained as an explicit restrictive filter; "
+            "it does not authorize unknown or special interactions"
+        )
     core_dir = args.core_dir.resolve()
     settings = Settings(
         core_dir=core_dir,

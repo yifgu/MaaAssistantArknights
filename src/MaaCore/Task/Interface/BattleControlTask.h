@@ -4,10 +4,12 @@
 #include <chrono>
 #include <condition_variable>
 #include <deque>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #include "Task/BattleHelper.h"
 #include "Task/InterfaceTask.h"
@@ -51,7 +53,69 @@ private:
         Rect rect;
         size_t index;
         std::chrono::steady_clock::time_point seen;
+        std::vector<std::string> game_ids;
+        cv::Mat avatar;
     };
+
+    enum class Presence
+    {
+        Pending,
+        Present,
+        Gone,
+        Unknown,
+    };
+
+    enum class LocationEvidence
+    {
+        Requested,
+        SelectedIdentityOnly,
+        VerifiedTileAnchor,
+    };
+
+    enum class OperationState
+    {
+        Pending,
+        DeployInputAttempted,
+        RetreatInputAttempted,
+    };
+
+    struct SelectionEvidence
+    {
+        std::string observation_id;
+        std::string image_path;
+        std::string name;
+        std::vector<std::string> game_ids;
+        Rect button;
+        bool button_detected = false;
+        std::optional<bool> button_available;
+        bool accepted = false;
+    };
+
+    struct Instance
+    {
+        std::string id;
+        std::string operation_id;
+        std::string game_id;
+        battle::OperNameTag tag;
+        Point location;
+        std::string direction;
+        Presence presence = Presence::Pending;
+        std::string presence_source = "action_pending";
+        LocationEvidence location_evidence = LocationEvidence::Requested;
+        OperationState operation_state = OperationState::Pending;
+        bool helper_returned = false;
+        std::vector<SelectionEvidence> selection_evidence;
+    };
+
+    bool tile_reserved(const Point& location) const;
+    bool selection_ambiguous(const Instance& instance) const;
+    bool inspect_instance_selection(
+        const Command& command,
+        Instance& instance,
+        Rect& retreat_button,
+        bool& dismiss_allowed);
+    json::value instance_info(const Instance& instance) const;
+    json::value entity_summary(const std::vector<std::string>& ids) const;
 
     bool validate_command(const json::value& params) const;
     CapturedFrame capture_frame();
@@ -104,8 +168,9 @@ private:
                                                    { "terminal_confidence", nullptr },
                                                    { "result_source", "unrecognized" } };
     std::unordered_set<std::string> m_allowed_summons;
+    bool m_restrict_summons = false;
     std::unordered_map<std::string, Card> m_cards;
-    json::array m_summons;
+    std::map<std::string, Instance> m_instances;
     std::atomic_bool m_cancel_requested = false;
     std::string m_active_command_id;
     std::string m_session_id;

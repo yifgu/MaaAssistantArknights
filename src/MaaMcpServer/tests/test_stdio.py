@@ -29,7 +29,8 @@ async def test_stdio_handshake_tools_and_errors(tmp_path):
         async with ClientSession(read, write) as session:
             await session.initialize()
             tools = {tool.name: tool for tool in (await session.list_tools()).tools}
-            assert len(tools) == 21
+            assert len(tools) == 22
+            assert tools["battle_get_unit_info"].annotations.readOnlyHint is True
             assert tools["battle_observe_preparation"].annotations.readOnlyHint is True
             assert tools["battle_inspect_preparation"].annotations.readOnlyHint is False
             preparation = tools["battle_inspect_preparation"].inputSchema["$defs"][

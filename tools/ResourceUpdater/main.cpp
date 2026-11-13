@@ -20,6 +20,7 @@
 #include "Utils/Platform/PlatformWin32.h"
 #endif
 
+#include "UnitInfoGenerator.h"
 #include "Utils/StringMisc.hpp"
 
 namespace fs = std::filesystem;
@@ -220,6 +221,24 @@ int main([[maybe_unused]] int argc, char** argv)
     }
     if (argc == 4 && std::string_view(argv[1]) == "--oper-avatar") {
         return update_oper_avatars_from_battle_data(fs::path(argv[2]), fs::path(argv[3])) ? 0 : 1;
+    }
+    if (argc == 5 && std::string_view(argv[1]) == "--unit-info") {
+        const auto input = fs::path(argv[2]);
+        const auto characters = json::open(input / "character_table.json");
+        const auto patches = json::open(input / "char_patch_table.json");
+        const auto ranges = json::open(input / "range_table.json");
+        const auto skills = json::open(input / "skill_table.json");
+        const auto source = json::open(fs::path(argv[4]));
+        if (!characters || !patches || !patches->find<json::object>("patchChars") || !ranges || !skills || !source ||
+            !source->find<std::string>("repository") || !source->find<std::string>("commit")) {
+            std::cerr << "Unit metadata requires character/skill tables and a source manifest\n";
+            return 1;
+        }
+        std::ofstream output { fs::path(argv[3]) };
+        write_unit_info(
+            output,
+            generate_unit_info(merge_unit_characters(*characters, *patches), *skills, *source, *ranges));
+        return output.good() ? 0 : 1;
     }
 
     // ---- PATH DECLARATION ----
@@ -1672,6 +1691,25 @@ bool update_battle_chars_info(
     std::ofstream ofs(out_file, std::ios::out);
     ofs << result.format() << '\n';
     ofs.close();
+
+    // A pinned source manifest opts this data checkout into reproducible MCP metadata generation.
+    if (const auto source = json::open(official_dir / "unit_info_source.json")) {
+        const auto skills = json::open(official_dir / "skill_table.json");
+        if (!skills) {
+            return false;
+        }
+        std::ofstream unit_output(output_dir / "unit_info.json");
+        write_unit_info(
+            unit_output,
+            generate_unit_info(
+                merge_unit_characters(chars_cn_opt.value(), chars_patch_opt.value()),
+                *skills,
+                *source,
+                range_json));
+        if (!unit_output.good()) {
+            return false;
+        }
+    }
 
     return true;
 }

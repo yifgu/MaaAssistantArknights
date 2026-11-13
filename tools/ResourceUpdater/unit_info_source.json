@@ -1,0 +1,26 @@
+{
+    "repository": "ArknightsAssets/ArknightsGamedata",
+    "commit": "b1031d1035e8df3042f601e33d5c1dfab8345d59",
+    "region": "cn",
+    "data_version": "b1031d1035e8df3042f601e33d5c1dfab8345d59",
+    "generator": "tools/ResourceUpdater/UnitInfoGenerator.h",
+    "generator_version": 1,
+    "files": {
+        "char_patch_table.json": {
+            "path": "cn/gamedata/excel/char_patch_table.json",
+            "sha256": "2cde3e0fce094fc5e68a293e0252fe22f4f143fcd6213793b7e3a58ba2c23dc6"
+        },
+        "character_table.json": {
+            "path": "cn/gamedata/excel/character_table.json",
+            "sha256": "166e1e86842693feadb0bc25f05270f93fb57d05e6a69c19c7a2d8c0e08567ba"
+        },
+        "skill_table.json": {
+            "path": "cn/gamedata/excel/skill_table.json",
+            "sha256": "dcfd9b9fbf41ed2220f9135709fe980a29bbcef60bac3c5e488384f9954061ee"
+        },
+        "range_table.json": {
+            "path": "cn/gamedata/excel/range_table.json",
+            "sha256": "7028a8fd0d4b5943996dba04e47262d39980695ee31901421c98abd3f7e18618"
+        }
+    }
+}

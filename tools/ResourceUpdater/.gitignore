@@ -6,6 +6,7 @@ ResourceUpdater
 # for macos
 res_updater
 *.h
+!UnitInfoGenerator.h
 *.so.*
 *.dylib.*
 

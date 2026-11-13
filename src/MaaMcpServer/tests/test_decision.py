@@ -168,10 +168,12 @@ def test_loadout_binding_sources_and_ambiguous_identity(settings, tmp_path):
     }
     context.enrich_snapshot(snapshot)
     known, unknown = [unit["decision_context"] for unit in snapshot["deployment"]]
-    assert known["operator_game_id"] == "char_a"
-    assert known["loadout"]["equipped_skill_id"]["value"] == "skill_a"
-    assert known["loadout"]["actual_elite"]["verification"] == "user_confirmed"
-    assert known["loadout_provenance"]["visually_verified"] is False
+    assert known["operator_game_id"] is None
+    assert known["configured_candidate_game_ids"] == ["char_a"]
+    assert known["identity_verified"] is False
+    assert known["loadout"]["equipped_skill_id"]["value"] is None
+    assert known["loadout"]["actual_elite"]["verification"] == "unknown"
+    assert known["loadout_provenance"] is None
     assert known["loadout"]["sp_current"]["value"] is None
     assert unknown["operator_game_id"] is None
     assert unknown["loadout"]["actual_elite"]["value"] is None

@@ -102,7 +102,7 @@ worker는 MCP 입출력을 상속하지 않고 전용 stdin/stdout 파이프가 
 
 동일한 `--user-dir`에는 프로세스 간 제어 잠금이 적용됩니다. 같은 기기는 항상 같은 디렉터리를 사용하세요. 다른 디렉터리의 서버나 외부 GUI가 기기를 조작하는 것은 막을 수 없습니다.
 
-소환물 배치는 신뢰할 수 있는 시작 설정의 허용 목록으로 제한하고 개체별로 기록합니다. 미허용 장치 및 소환물 스킬/퇴각은 계속 거부합니다. 자세한 내용은 아래를 참고하세요.
+지원되는 소환 카드는 시작 시 ID 열거가 필요하지 않습니다. 미확인 상호작용은 거부하고 입력 상태, 존재 증거, 요청 위치를 분리합니다. 완전한 배치/퇴각 루프는 아직 미완성이고 실기기 검증도 되지 않았습니다. 자세한 내용은 아래를 참고하세요.
 
 ```bash
 uv run --project src/MaaMcpServer maa-battle-mcp \
@@ -267,7 +267,33 @@ Core는 레벨 표시로 점유 슬롯을 찾고 이름을 읽지 못한 항목�
 
 유효한 최신 결과만 기존의 명시적 재확인 attach에 사용할 수 있습니다. 새 관측은 이전 연결을 무효화하며 화면/편성 변경, 증거 저장 실패, 중단된 스캔은 유효한 연결을 만들지 않습니다. `decision_context.preparation.observed_fields`는 네이티브 관측을 입력된 구성과 분리해 유지하고 충돌을 기록하지만 어느 쪽도 덮어쓰지 않습니다. 이는 전투 전 측정이지 계정/스테이지/구성의 지속 검증이나 실시간 전투 측정이 아닙니다. 기존 리소스를 재사용하는 인식기는 합성 Debug Core 회귀가 있지만 **실기기 검증은 아닙니다**. 실제 화면 배치와 선택 표시 호환성은 로컬에서 확인해야 합니다.
 
-일반 드래그 배치 방식이 확인된 소환 카드만 시작 시 `--allow-summon GAME_ID`를 반복 지정해 허용합니다. `battle_step(action="deploy")`에는 기존 인수 외에 관측한 `card_id`가 필요하며 유일하고 사용 가능하며 위치가 같고 30초 이내인 카드여야 합니다. 매 시도마다 독립적인 `instance:<operation_id>`를 만들고 동명 개체를 덮어쓰지 않습니다. 위치/생존은 미검증 행동 이력이고 미확인 소멸로 타일을 자동 해제하지 않습니다. 개체 스킬/퇴각, 모호한 카드, 미허용 장치는 거부하며 helper 반환값은 배치 성공 증거가 아닙니다.
+### 오프라인 유닛 정보와 소유 개체
+
+`battle_get_unit_info(game_id)`는 기기 연결이나 정보 provider 없이 번들 `resource/unit_info.json`에서 `unit`, `source`, `resource_sha256`, `scope`를 반환합니다. TOKEN/TRAP/오퍼레이터 분류, 효과, 기본 속성 키 프레임과 범위 ID, 스킬 참조/정의, 재능 blackboard, 조건부 `tokenKey`/`overrideTokenKey` ID 관계를 보존합니다. 정적 표의 값은 현장 카드 `cost`/`available`/`cooling`이나 실제 장착 상태 측정이 아닙니다. 사용자 설정으로 시각 ID의 모호함을 해결하지 않습니다.
+
+`base_range_definitions`는 `base_range_coordinate_system`에 명시된 게임 상대 행/열 좌표를 보존하며 시각적으로 측정한 MAA 타일이 아닙니다.
+
+능력 필드는 `value=true|false|null`, `source`, `reason`, `game_data_value`, `live_verified`입니다. 검토된 adapter 값은 제한된 상호작용 계약이며 엔진 정책이나 실기기 합격의 증거가 아닙니다. `execution_support`는 입력 시도만 가능한 작업과 미지원 작업을 별도로 표시합니다. unknown은 허가가 아닙니다. 첫 소환 adapter는 메딕프로브 `token_10000_silent_healrb`의 일반 드래그 및 `direction="None"`입니다. 다른 TOKEN/TRAP은 미확인으로 거부하며 동일 타일 공존과 소환물 스킬은 지원하지 않습니다.
+
+`battle_step(action="deploy", unit_id=..., card_id=...)`를 사용합니다. `game_id`는 종류, `card_id`는 관측 카드, `instance:<operation_id>`는 소유 배치 시도입니다. 이름의 유일성보다 구체적 카드 선택을 먼저 하므로 동명 카드를 구별하지만 게임 ID는 유일해야 합니다. 재개 후 신원, 레이아웃, 외관, 가용성 및 30초 신선도를 재검사합니다. `--allow-summon` 생략은 지원 adapter를 허용하며 이전 옵션은 경고와 함께 명시적 제한으로 유지합니다. 미지원 상호작용을 허가하지 않습니다. 네이티브 `allowed_summons=[]`는 모든 소환을 제외하고 필드 생략만 지원 카드를 활성화합니다.
+
+C++ 타입으로 presence, 위치 증거 및 작업 상태를 분리합니다. 입력 및 비용/재배치 상태 변화는 배치 확인이 아닙니다. 변경형 유한 상세 검사는 두 프레임의 이름/아이콘 증거를 기록하지만 이번 개체의 존재나 선택 타일을 증명하지 않습니다. 미확인 개체는 요청 타일을 예약합니다. `battle_step(action="retreat", unit_id="instance:...")`는 능력을 먼저 확인하고 동종/이웃 개체의 모호함을 거부한 뒤 신원 및 긍정적인 퇴각 버튼을 확인합니다. **실제 선택 타일 anchor 및 명확한 이탈 규칙이 아직 없으므로 anchor 미확인 시 퇴각 버튼을 누르지 않으며 미확인 점유를 해제하지 않습니다.** 버튼 미검출은 `selection_unverified`로, 영구 퇴각 불가 추정이 아닙니다. 명시적 false만 `not_retreatable`입니다. 수동 관찰은 클릭/재개하지 않고 시간이나 단일 프레임 미검출로 소멸을 판정하지 않습니다. 검증된 종결 화면은 이탈을 기록할 수 있습니다. 재전송은 저널/증거를 보존하고 재입력하지 않으며 재시작/중도 접속 복원은 지원하지 않습니다.
+
+긍정적인 상세 프레임은 선택한 종류의 존재(`selected_kind_present`)만 보여 주며 이번 배치 성공은 증명하지 않습니다. 타일 anchor 없이는 소유 개체 `presence`가 unknown입니다. 퇴각 아이콘 일치는 `retreat_button_detected`이지 활성화 증명이 아니며 가용성 규칙이 없어 `retreat_button_available`은 null입니다.
+
+이전 `battle_deploy`는 선택적 `card_id`를 받으며 이전 배치/퇴각/스킬 진입점도 동일 유한 사전 검사 및 일시정지 정리를 사용합니다. 시작 시 실행 중 전투가 필요하고 능력/개체/위치 검사를 우회할 수 없습니다. 선택 타일 anchor 없는 일반 오퍼레이터 스킬/퇴각도 미검증 이력으로 실행하지 않고 거부합니다.
+
+TL/TL-EX는 `act55side_*` ID를 사용합니다(예: `act55side_ex01`, `TL-EX-1` 아님). ｢自爆榴弹｣(폭발하는 스테이지 장치) `trap_341_dsjtzd`는 오프라인 조회 가능하며 기본 비용 20, 재배치 20초, 범위 `x-4`, 나열된 스킬 없음, 재능 blackboard 기절 5초입니다. **재배치 시간은 폭발 카운트다운이 아닙니다.** 원본 표는 드래그/퇴각 정책을 증명하지 않습니다. 폭발, 확실한 소멸 및 翻板 변화의 검증된 실제 이미지 규칙이 없어 동적 overlay는 unknown/unsupported이고 TL 배치는 `dynamic_terrain_unknown`입니다. 예상 시간으로 정적 지도를 바꾸지 않으며 TL 완전 루프 또는 실기기 합격을 주장하지 않습니다.
+
+Debug `res_updater`를 빌드한 후 고정 버전의 로컬 캐릭터/스킬 표로 재생성합니다.
+
+```bash
+python tools/ResourceUpdater/generate_unit_info.py \
+  --updater build-mcp/bin/Debug/res_updater \
+  --input path/to/excel --output resource/unit_info.json
+```
+
+`tools/ResourceUpdater/unit_info_source.json`은 저장소, commit, 지역 및 캐릭터/승격 캐릭터/스킬/범위 네 입력 SHA-256을 고정하고 wrapper는 검증 후 단일 C++ generator를 호출합니다. 실행 중 다운로드/Wiki가 필요하지 않습니다. 생성 JSON은 한 레코드당 한 줄이며 Prettier에서 제외합니다. 일반 리소스 갱신은 입력 폴더에 `unit_info_source.json`이 있을 때만 보조 파일을 재생성합니다. 선언한 출처를 갱신하면 재생성/검증해야 하며 해시는 설치 게임 호환성을 증명하지 않습니다. 외부 raw 스테이지/적 스냅샷은 별도 설정이며 번들에 포함되지 않습니다.
 
 `battle_set_speed(request)`은 `session_id`, `operation_id`, `multiplier=1|2`, `timeout_ms`를 받습니다. 명확히 정지된 상태에서만 속도를 읽고 필요하면 한 번 전환한 뒤 재확인하여 전후 증거를 반환합니다. 정지 소유권을 바꾸거나 자동 재개하지 않으며 2배속 중복 요청이 1배속으로 되돌리지 않습니다. 속도 미확인 시 클릭하지 않고 변경 후 검증 실패 시 입력을 잠급니다. 가속 판단은 전적으로 호스트가 합니다. 대기는 호스트 시간이며 관측한 캡처 비용으로 정리 예산을 확보하고 부족하면 재개를 거부합니다. `cleanup_reserve_ms`, `resumed_interval_upper_bound_ms`, `deadline_margin_ms`는 정확한 게임 시간 보장이 아닙니다.
 
@@ -277,7 +303,9 @@ Core는 레벨 표시로 점유 슬롯을 찾고 이름을 읽지 못한 항목�
 
 `--intel-config`의 `provider="raw"`는 신뢰할 수 있는 로컬 파일만 읽으며 자동 다운로드하지 않습니다. `root`(절대 디렉터리), `repository`, `commit`(40자리), `data_version`, `region`, `stages`, `enemy_database`를 설정합니다. `stages`는 stage ID를 `{"path":"relative/path","sha256":"64-character hash"}`로 매핑하며 `enemy_database`도 같은 구조입니다. 파일마다 64 MiB 제한과 SHA-256 검증을 적용하고 루트 밖 경로를 거부합니다.
 
-연결된 세션에서 `intel_query(..., complete_stage=true)`를 사용합니다. 위쪽 원점 맵과 아래쪽 원점 경로를 따로 변환해 `maa_grid`를 출력하고 대기 체크포인트를 이동점으로 취급하지 않습니다. SPAWN action 하나당 레코드 하나를 만들며 count, delay, interval, 숨김 그룹, 차단 필드를 유지합니다. 적 레벨 상속, 정의 플래그, 스테이지 덮어쓰기를 처리하며 Key/Value와 key/value를 지원합니다. 미확인 기믹과 비 SPAWN actions를 빈 집합으로 바꾸지 않습니다. `mode_modifiers`는 난이도 mask만 선택하고 룬 해석 완료를 주장하지 않으며 `alignment=unknown`입니다. `mode=normal|challenge`는 난이도이며 연습/실전 구분이 아닙니다. 외부 provider에는 schema가 지원을 선언할 때만 mode를 전달하고 캐시도 mode별로 분리합니다. 해시와 버전 선언은 설치 게임 버전 일치나 독립 provider 호환성을 증명하지 않으며 게임 데이터는 서비스와 재배포하지 않습니다.
+연결된 세션에서 `intel_query(..., complete_stage=true)`를 사용합니다. 위쪽 원점 맵과 아래쪽 원점 경로를 따로 변환해 `maa_grid`를 출력하고 대기 체크포인트를 이동점으로 취급하지 않습니다. SPAWN action 하나당 레코드 하나를 만들며 count, delay, interval, 숨김 그룹, 차단 필드를 유지합니다. 적 레벨 상속, 정의 플래그, 스테이지 덮어쓰기를 처리하며 Key/Value와 key/value를 지원합니다. 미확인 기믹과 비 SPAWN actions를 빈 집합으로 바꾸지 않습니다. `mode_modifiers`는 난이도 mask만 선택하고 룬 해석 완료를 주장하지 않으며 `alignment=unknown`입니다. `mode=normal|challenge`는 난이도이며 연습/실전 구분이 아닙니다. 외부 provider에는 schema가 지원을 선언할 때만 mode를 전달하고 캐시도 mode별로 분리합니다. 해시와 버전 선언은 설치 게임 버전 일치나 독립 provider 호환성을 증명하지 않으며 외부 provider 데이터 패키지는 서비스에 포함해 재배포하지 않습니다.
+
+위의 재배포하지 않는다는 설명은 외부 raw 스테이지/적 입력만 해당하며 앞서 설명한 오프라인 유닛 정보는 별도로 번들에 포함됩니다.
 
 ## Core 프로토콜
 

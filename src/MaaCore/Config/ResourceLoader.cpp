@@ -164,6 +164,10 @@ bool asst::ResourceLoader::load(const std::filesystem::path& path)
         return false;
     }
 
+    if (!BattleData.load_unit_info(path / "unit_info.json"_p)) {
+        return false;
+    }
+
     // ==================== 缓存加载（依赖 BattleDataConfig） ====================
     load_cache.template operator()<AvatarCacheManager>("avatars"_p);
 

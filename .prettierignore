@@ -6,6 +6,8 @@ src/MaaMacGui
 src/MaaUtils
 
 resource/Arknights-Tile-Pos/
+# Canonical generated metadata keeps one record per line; regenerate with ResourceUpdater.
+resource/unit_info.json
 tools/OptimizeTemplates/optimize_templates.json
 
 CITATION.cff

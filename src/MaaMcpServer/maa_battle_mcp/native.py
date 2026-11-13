@@ -207,7 +207,11 @@ class NativeCore:
                         {
                             "session_id": self.preparation_session,
                             "preparation_only": True,
-                            "allowed_summons": settings.allowed_summons,
+                            **(
+                                {"allowed_summons": settings.allowed_summons}
+                                if settings.allowed_summons is not None
+                                else {}
+                            ),
                         }
                     ).encode("utf-8"),
                 )
@@ -266,7 +270,14 @@ class NativeCore:
                     self.handle,
                     b"BattleControl",
                     json.dumps(
-                        {**payload, "allowed_summons": settings.allowed_summons}
+                        {
+                            **payload,
+                            **(
+                                {"allowed_summons": settings.allowed_summons}
+                                if settings.allowed_summons is not None
+                                else {}
+                            ),
+                        }
                     ).encode("utf-8"),
                 )
                 self._require(

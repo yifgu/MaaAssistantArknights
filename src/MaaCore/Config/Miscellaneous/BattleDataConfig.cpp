@@ -3,6 +3,97 @@
 #include "Utils/Logger.hpp"
 #include <meojson/json.hpp>
 
+bool asst::BattleDataConfig::load_unit_info(const std::filesystem::path& path)
+{
+    if (!std::filesystem::exists(path)) {
+        LogWarn << __FUNCTION__ << "Optional unit metadata missing" << path;
+        return true;
+    }
+    m_unit_info = json::object();
+    const auto data = json::open(path);
+    if (!data || data->get("schema_version", 0) != 1 || !data->find<json::object>("source") ||
+        !data->find<json::object>("chars") || !data->find<json::object>("skills") ||
+        !data->find<json::object>("ranges")) {
+        LogError << __FUNCTION__ << "Invalid unit metadata" << path;
+        return false;
+    }
+    for (const auto& [id, unit] : data->at("chars").as_object()) {
+        if (!unit.is_object() || unit.get("game_id", "") != id || !unit.find<std::string>("entity_kind") ||
+            !unit.find<json::object>("capabilities") || !unit.find<json::array>("skills") ||
+            !unit.find<json::array>("base_attributes")) {
+            LogError << __FUNCTION__ << "Invalid unit record" << id;
+            return false;
+        }
+        for (const auto& skill : unit.at("skills").as_array()) {
+            if (!skill.is_object()) {
+                LogError << __FUNCTION__ << "Invalid unit skill reference" << id;
+                return false;
+            }
+        }
+        for (const auto& phase : unit.at("base_attributes").as_array()) {
+            if (!phase.is_object() || !phase.find<std::string>("range_id")) {
+                LogError << __FUNCTION__ << "Invalid unit base attribute phase" << id;
+                return false;
+            }
+        }
+        for (const auto& [key, capability] : unit.at("capabilities").as_object()) {
+            if (!capability.is_object() || !capability.contains("value") ||
+                (!capability.at("value").is_null() && !capability.at("value").is_boolean()) ||
+                !capability.find<std::string>("source") || !capability.find<std::string>("reason")) {
+                LogError << __FUNCTION__ << "Invalid unit capability" << id << key;
+                return false;
+            }
+        }
+    }
+    m_unit_info = *data;
+    return true;
+}
+
+json::value asst::BattleDataConfig::get_unit_info(const std::string& game_id) const
+{
+    if (!m_unit_info.contains("chars") || !m_unit_info.at("chars").contains(game_id)) {
+        return json::object {
+            { "game_id", game_id },
+            { "entity_kind", "unknown" },
+            { "metadata_status", "unavailable" },
+        };
+    }
+    auto unit = m_unit_info.at("chars").at(game_id);
+    unit["source"] = m_unit_info.at("source");
+    unit["metadata_status"] = "available";
+    json::object definitions;
+    for (const auto& skill : unit.at("skills").as_array()) {
+        if (const auto id = skill.find<std::string>("skillId"); id && m_unit_info.at("skills").contains(*id)) {
+            definitions[*id] = m_unit_info.at("skills").at(*id);
+        }
+    }
+    unit["skill_definitions"] = std::move(definitions);
+    json::object ranges;
+    for (const auto& phase : unit.at("base_attributes").as_array()) {
+        const auto id = phase.get("range_id", "");
+        if (m_unit_info.at("ranges").contains(id)) {
+            ranges[id] = m_unit_info.at("ranges").at(id);
+        }
+    }
+    unit["base_range_definitions"] = std::move(ranges);
+    return unit;
+}
+
+asst::BattleDataConfig::UnitCapabilities asst::BattleDataConfig::get_unit_capabilities(const std::string& game_id) const
+{
+    const auto info = get_unit_info(game_id);
+    UnitCapabilities result;
+    if (const auto capabilities = info.find<json::object>("capabilities")) {
+        auto read = [&](const std::string& key) -> std::optional<bool> {
+            return capabilities->contains(key) ? capabilities->at(key).find<bool>("value") : std::nullopt;
+        };
+        result.standard_drag = read("standard_drag");
+        result.direction = read("direction");
+        result.manual_retreat = read("manual_retreat");
+    }
+    return result;
+}
+
 bool asst::BattleDataConfig::parse(const json::value& json)
 {
     LogTraceFunction;
@@ -10,6 +101,7 @@ bool asst::BattleDataConfig::parse(const json::value& json)
     m_chars.clear();
     m_ranges.clear();
     m_skill_ids.clear();
+    m_unit_info = json::object();
     m_opers.clear();
     m_drones_confusing.clear();
     for (const auto& [id, char_data_json] : json.at("chars").as_object()) {

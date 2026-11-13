@@ -139,7 +139,8 @@ bool asst::BattleHelper::update_deployment_(
     std::vector<battle::DeploymentOper>& cur_opers,
     const std::vector<battle::DeploymentOper>& old_deployment_opers,
     const bool analyze_unknown,
-    const bool allow_interaction)
+    const bool allow_interaction,
+    const bool update_tracking)
 {
     LogTraceFunction;
 
@@ -176,7 +177,9 @@ bool asst::BattleHelper::update_deployment_(
             const auto& result = analyze_oper_with_cache(oper, avatar);
             if (result && !BattleData.is_name_invalid(oper.role, result->templ_info.name)) {
                 set_oper_name(oper, result->templ_info.name);
-                remove_cooling_from_battlefield(oper);
+                if (update_tracking) {
+                    remove_cooling_from_battlefield(oper);
+                }
                 is_analyzed = true;
             }
         }
@@ -185,7 +188,9 @@ bool asst::BattleHelper::update_deployment_(
             const auto& result2 = analyze_oper_with_cache(oper, AvatarCache.get_avatars(oper.role));
             if (result2 && !BattleData.is_name_invalid(oper.role, result2->templ_info.name)) {
                 set_oper_name(oper, result2->templ_info.name);
-                remove_cooling_from_battlefield(oper);
+                if (update_tracking) {
+                    remove_cooling_from_battlefield(oper);
+                }
             }
             else {
                 Log.info("unknown oper", oper.index);
@@ -234,7 +239,9 @@ bool asst::BattleHelper::update_deployment_(
             }
             else {
                 set_oper_name(oper, name);
-                remove_cooling_from_battlefield(oper);
+                if (update_tracking) {
+                    remove_cooling_from_battlefield(oper);
+                }
 
                 m_cur_deployment_opers[oper.index] = oper;
                 AvatarCache.set_avatar(name, oper.role, oper.avatar);
@@ -420,9 +427,6 @@ bool asst::BattleHelper::deploy_oper(
 {
     LogTraceFunction;
 
-    const auto swipe_oper_task_ptr = Task.get("BattleSwipeOper");
-    const auto use_oper_task_ptr = Task.get("BattleUseOper");
-
     auto it = std::ranges::find_if(m_cur_deployment_opers, [&](const auto& oper) {
         return (role == battle::Role::Unknown || oper.role == role) && oper.name == name;
     });
@@ -432,9 +436,21 @@ bool asst::BattleHelper::deploy_oper(
         return false;
     }
 
-    const auto& oper_role = it->role;
-    const auto& oper_name = it->name;
-    const Rect& oper_rect = it->rect;
+    return deploy_card(*it, loc, direction);
+}
+
+bool asst::BattleHelper::deploy_card(
+    const battle::DeploymentOper& card,
+    const Point& loc,
+    battle::DeployDirection direction,
+    bool commit_tracking,
+    bool manage_pause)
+{
+    const auto swipe_oper_task_ptr = Task.get("BattleSwipeOper");
+    const auto use_oper_task_ptr = Task.get("BattleUseOper");
+    const auto oper_role = card.role;
+    const auto oper_name = card.name;
+    const Rect oper_rect = card.rect;
 
     auto target_iter = m_side_tile_info.find(loc);
     if (target_iter == m_side_tile_info.cend()) {
@@ -453,7 +469,7 @@ bool asst::BattleHelper::deploy_oper(
         duration = min_duration;
     }
     bool deploy_with_pause =
-        ControlFeat::support(m_inst_helper.ctrler()->support_features(), ControlFeat::SWIPE_WITH_PAUSE);
+        manage_pause && ControlFeat::support(m_inst_helper.ctrler()->support_features(), ControlFeat::SWIPE_WITH_PAUSE);
     if (deploy_with_pause) {
         pause();
     }
@@ -501,8 +517,8 @@ bool asst::BattleHelper::deploy_oper(
         ProcessTask(this_task(), { "BattlePauseCancel" }).run();
     }
 
-    // for SSS, multiple operator may be deployed at the same location.
-    if (m_used_tiles.contains(loc)) {
+    // Legacy GUI/coplan helpers still commit immediately; MCP commits only evidence-backed state.
+    if (commit_tracking && m_used_tiles.contains(loc)) {
         const auto& pre_oper = m_used_tiles.at(loc);
         LogInfo << "remove previous oper" << pre_oper << loc;
         m_battlefield_opers.erase(pre_oper);
@@ -511,7 +527,7 @@ bool asst::BattleHelper::deploy_oper(
 
     // 肉鸽中，一个干员可能被部署多次
     battle::OperNameTag oper_tag { oper_role, oper_name };
-    if (m_battlefield_opers.contains(oper_tag) && oper_role != battle::Role::Drone) {
+    if (commit_tracking && m_battlefield_opers.contains(oper_tag) && oper_role != battle::Role::Drone) {
         Point pre_loc = m_battlefield_opers.at(oper_tag);
         LogInfo << "remove deploy failed oper" << oper_tag << pre_loc;
         m_battlefield_opers.erase(oper_tag);
@@ -519,7 +535,9 @@ bool asst::BattleHelper::deploy_oper(
         // m_used_tiles.erase(pre_loc);
     }
 
-    register_deployed_oper(oper_role, oper_name, loc);
+    if (commit_tracking) {
+        register_deployed_oper(oper_role, oper_name, loc);
+    }
     m_inst_helper.sleep(200); // 部署完会有 166 ms 的动画
 
     return true;

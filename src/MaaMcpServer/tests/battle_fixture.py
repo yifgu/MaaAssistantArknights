@@ -99,6 +99,14 @@ MARKERS.update(
 
 
 def prepare(settings, known):
+    summon_variants = {
+        "summon",
+        "summon_unapproved",
+        "summon_duplicate",
+        "summon_ambiguous_id",
+        "grenade",
+        "summon_tl",
+    }
     root = settings.user_dir / "fixture"
     templates = root / "resource/template"
     templates.mkdir(parents=True)
@@ -111,7 +119,7 @@ def prepare(settings, known):
         (
             4,
             "BattleOperRoleDrone"
-            if known in ("summon", "summon_unapproved")
+            if known in summon_variants
             else "BattleOperRolePioneer",
             60,
             597,
@@ -192,6 +200,10 @@ def prepare(settings, known):
                 )
     avatar = random.Random(5).randbytes(60 * 60 * 3)
     patches.append(("avatar", 62, 628, 60, 60, avatar))
+    if known == "summon_duplicate":
+        for name, x, y, width, height, pixels in tuple(patches):
+            if name in ("BattleOpersFlag", "BattleOperRoleDrone", "avatar"):
+                patches.append((name, x + 110, y, width, height, pixels))
     patches.append(("running-brightness", 1200, 40, 16, 16, b"\xff" * 16 * 16 * 3))
     # Synthetic WenQuanYi Zen Hei labels: 64 px English / 32 px Chinese, white on black.
     # Keep production OCR tasks for these frames; template fixtures cannot test text filtering.
@@ -253,11 +265,23 @@ def prepare(settings, known):
         cache = settings.user_dir / "cache/avatars"
         cache.mkdir(parents=True)
         game_id = (
-            "token_10000_silent_healrb"
-            if known in ("summon", "summon_unapproved")
+            "trap_341_dsjtzd"
+            if known == "grenade"
+            else "token_10000_silent_healrb"
+            if known in summon_variants
             else "char_123_fang"
         )
         (cache / f"{game_id}.png").write_bytes(png(60, 60, avatar))
+    if known == "summon_ambiguous_id":
+        data = json.loads(
+            (settings.resource_dir / "resource/battle_data.json").read_bytes()
+        )
+        data["chars"]["token_fixture_duplicate"] = data["chars"][
+            "token_10000_silent_healrb"
+        ]
+        (root / "resource/battle_data.json").write_text(
+            json.dumps(data), encoding="utf-8"
+        )
     for mode, marker in MARKERS.items():
         if mode in ocr_labels and known not in ("localized_ocr", "localized_split_ocr"):
             continue
@@ -515,6 +539,8 @@ def device(root, action, args):
             )
         if (root / "speed-resumes").exists():
             (root / "mode").write_text("running")
+    elif action == "click" and (root / "field-click-target").exists():
+        (root / "mode").write_text((root / "field-click-target").read_text())
     with (root / "events.jsonl").open("a", encoding="utf-8") as log:
         log.write(json.dumps(event) + "\n")
     if action == "capture":

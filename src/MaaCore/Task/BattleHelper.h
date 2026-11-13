@@ -54,7 +54,8 @@ protected:
         std::vector<battle::DeploymentOper>& cur_opers,
         const std::vector<battle::DeploymentOper>& old_deployment_opers,
         bool analyze_unknown,
-        bool allow_interaction = true);
+        bool allow_interaction = true,
+        bool update_tracking = true);
     bool update_kills(const cv::Mat& image, const cv::Mat& image_prev = cv::Mat());
     bool update_cost(const cv::Mat& image, const cv::Mat& image_prev = cv::Mat());
 
@@ -62,6 +63,12 @@ protected:
 
     bool deploy_oper(const std::string& name, const Point& loc, battle::DeployDirection direction);
     bool deploy_oper(battle::Role role, const std::string& name, const Point& loc, battle::DeployDirection direction);
+    bool deploy_card(
+        const battle::DeploymentOper& card,
+        const Point& loc,
+        battle::DeployDirection direction,
+        bool commit_tracking = true,
+        bool manage_pause = true);
     bool retreat_oper(const std::string& name);
     bool retreat_oper(battle::Role role, const std::string& name);
     bool retreat_oper(const Point& loc, bool manually = true);
