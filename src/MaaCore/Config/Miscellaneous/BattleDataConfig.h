@@ -226,6 +226,13 @@ public:
 
     const std::unordered_set<std::string>& get_all_oper_names() const noexcept { return m_opers; }
 
+    const std::vector<std::string>& get_skill_ids(const std::string& id) const
+    {
+        static const std::vector<std::string> empty;
+        const auto found = m_skill_ids.find(id);
+        return found == m_skill_ids.end() ? empty : found->second;
+    }
+
     const std::unordered_map<std::string, std::shared_ptr<battle::OperProps>>& get_all_chars() const noexcept
     {
         return m_chars;
@@ -244,6 +251,7 @@ private:
     std::unordered_map<std::string, std::shared_ptr<battle::OperProps>> m_chars; // id -> oper
 
     std::unordered_map<std::string, battle::AttackRange> m_ranges;
+    std::unordered_map<std::string, std::vector<std::string>> m_skill_ids;
     std::unordered_set<std::string> m_opers;
     std::unordered_set<std::string> m_drones_confusing; // confused summons: multiple summons of same oper
 

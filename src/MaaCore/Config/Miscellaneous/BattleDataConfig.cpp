@@ -9,11 +9,24 @@ bool asst::BattleDataConfig::parse(const json::value& json)
     m_chars_by_role.clear();
     m_chars.clear();
     m_ranges.clear();
+    m_skill_ids.clear();
     m_opers.clear();
     m_drones_confusing.clear();
     for (const auto& [id, char_data_json] : json.at("chars").as_object()) {
         std::shared_ptr<battle::OperProps> data_ptr = std::make_shared<battle::OperProps>();
         data_ptr->id = id;
+        if (const auto skills = char_data_json.find<json::array>("skillIds")) {
+            std::vector<std::string> ids;
+            for (const auto& skill : *skills) {
+                if (!skill.is_string() || skill.as_string().empty() || ids.size() >= 3 ||
+                    std::ranges::find(ids, skill.as_string()) != ids.end()) {
+                    LogError << __FUNCTION__ << "Invalid ordered skill IDs for operator" << id;
+                    return false;
+                }
+                ids.emplace_back(skill.as_string());
+            }
+            m_skill_ids.emplace(id, std::move(ids));
+        }
         std::string name = char_data_json.get("name", "");
         std::string name_en = char_data_json.get("name_en", "");
         std::string name_jp = char_data_json.get("name_jp", "");

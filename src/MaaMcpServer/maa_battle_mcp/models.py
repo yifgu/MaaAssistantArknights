@@ -33,6 +33,17 @@ class OperationRequest(StrictModel):
     timeout_ms: Timeout = 10_000
 
 
+class PreparationOperationRequest(OperationRequest):
+    timeout_ms: Annotated[int, Field(ge=1, le=180_000)] = 120_000
+
+
+class PreparationRequest(StrictModel):
+    operation_id: Identifier
+    stage_name: Identifier
+    mode: BattleMode
+    timeout_ms: Annotated[int, Field(ge=1, le=180_000)] = 120_000
+
+
 class UnitRequest(OperationRequest):
     unit_id: Identifier
 

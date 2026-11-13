@@ -63,6 +63,7 @@ private:
     json::value execute_wait(const Command& command, CapturedFrame frame, json::value snapshot);
     json::value execute_speed(const Command& command, CapturedFrame frame, json::value snapshot);
     json::value preparation(const CapturedFrame& frame);
+    json::value inspect_preparation(const Command& command);
     bool settle_pause(const Command& command, CapturedFrame& frame, json::value& snapshot);
     void collect_safety_evidence(
         const Command& command,

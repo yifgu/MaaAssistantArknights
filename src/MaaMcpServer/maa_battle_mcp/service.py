@@ -11,7 +11,13 @@ from filelock import FileLock, Timeout
 
 from .decision import CLIENT_REGIONS, DecisionContext
 from .diagnostics import provenance
-from .models import BattleMode, OperationRequest, Settings
+from .models import (
+    BattleMode,
+    OperationRequest,
+    PreparationOperationRequest,
+    PreparationRequest,
+    Settings,
+)
 from .native import NativeBackend, NativeError
 
 logger = logging.getLogger(__name__)
@@ -151,6 +157,22 @@ class BattleService:
             self.decision.preparation = None
             return {"status": "succeeded", "preparation_valid": False}
 
+    async def inspect_preparation(self, request: PreparationRequest) -> dict:
+        if self.backend is None or self.session_id is not None:
+            raise BattleError(
+                "Preparation inspection requires a connection without an attached battle"
+            )
+        self.preparation_session_id = self.preparation_session_id or str(uuid.uuid4())
+        return await self.command(
+            "inspect_preparation",
+            PreparationOperationRequest(
+                session_id=self.preparation_session_id,
+                operation_id=request.operation_id,
+                timeout_ms=request.timeout_ms,
+            ),
+            {"stage_name": request.stage_name, "mode": request.mode},
+        )
+
     async def attach(
         self,
         stage_name: str,
@@ -230,7 +252,17 @@ class BattleService:
                 "Battle controller is busy; query or cancel the current operation"
             )
         async with self.lock:
-            backend = self._check_session(request.session_id)
+            preparation = action == "inspect_preparation"
+            if preparation:
+                if (
+                    self.backend is None
+                    or self.session_id is not None
+                    or self.preparation_session_id != request.session_id
+                ):
+                    raise BattleError("Unknown or expired preparation controller")
+                backend = self.backend
+            else:
+                backend = self._check_session(request.session_id)
             payload = {
                 "session_id": request.session_id,
                 "command_id": request.operation_id,
@@ -258,15 +290,24 @@ class BattleService:
                 (request.session_id, request.operation_id, encoded),
             )
             self.journal.commit()
+            if preparation:
+                self.preparation_snapshot = None
+                self.decision.preparation = None
             cancelled = False
-            self.step_active = action == "step"
+            bounded_cleanup = action in ("step", "inspect_preparation")
+            self.step_active = bounded_cleanup
             self.active_request = request
             try:
-                timeout = request.timeout_ms / 1000 + (10 if action == "step" else 0)
+                timeout = request.timeout_ms / 1000 + (10 if bounded_cleanup else 0)
                 request_task = asyncio.create_task(
-                    asyncio.to_thread(backend.request, "command", payload, timeout)
+                    asyncio.to_thread(
+                        backend.request,
+                        "preparation" if preparation else "command",
+                        payload,
+                        timeout,
+                    )
                 )
-                if action == "step":
+                if bounded_cleanup:
                     while True:
                         try:
                             result = await asyncio.shield(request_task)
@@ -287,6 +328,9 @@ class BattleService:
                 self.session_id = None
                 self.map_info = None
                 self.mode = None
+                self.preparation_session_id = None
+                self.preparation_snapshot = None
+                self.decision.preparation = None
                 self.connection_info = {}
                 self.lease.release()
                 result = {
@@ -301,6 +345,9 @@ class BattleService:
                 if action == "step":
                     result["pause_verified"] = False
                     result["safe_state"] = "unknown"
+                if preparation:
+                    result["formation_restored"] = False
+                    result["preparation_valid"] = False
                 self._save_result(request, result)
                 if cancelled:
                     raise asyncio.CancelledError from exc
@@ -315,7 +362,18 @@ class BattleService:
                     self.decision.enrich_snapshot(result[key])
             if isinstance(result.get("deployment"), list):
                 self.decision.enrich_snapshot(result)
+            if preparation:
+                result["session_id"] = request.session_id
+                result["region"] = CLIENT_REGIONS[self.settings.client_type]
+                result["preparation_id"] = request.operation_id
+                result["binding"] = {
+                    "stage_id": payload["args"]["stage_name"],
+                    "mode": payload["args"]["mode"],
+                    "source": "caller_supplied",
+                }
             self._save_result(request, result)
+            if preparation and result.get("preparation_valid") is True:
+                self.preparation_snapshot = result
             if cancelled:
                 raise asyncio.CancelledError
             return result
@@ -386,7 +444,7 @@ class BattleService:
                 )
             except NativeError:
                 logger.exception(
-                    "Could not signal step cancellation; terminating worker with unknown pause state"
+                    "Could not signal bounded operation cancellation; terminating worker with unknown recovery state"
                 )
                 await asyncio.to_thread(backend.abort)
         if backend is not None and self.lock.locked() and not self.step_active:

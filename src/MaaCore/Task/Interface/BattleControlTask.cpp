@@ -34,7 +34,7 @@ bool asst::BattleControlTask::validate_command(const json::value& params) const
     const auto id = params.at("command_id").as_string();
     const auto timeout = params.at("timeout_ms");
     const auto action = params.at("action").as_string();
-    const auto max_timeout = 30'000;
+    const auto max_timeout = action == "inspect_preparation" ? 180'000 : 30'000;
     if (id.empty() || id.size() > 128 || timeout.as_integer() < 1 || timeout.as_integer() > max_timeout) {
         return false;
     }
@@ -42,7 +42,8 @@ bool asst::BattleControlTask::validate_command(const json::value& params) const
     if (action == "identify") {
         return !args.contains("adopt_manual_pause") || args.find<bool>("adopt_manual_pause").has_value();
     }
-    if (action == "observe" || action == "capture" || action == "map" || action == "prepare") {
+    if (action == "observe" || action == "capture" || action == "map" || action == "prepare" ||
+        action == "inspect_preparation") {
         return true;
     }
     if (action == "bind") {
@@ -1370,11 +1371,14 @@ json::value asst::BattleControlTask::execute(const Command& command)
         return json::object { { "status", "succeeded" }, { "protocol_version", 1 }, { "map", map_info() } };
     }
     if (m_preparation_only) {
+        if (command.action == "inspect_preparation") {
+            return inspect_preparation(command);
+        }
         return command.action == "prepare"
                    ? preparation(capture_frame())
                    : failure("preparation_only", "Only preparation capture or explicit battle binding is allowed");
     }
-    if (command.action == "prepare") {
+    if (command.action == "prepare" || command.action == "inspect_preparation") {
         return failure("already_attached", "Preparation capture is only available before battle binding");
     }
     if (command.action == "map") {

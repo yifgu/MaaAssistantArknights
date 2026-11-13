@@ -172,7 +172,7 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 
 `battle_identify` 會回傳 `identified_count`、`unresolved_count`、`ambiguous_count` 和各卡牌的 `identity_reason`；空名稱快取不再抑制詳情 OCR。其他動作回傳 `outcome_unknown` 時，MCP `isError=true`；即使 `helper_returned` 或 `action_returned` 為 true，也不代表遊戲內成功。必須截圖確認，不可盲目重試。場上位置標為 `action_history_unverified`，敵人狀態為 null；首版不接受模型直接覆寫狀態。單獨的暫停請求不代表已確認暫停，恢復僅允許針對本服務請求過或明確接管的暫停。
 
-命令的 `timeout_ms` 上限統一為 30000。一般命令逾時或取消會終止 worker、使會話失效並保存未知結果；step 等待暫停清理，但無法保證裝置故障時暫停。`battle_close` 中斷一般命令或等待 step 清理，本身不暫停或退出遊戲。`battle_get_operation` 讀取持久結果；儲存失敗會明確報錯並阻止此服務繼續發命令。日誌及 `operations.sqlite3` 位於 `--user-dir`，一般截圖保留最近 128 張，關鍵證據另外保留，需自行清理。
+一般命令的 `timeout_ms` 上限為 30000，下文的戰前批次檢查使用獨立上限。一般命令逾時或取消會終止 worker、使會話失效並保存未知結果；step 等待暫停清理，但無法保證裝置故障時暫停。`battle_close` 中斷一般命令或等待 step／戰前檢查清理，本身不暫停或退出遊戲。`battle_get_operation` 讀取持久結果；儲存失敗會明確報錯並阻止此服務繼續發命令。日誌及 `operations.sqlite3` 位於 `--user-dir`，一般截圖保留最近 128 張，關鍵證據另外保留，需自行清理。
 
 ## 可選情報服務
 
@@ -247,6 +247,25 @@ PRTS 可使用 `{"provider":"prts","command":"prts-mcp","region":"cn"}`；配接
 `skill_ready` 是 true 或 null，分類器否定不再冒充已確認冷卻。`skill_evidence` 保留同影格 ID、時間、ROI、基點、類別分數和機率。`probabilities` 順序為 `c, n, y`，`score` 是勝出類別的分數，不一定是就緒類別 `y` 的分數；僅 `y` 勝出且分數至少 0.9 才報告 true。技能階段／彈藥／冷卻仍可未知，分數並非校準後正確率。請保留 `asst.log` 的 `Battle frame` / `Battle command result`、`battle-control/<session>/` 的 PNG 與 `operations.sqlite3`。合成回歸不證明真實 OCR、ROI 或按鈕適配；仍須本機複驗，不要求本機圖片作為雲端開發輸入。
 
 連線後、attach 前呼叫 `battle_observe_preparation(stage_name, mode)`，唯讀擷取手動開啟的編隊頁。回傳名稱、候選 ID、名稱框與證據；所選技能、練度、助戰身分未知，不開啟詳情。以 `battle_attach(..., preparation_id=..., confirm_preparation_unchanged=true)` 關聯最新快照，只代表呼叫者重新確認，不是連續視覺驗證。修改編隊／技能／關卡／帳號後呼叫 `battle_invalidate_preparation` 並重擷取。新擷取、綁定消費或關閉後舊快照不能重用，現場身分不符在 `decision_context.preparation` 標為衝突。
+
+原生批次檢查使用獨立的**修改型**工具 `battle_inspect_preparation`，宿主只呼叫一次：
+
+```json
+{
+  "request": {
+    "operation_id": "preparation-001",
+    "stage_name": "main_01-07",
+    "mode": "normal",
+    "timeout_ms": 120000
+  }
+}
+```
+
+Core 依等級標籤定位有人的欄位，保留名稱無法讀取的項目，讀取等級 OCR 與正向精一／精二模板，再逐一開啟身分唯一的普通成員頭像。確認詳情身分後只開啟技能頁籤，有界捲動技能清單。完整有序清單中唯一的選取標記才產生 `selected_skill=1|2|3`；`equipped_skill_id` 還要求身分唯一且 `battle_data.json` 含有序 `skillIds`，靜態 ID 不單獨證明實際裝備。不點選選人卡片、技能選項、編隊確認或開始按鈕。目前跳過助戰詳情；缺少精英模板保持 null，**不推定為精零**，等級失敗不補 1。空位不是成員；等級標籤缺失不能證明編隊完整。
+
+檢查 `snapshot.scan_status=complete|partial`、各成員 `fields`（值、來源、驗證、原因、ROI、影格證據）、`evidence_frames`、`formation_restored`、`roster_unchanged` 與 `preparation_valid`。complete 只涵蓋已定位成員，partial 不代表完整配置。PNG 路徑與擷取時間關聯原始影格，所選技能證據另帶跨影格捲動順序。預設期限 120000 ms，**最大 180000 ms**，不同於一般命令的 30000 ms。取消／關閉會通知 Core 並等待有界收尾；只允許對身分相符且已識別的詳情頁在原期限內返回一次，未知頁面不盲點關閉。工作程序失敗時恢復狀態為未知。同一操作 ID 只接受相同參數；重播回傳原證據，不導覽，也不重新啟用已失效快照。attach 前可用 `battle_status.preparation_session_id` 查詢 `battle_get_operation` 的持久結果。
+
+僅有效的最新結果可沿用明確重新確認的 attach 關聯。新擷取使舊關聯失效；頁面／編隊變化、證據失敗或掃描中斷不建立有效關聯。`decision_context.preparation.observed_fields` 獨立保留原生觀測並記錄與外部配置的衝突，不覆寫任一來源。這是戰前測量，不是帳號／關卡／配置的連續驗證，也不是戰鬥現場測量。識別複用既有資源並有合成 Debug Core 迴歸，**不等於實機驗收**；真實版面與選取標記相容性仍須本機驗證。
 
 啟動時可重複傳入 `--allow-summon GAME_ID`，只授權已確認採普通拖曳部署語義的召喚卡。`battle_step(action="deploy")` 除一般參數外須傳觀測卡片的 `card_id`；卡片須唯一、可用、位置不變且不超過 30 秒。每次產生獨立 `instance:<operation_id>`，同名不覆蓋；位置與存續僅為未驗證動作歷史，未知消失不自動釋放占格。實例技能／撤退、模糊卡片及未授權裝置仍拒絕，helper 回傳不證明部署成功。
 

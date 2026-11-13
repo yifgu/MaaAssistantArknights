@@ -1574,10 +1574,17 @@ bool update_battle_chars_info(
             tokens[id].emplace_back(*token_opt);
         }
         if (auto skill_opt = char_data.find<json::array>("skills")) {
+            json::array skill_ids;
             for (const auto& skill_obj : *skill_opt) {
+                if (auto skill_id = skill_obj.find<std::string>("skillId")) {
+                    skill_ids.emplace_back(*skill_id);
+                }
                 if (auto token_opt = skill_obj.find<std::string>("overrideTokenKey")) {
                     tokens[id].emplace_back(*token_opt);
                 }
+            }
+            if (is_playable_oper_profession(char_data["profession"].as_string())) {
+                char_new_data["skillIds"] = std::move(skill_ids);
             }
         }
         chars.emplace(id, std::move(char_new_data));
@@ -1606,6 +1613,10 @@ bool update_battle_chars_info(
         Amiya_data["position"] = amiya2_opt->at("position");
         Amiya_data["sortIndex"] = 17; // yj 给升变的 sortIndex 设了0，暂时使用主角色的 sortIndex
         Amiya_data["subProfessionId"] = amiya2_opt->at("subProfessionId");
+        Amiya_data["skillIds"] = json::array();
+        for (const auto& skill : amiya2_opt->at("skills").as_array()) {
+            Amiya_data["skillIds"].as_array().emplace_back(skill.at("skillId"));
+        }
         const std::string& default_range = amiya2_opt->get("phases", 0, "rangeId", "0-1");
         Amiya_data["rangeId"] = json::array {
             default_range,
@@ -1627,6 +1638,10 @@ bool update_battle_chars_info(
         Amiya_data3["position"] = amiya3_opt->at("position");
         Amiya_data3["sortIndex"] = 17;
         Amiya_data3["subProfessionId"] = amiya3_opt->at("subProfessionId");
+        Amiya_data3["skillIds"] = json::array();
+        for (const auto& skill : amiya3_opt->at("skills").as_array()) {
+            Amiya_data3["skillIds"].as_array().emplace_back(skill.at("skillId"));
+        }
         const std::string& default_range = amiya3_opt->get("phases", 0, "rangeId", "0-1");
         Amiya_data3["rangeId"] = json::array {
             default_range,

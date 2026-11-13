@@ -453,11 +453,21 @@ def prepare(settings, known):
     (root / "speed").write_text("1")
     if known == "localized_split_ocr":
         (root / "pause-target").write_text("paused_split")
+    if isinstance(known, str) and known.startswith("preparation:"):
+        from preparation_fixture import prepare as prepare_preparation
+
+        prepare_preparation(root, tasks, known.split(":", 1)[1])
+        (task_dir / "fixture.json").write_text(json.dumps(tasks), encoding="utf-8")
     return root
 
 
 def device(root, action, args):
     mode = (root / "mode").read_text(encoding="utf-8")
+    if (root / "preparation_variant").exists() and action in ("click", "swipe"):
+        from preparation_fixture import navigate
+
+        next_mode = navigate(root, action, args, mode)
+        (root / "mode").write_text(next_mode)
     transition = root / "transition.json"
     if action == "capture" and mode == "running" and transition.exists():
         state = json.loads(transition.read_text())
