@@ -240,11 +240,11 @@ PRTS には `{"provider":"prts","command":"prts-mcp","region":"cn"}` を使用�
 
 `battle_observe`、`battle_capture_evidence`、`battle_collect_terminal(request)` は入力なしで復旧証拠を収集できます。`battle_collect_terminal.duration_ms` は 100–8000 かつ `timeout_ms` 以下です。`status=succeeded` は収集完了であり、一時停止の復旧や勝利ではありません。`pause_verified`、`session_input_blocked`、`terminal` を確認してください。ロック中に受け付けた変更命令は、その観測で復旧しても実行しません。新しい証拠を確認して新規操作を要求し、必要なら手動停止の引き継ぎを明示的に許可します。過去の操作の再実行や結果の書き換えはありません。戦闘後の不明／非戦闘画面、終局／矛盾証拠、速度読み戻し失敗は `input_block_reason=terminal_or_safety_quarantine` の恒久隔離を維持し、一時停止証拠でも解除できません。`session_terminal` は結果と画像パスを保持し、黒画面で結果を消さず、勝敗の矛盾は unknown にします。Core の追加命令は `set_speed`、`finalize`、`prepare`、`bind` です。準備は `preparation_only=true` で初期化し、同じコントローラーで紐付けます。
 
-一時停止認識はまず `PAUSE` の完全一致を要求します。0.9 に達しない場合、`BattleControlPausedLocalized` が `[560,350,160,70]` の領域で中国版の `暂停中` を別途完全一致で確認し、同じく 0.9 以上を要求します。この領域は回帰レポートの文字枠に基づきます。`PAUSEX`、任意の前方一致、領域外の文字は代替証拠として認めず、実行中ボタンと終局の判定を優先します。`pause_evidence` は採用したタスク、文字、スコア、文字枠を記録します。隔離解除には引き続き連続する 2 フレームが必要で、一時停止の所有権は自動取得しません。
+一時停止認識はまず `PAUSE` の完全一致を要求します。0.9 に達しない場合、`[560,350,160,70]` の領域で中国版の `暂停中` を確認します。中国語は単一枠の完全な語、または 1 回の OCR で得た空間順の同一行の 2～3 断片に対応し、各断片に 0.9 以上を要求します。枠の間隔と重なりは有限の範囲に制限し、欠字、余分な接頭辞／接尾辞、別行、過大な重なり、領域外の枠を拒否します。フレームをまたいで結合しません。単一枠の source は `BattleControlPausedLocalized`、分割枠は `BattleControlPausedLocalizedSplit` です。`pause_evidence` は `fragments`、全文、断片の最低 `score`、結合枠、フレーム ID／時刻、`accepted`／`rejection_reason` を保持します。`PAUSEX` は代替証拠になりません。実行中ボタンと終局判定を優先し、隔離解除には引き続き連続 2 フレームが必要で、一時停止の所有権は自動取得しません。
 
-一時停止認識に失敗した場合、`pause_diagnostics` は同一フレームの ID／時刻、設定 ROI、必要スコア、null を許す一致結果を保持し、`localized` は中国語ラベルの対応する診断を保持します。OCR では前処理設定と、同じ画像で対象文字フィルターを外した診断候補も返しますが、候補は一時停止の証拠ではありません。null は低スコアの測定値ではありません。合成文字の回帰テストは正式な OCR タスクを使用しますが、ゲームのフォント、エフェクトによる遮蔽、他サーバーへの対応を証明しません。配置後の実 OCR、1x／2x、戦闘全体の確認は引き続き実機で必要で、速度の閾値は変更していません。
+一時停止認識に失敗した場合、`pause_diagnostics` は同一フレームの ID／時刻、設定 ROI、必要スコア、前処理設定、null を許す一致結果を保持します。`localized.candidates` と正式な中国語ルールは対象文字フィルターを外した 1 回の OCR を共有し、`candidate_source=same_frame_localized_pause_rule_ocr` とします。`localized.fragment_rule` に受理または拒否理由を記録し、ルールが受理した場合のみ一時停止証拠になります。個別候補だけでは証拠になりません。英語の診断候補は引き続き別のフィルターなし OCR から取得し、正式な一致を代替しません。null は低スコアの測定値ではありません。ネイティブ幾何回帰は報告の重なった枠を扱い、合成文字回帰は正式な OCR 経路を使用しますが、ゲームのフォント、エフェクトによる遮蔽、他サーバーへの対応を証明しません。配置後の実 OCR、1x／2x、戦闘全体の確認は引き続き実機で必要で、速度の閾値は変更していません。
 
-`skill_ready` は true または null で、分類器の否定を確認済みクールダウンと扱いません。`skill_evidence` は同一フレームの ID、時刻、ROI、基点、分類スコアと確率を残します。発動段階／弾薬／クールダウンは不明のままで構いません。スコアは校正済み正解率ではありません。`asst.log` の `Battle frame` / `Battle command result`、`battle-control/<session>/` の PNG、`operations.sqlite3` を保存してください。合成回帰は実 OCR、ROI、ボタンの対応確認とは別で、実機再確認が必要ですが、ローカル画像をクラウド開発の必須入力にはしません。
+`skill_ready` は true または null で、分類器の否定を確認済みクールダウンと扱いません。`skill_evidence` は同一フレームの ID、時刻、ROI、基点、分類スコアと確率を残します。`probabilities` は `c, n, y` 順で、`score` は最大の分類スコアであり、必ずしも使用可能クラス `y` のスコアではありません。`y` が最大かつ 0.9 以上の場合のみ true を返します。発動段階／弾薬／クールダウンは不明のままで構いません。スコアは校正済み正解率ではありません。`asst.log` の `Battle frame` / `Battle command result`、`battle-control/<session>/` の PNG、`operations.sqlite3` を保存してください。合成回帰は実 OCR、ROI、ボタンの対応確認とは別で、実機再確認が必要ですが、ローカル画像をクラウド開発の必須入力にはしません。
 
 接続後、attach 前の `battle_observe_preparation(stage_name, mode)` は手動で開いた編成画面を入力なしで読みます。名前、候補 ID、名前の矩形と証拠を返し、選択スキル、育成、サポートの識別は不明で、詳細画面を開きません。最新の結果を `battle_attach(..., preparation_id=..., confirm_preparation_unchanged=true)` で紐付けます。これは呼び出し側の再確認であり、連続観測ではありません。編成／スキル／ステージ／アカウント変更後は `battle_invalidate_preparation` と再取得が必要です。再取得、紐付け消費、切断後は旧結果を使えず、現場の識別不一致は `decision_context.preparation` に記録します。
 
@@ -270,6 +270,8 @@ Core はレベル表示から配置済み枠を検出し、名前を読めない
 通常のドラッグ配置が確認済みの召喚カードだけ、起動時に `--allow-summon GAME_ID` を繰り返し指定して許可します。`battle_step(action="deploy")` には通常引数に加えて観測した `card_id` が必要です。一意、利用可能、位置不変、取得後 30 秒以内を要求します。毎回独立した `instance:<operation_id>` を作り、同名を上書きしません。位置と存続は未確認の操作履歴で、不明な消滅から占有を自動解放しません。個体スキル／撤退、曖昧なカード、未許可装置は拒否し、helper の返却値を配置成功とは扱いません。
 
 `battle_set_speed(request)` は `session_id`、`operation_id`、`multiplier=1|2`、`timeout_ms` を受け付けます。明確な停止中だけ速度を読み、必要なら 1 回切り替えて再確認し、前後の証拠を返します。停止所有権を変えず、自動再開せず、2 倍の重複指定で 1 倍に戻りません。速度不明時はクリックせず、変更後に確認できなければ入力をロックします。加速の判断はホストだけが行います。待機はホスト時間で、観測済み取得コストから後処理予算を確保し、不足なら再開を拒否します。`cleanup_reserve_ms`、`resumed_interval_upper_bound_ms`、`deadline_margin_ms` は厳密なゲーム時間を保証しません。
+
+1X は 0.9 以上の OCR を優先します。不足する場合、`BattleControlSpeedOneTemplate` が同じ速度領域で既存の `BattleSpeedUp.png` を再利用し、同じく 0.9 以上を要求します。`one_x_ocr_evidence` と `one_x_template_evidence` は個別結果、`one_x_evidence` は採用結果です。2X は引き続き `BattleSpeedUpCheck` を使用し、1X／2X の証拠が矛盾すれば unknown を維持します。2X が見つからないだけでは 1X と推定しません。テンプレート回帰はレポートのゲーム画像の検証ではありません。
 
 ## 固定された生ステージデータ
 

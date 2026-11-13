@@ -929,6 +929,121 @@ async def test_localized_pause_rejects_wrong_position_text_and_scene(
             assert recovered["input_block_reason"] == "terminal_or_safety_quarantine"
 
 
+@pytest.mark.parametrize("battle", ["localized_split_ocr"], indirect=True)
+async def test_split_pause_production_ocr_recovers_without_replaying_or_adopting(
+    battle,
+):
+    service, server, root = battle
+    snapshot = (await service.read(service.session_id, "capture"))["snapshot"]
+    assert snapshot["scene"] == "paused"
+    evidence = snapshot["pause_evidence"]
+    assert evidence["source"] == "BattleControlPausedLocalizedSplit"
+    assert evidence["accepted"] is True
+    assert evidence["rejection_reason"] is None
+    assert evidence["text"] == "暂停中"
+    assert [fragment["text"] for fragment in evidence["fragments"]] == ["暂停", "中"]
+    assert evidence["score"] == min(
+        fragment["score"] for fragment in evidence["fragments"]
+    )
+    assert evidence["score"] >= 0.9
+    assert evidence["observation_id"] == snapshot["observation_id"]
+    assert evidence["captured_at_ms"] == snapshot["captured_at_ms"]
+    assert (await identify(battle, "split-not-adopted")).structuredContent["error"][
+        "code"
+    ] == "pause_state_unknown"
+
+    for mode in (
+        "split_pause_prefix",
+        "split_pause_suffix",
+        "paused_split",
+        "split_pause_prefix",
+        "paused_split",
+    ):
+        (root / "mode").write_text(mode)
+        snapshot = (await service.read(service.session_id, "capture"))["snapshot"]
+        assert snapshot["session_input_blocked"] is True
+        if mode != "paused_split":
+            assert snapshot["pause_evidence"] is None
+            diagnostic = snapshot["pause_diagnostics"]["localized"]
+            rule = diagnostic["fragment_rule"]
+            assert (
+                diagnostic["candidate_source"] == "same_frame_localized_pause_rule_ocr"
+            )
+            assert rule["accepted"] is False
+            assert rule["fragments"] == diagnostic["candidates"]
+            assert rule["observation_id"] == snapshot["observation_id"]
+            assert rule["captured_at_ms"] == snapshot["captured_at_ms"]
+
+    denied = (
+        await identify(battle, "split-recovery-not-adoption", adopt_manual_pause=True)
+    ).structuredContent
+    assert denied["error"]["code"] == "pause_unverified"
+    assert denied["input_sent"] is False
+    assert denied["snapshot"]["session_input_blocked"] is False
+    assert denied["snapshot"]["pause_requested"] is False
+    assert (
+        denied["snapshot"]["pause_evidence"]["source"]
+        == "BattleControlPausedLocalizedSplit"
+    )
+    before = events(root)
+    replay = (
+        await identify(battle, "split-recovery-not-adoption", adopt_manual_pause=True)
+    ).structuredContent
+    assert replay == denied
+    assert events(root) == before
+    assert not any(
+        event["action"] in ("pause", "resume", "click", "swipe", "speed")
+        for event in before
+    )
+    adopted = (
+        await identify(battle, "split-new-adoption", adopt_manual_pause=True)
+    ).structuredContent
+    assert adopted["pause_verified"] is True
+    assert adopted["snapshot"]["pause_requested"] is True
+    assert not any(event["action"] in ("pause", "resume") for event in events(root))
+
+
+@pytest.mark.parametrize("battle", ["localized_split_ocr"], indirect=True)
+@pytest.mark.parametrize(
+    ("mode", "scene"),
+    [
+        ("split_pause_reversed", "transition"),
+        ("split_pause_distant", "transition"),
+        ("split_pause_other_row", "transition"),
+        ("split_pause_extra_suffix", "transition"),
+        ("running_split", "running"),
+        ("victory_split", "terminal"),
+    ],
+)
+async def test_split_pause_ocr_rejects_unrelated_text_and_defers_to_scene(
+    battle, mode, scene
+):
+    service, server, root = battle
+    (root / "mode").write_text(mode)
+    snapshot = (await service.read(service.session_id, "capture"))["snapshot"]
+    assert snapshot["scene"] == scene
+    assert snapshot["pause_evidence"] is None
+    if scene == "transition":
+        rule = snapshot["pause_diagnostics"]["localized"]["fragment_rule"]
+        assert rule["accepted"] is False
+        assert rule["rejection_reason"] is not None
+    result = await server.call_tool(
+        "battle_set_speed",
+        {
+            "request": {
+                "session_id": service.session_id,
+                "operation_id": "not-a-verified-split-pause",
+                "multiplier": 2,
+            }
+        },
+    )
+    assert result.isError
+    assert not any(
+        event["action"] in ("pause", "resume", "click", "swipe", "speed")
+        for event in events(root)
+    )
+
+
 @pytest.mark.parametrize("recover", [True, False])
 async def test_read_only_collection_can_verify_pause_but_never_send_input(
     battle, recover
@@ -1080,6 +1195,7 @@ async def test_read_only_terminal_updates_never_unlock(battle, final_scene, verd
     assert not any(e["action"] in ("pause", "resume", "click") for e in events(root))
 
 
+@pytest.mark.parametrize("battle", [False, "speed_templates"], indirect=True)
 async def test_speed_is_idempotent_and_preserves_manual_pause(battle):
     service, server, root = battle
     for operation, speed in enumerate((2, 2, 1)):
@@ -1103,8 +1219,47 @@ async def test_speed_is_idempotent_and_preserves_manual_pause(battle):
     assert denied.structuredContent["error"]["code"] == "pause_state_unknown"
 
 
+@pytest.mark.parametrize("battle", ["speed_templates"], indirect=True)
+async def test_native_speed_templates_are_alternatives_to_unmatched_ocr_not_each_other(
+    battle,
+):
+    service, _, root = battle
+    for speed in (1, 2):
+        (root / "speed").write_text(str(speed))
+        observed = (await service.read(service.session_id, "capture"))["snapshot"][
+            "speed"
+        ]
+        assert observed["value"] == speed
+        assert observed["one_x_ocr_evidence"] is None
+        assert observed["conflict"] is False
+        if speed == 1:
+            assert (
+                observed["one_x_evidence"]["source"] == "BattleControlSpeedOneTemplate"
+            )
+            assert observed["one_x_template_evidence"]["score"] >= 0.9
+            assert (
+                observed["two_x_evidence"] is None
+                or observed["two_x_evidence"]["score"] < 0.9
+            )
+        else:
+            assert observed["two_x_evidence"]["score"] >= 0.9
+            assert observed["one_x_template_evidence"] is None
+    assert not any(
+        event["action"] in ("pause", "resume", "click", "swipe", "speed")
+        for event in events(root)
+    )
+
+
 @pytest.mark.parametrize(
-    "scene", ["intro", "unknown", "victory", "running", "paused_unknown_speed"]
+    "scene",
+    [
+        "intro",
+        "unknown",
+        "victory",
+        "running",
+        "paused_unknown_speed",
+        "paused_speed_conflict",
+    ],
 )
 async def test_speed_rejects_nonpaused_scenes(battle, scene):
     service, server, root = battle
@@ -1120,11 +1275,19 @@ async def test_speed_rejects_nonpaused_scenes(battle, scene):
         },
     )
     assert result.isError
+    if scene in ("paused_unknown_speed", "paused_speed_conflict"):
+        value = result.structuredContent
+        assert value["error"]["code"] == "speed_unknown"
+        assert value["snapshot"]["speed"]["value"] is None
+        assert value["snapshot"]["speed"]["conflict"] is (
+            scene == "paused_speed_conflict"
+        )
     assert not any(
         e["action"] in ("speed", "pause", "resume", "click") for e in events(root)
     )
 
 
+@pytest.mark.parametrize("battle", [False, "speed_templates"], indirect=True)
 @pytest.mark.parametrize("fault", ["ignore-speed", "speed-resumes"])
 async def test_speed_readback_failure_blocks_input_and_cleans_up(battle, fault):
     service, server, root = battle
@@ -1266,9 +1429,10 @@ async def test_summon_instances_and_replay_are_separate(battle):
     assert denied.structuredContent["error"]["code"] == "unsupported_instance_action"
 
 
+@pytest.mark.parametrize("battle", [False, "localized_split_ocr"], indirect=True)
 async def test_wait_cancel_reaches_core_and_preserves_pause(battle):
     service, _, root = battle
-    task = asyncio.create_task(wait_step(battle, duration_ms=8_000))
+    task = asyncio.create_task(wait_step(battle, duration_ms=8_000, timeout_ms=30_000))
     try:
         async with asyncio.timeout(30):
             while not any(e["action"] == "resume" for e in events(root)):
@@ -1349,6 +1513,7 @@ async def test_pause_uncertainty_interrupts_wait_even_if_read_only_recovery_succ
     ] == ["resume"]
 
 
+@pytest.mark.parametrize("battle", [False, "localized_split_ocr"], indirect=True)
 async def test_wait_deadline_failure_still_returns_paused_evidence(battle):
     _, _, root = battle
     (root / "capture-delay").write_text("0.7")

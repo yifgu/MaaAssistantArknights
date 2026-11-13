@@ -240,11 +240,11 @@ PRTS 可使用 `{"provider":"prts","command":"prts-mcp","region":"cn"}`；配接
 
 `battle_observe`、`battle_capture_evidence` 和 `battle_collect_terminal(request)` 可在不輸入的情況下收集恢復證據。`battle_collect_terminal.duration_ms` 為 100–8000，不能超過 `timeout_ms`；`status=succeeded` 僅表示擷取完成，不表示暫停恢復或戰鬥勝利，須檢查 `pause_verified`、`session_input_blocked` 和 `terminal`。鎖定期間接收的修改命令即使恰好在觀察時完成恢復，也不會執行；須檢查新證據後發起新操作，必要時明確授權接管手動暫停。不會重播舊動作或改寫歷史結果。戰鬥後的未知／非戰鬥畫面、終局／衝突證據、調速回讀失敗仍以 `input_block_reason=terminal_or_safety_quarantine` 永久隔離，正向暫停證據不能解鎖。`session_terminal` 保留結果與證據路徑，黑畫面不抹除已確認結果，衝突勝敗保持 unknown。Core 另有 `set_speed`、`finalize`、`prepare`、`bind` 命令；準備任務以 `preparation_only=true` 初始化，綁定沿用同一控制器。
 
-暫停識別先完整匹配 `PAUSE`；未達到 0.9 時，另用 `BattleControlPausedLocalized` 在 `[560,350,160,70]` 區域完整匹配國服的 `暂停中`，同樣要求至少 0.9。該區域依據迴歸報告的文字框設定，不接受 `PAUSEX`、任意前綴或區域外文字作為替代證據；執行按鈕和終局判定仍優先。`pause_evidence` 保留實際命中任務、文字、分數和文字框，解除隔離仍須連續兩影格，不自動接管暫停。
+暫停識別先完整匹配 `PAUSE`；未達到 0.9 時，在 `[560,350,160,70]` 區域檢查國服的 `暂停中`。中文既支援單框整詞，也支援同一次 OCR 中按空間順序排列的兩至三個同行片段，每片段均須至少 0.9；僅允許有限的鄰接間隙和框重疊，拒絕缺字、額外前後綴、異行、異常重疊及區域外文字，不跨影格拼接。整詞來源為 `BattleControlPausedLocalized`，分框來源為 `BattleControlPausedLocalizedSplit`。`pause_evidence` 保留 `fragments`、完整文字、片段最低分 `score`、合併框、影格 ID／時間及 `accepted`／`rejection_reason`。`PAUSEX` 不是替代證據；執行按鈕和終局判定仍優先，解除隔離仍須連續兩影格，不自動接管暫停。
 
-暫停識別失敗時，`pause_diagnostics` 保留同影格 ID／時間、設定 ROI、要求分數和可空匹配結果，`localized` 保留中文檢測的對應診斷。OCR 任務另保留前處理設定及同影格取消目標文字篩選後的診斷候選；這些候選不是暫停證據。匹配為 null 不等於測得低分。合成文字迴歸使用正式 OCR 任務，但不證明遊戲字型、特效遮擋或外服適配；部署後的真實 OCR、1x／2x 和完整戰鬥驗收仍須本機裝置複驗，速度閾值不變。
+暫停識別失敗時，`pause_diagnostics` 保留同影格 ID／時間、設定 ROI、要求分數、前處理設定和可空匹配結果。`localized.candidates` 與正式中文規則共用一次取消目標文字篩選的 OCR 採集，`candidate_source=same_frame_localized_pause_rule_ocr`；`localized.fragment_rule` 記錄規則是否接受及拒絕原因，只有規則接受後才形成暫停證據，不能把單個候選直接升級為證據。英文診斷候選仍來自獨立的無目標文字篩選採集，不替代正式匹配。匹配為 null 不等於測得低分。原生幾何迴歸涵蓋報告中的重疊框，合成文字迴歸走正式 OCR 鏈路，但均不證明遊戲字型、特效遮擋或外服適配；部署後的真實 OCR、1x／2x 和完整戰鬥驗收仍須本機裝置複驗，速度閾值不變。
 
-`skill_ready` 是 true 或 null，分類器否定不再冒充已確認冷卻。`skill_evidence` 保留同影格 ID、時間、ROI、基點、類別分數和機率；技能階段／彈藥／冷卻仍可未知，分數並非校準後正確率。請保留 `asst.log` 的 `Battle frame` / `Battle command result`、`battle-control/<session>/` 的 PNG 與 `operations.sqlite3`。合成回歸不證明真實 OCR、ROI 或按鈕適配；仍須本機複驗，不要求本機圖片作為雲端開發輸入。
+`skill_ready` 是 true 或 null，分類器否定不再冒充已確認冷卻。`skill_evidence` 保留同影格 ID、時間、ROI、基點、類別分數和機率。`probabilities` 順序為 `c, n, y`，`score` 是勝出類別的分數，不一定是就緒類別 `y` 的分數；僅 `y` 勝出且分數至少 0.9 才報告 true。技能階段／彈藥／冷卻仍可未知，分數並非校準後正確率。請保留 `asst.log` 的 `Battle frame` / `Battle command result`、`battle-control/<session>/` 的 PNG 與 `operations.sqlite3`。合成回歸不證明真實 OCR、ROI 或按鈕適配；仍須本機複驗，不要求本機圖片作為雲端開發輸入。
 
 連線後、attach 前呼叫 `battle_observe_preparation(stage_name, mode)`，唯讀擷取手動開啟的編隊頁。回傳名稱、候選 ID、名稱框與證據；所選技能、練度、助戰身分未知，不開啟詳情。以 `battle_attach(..., preparation_id=..., confirm_preparation_unchanged=true)` 關聯最新快照，只代表呼叫者重新確認，不是連續視覺驗證。修改編隊／技能／關卡／帳號後呼叫 `battle_invalidate_preparation` 並重擷取。新擷取、綁定消費或關閉後舊快照不能重用，現場身分不符在 `decision_context.preparation` 標為衝突。
 
@@ -270,6 +270,8 @@ Core 依等級標籤定位有人的欄位，保留名稱無法讀取的項目，
 啟動時可重複傳入 `--allow-summon GAME_ID`，只授權已確認採普通拖曳部署語義的召喚卡。`battle_step(action="deploy")` 除一般參數外須傳觀測卡片的 `card_id`；卡片須唯一、可用、位置不變且不超過 30 秒。每次產生獨立 `instance:<operation_id>`，同名不覆蓋；位置與存續僅為未驗證動作歷史，未知消失不自動釋放占格。實例技能／撤退、模糊卡片及未授權裝置仍拒絕，helper 回傳不證明部署成功。
 
 `battle_set_speed(request)` 接受 `session_id`、`operation_id`、`multiplier=1|2` 與 `timeout_ms`。只在明確暫停時讀取速度、必要時切換一次並回讀，回傳前後證據，不變更暫停所有權、不自動恢復；重複設 2 倍不切回 1 倍。速度未知不點擊，切換後無法確認則鎖定輸入。是否加速完全由宿主決定。等待仍是主機時間：依已觀測取影格成本預留暫停預算，不足時拒絕恢復；`cleanup_reserve_ms`、`resumed_interval_upper_bound_ms`、`deadline_margin_ms` 不保證精確遊戲時間。
+
+1X 優先採用至少 0.9 的 OCR；不足時，`BattleControlSpeedOneTemplate` 在同一速度區域重用既有 `BattleSpeedUp.png` 模板，同樣要求至少 0.9。`one_x_ocr_evidence` 與 `one_x_template_evidence` 分別保留原始結果，`one_x_evidence` 是選用結果。2X 仍使用 `BattleSpeedUpCheck`，1X／2X 證據衝突保持 unknown，不能憑未識別到 2X 反推 1X。模板迴歸不等於已驗證報告中的遊戲截圖。
 
 ## 固定原始關卡快照
 

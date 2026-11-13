@@ -12,6 +12,7 @@
 #include "MaaUtils/ImageIo.h"
 #include "Utils/Logger.hpp"
 #include "Vision/Battle/BattleFormationAnalyzer.h"
+#include "Vision/Battle/BattlePauseEvidence.h"
 #include "Vision/Battle/BattlefieldClassifier.h"
 #include "Vision/Battle/BattlefieldMatcher.h"
 #include "Vision/Miscellaneous/PipelineAnalyzer.h"
@@ -320,9 +321,11 @@ json::value
     const bool check_paused = !terminal && result && !snapshot.at("running_button_visible").as_boolean();
     auto pause_evidence = check_paused ? match_evidence(image, "BattleControlPaused") : json::value(nullptr);
     json::value localized_pause_evidence = nullptr;
+    json::value localized_pause_analysis = nullptr;
     if (check_paused && (!pause_evidence.is_object() || pause_evidence.get("score", 0.0) < 0.9)) {
-        localized_pause_evidence = match_evidence(image, "BattleControlPausedLocalized");
-        if (localized_pause_evidence.is_object() && localized_pause_evidence.get("score", 0.0) >= 0.9) {
+        localized_pause_analysis = pause_analysis(frame, snapshot, "BattleControlPausedLocalized", nullptr);
+        localized_pause_evidence = localized_pause_analysis.at("match");
+        if (localized_pause_evidence.is_object()) {
             pause_evidence = localized_pause_evidence;
         }
     }
@@ -330,9 +333,8 @@ json::value
     const bool paused = pause_evidence.is_object() && pause_evidence.get("score", 0.0) >= 0.9;
     snapshot["pause_diagnostics"] = nullptr;
     if (check_paused && !paused) {
-        auto diagnostic = pause_diagnostics(frame, snapshot, "BattleControlPaused", pause_evidence);
-        diagnostic["localized"] =
-            pause_diagnostics(frame, snapshot, "BattleControlPausedLocalized", localized_pause_evidence);
+        auto diagnostic = pause_analysis(frame, snapshot, "BattleControlPaused", pause_evidence);
+        diagnostic["localized"] = std::move(localized_pause_analysis);
         snapshot["pause_diagnostics"] = std::move(diagnostic);
     }
     snapshot["scene"] = terminal                                                                   ? "terminal"
@@ -697,12 +699,18 @@ json::value asst::BattleControlTask::match_evidence(const cv::Mat& image, const 
 
 json::value asst::BattleControlTask::speed_info(const cv::Mat& image) const
 {
-    const auto one = match_evidence(image, "BattleControlSpeedOne");
+    const auto one_ocr = match_evidence(image, "BattleControlSpeedOne");
+    const auto one_template = match_evidence(image, "BattleControlSpeedOneTemplate");
+    const auto one = one_ocr.is_object() && one_ocr.get("score", 0.0) >= 0.9             ? one_ocr
+                     : one_template.is_object() && one_template.get("score", 0.0) >= 0.9 ? one_template
+                                                                                         : one_ocr;
     const auto two = match_evidence(image, "BattleSpeedUpCheck");
     const bool is_one = one.is_object() && one.get("score", 0.0) >= 0.9;
     const bool is_two = two.is_object() && two.get("score", 0.0) >= 0.9;
     return json::object { { "value", is_one != is_two ? json::value(is_one ? 1 : 2) : json::value(nullptr) },
                           { "one_x_evidence", one },
+                          { "one_x_ocr_evidence", one_ocr },
+                          { "one_x_template_evidence", one_template },
                           { "two_x_evidence", two },
                           { "source", "vision" },
                           { "conflict", is_one && is_two } };
@@ -724,7 +732,7 @@ void asst::BattleControlTask::update_input_state(json::value& snapshot)
                                                           : json::value(nullptr);
 }
 
-json::value asst::BattleControlTask::pause_diagnostics(
+json::value asst::BattleControlTask::pause_analysis(
     const CapturedFrame& frame,
     const json::value& snapshot,
     const std::string& task_name,
@@ -752,24 +760,33 @@ json::value asst::BattleControlTask::pause_diagnostics(
     diagnostic["bin_threshold"] = json::array { ocr->bin_threshold[0], ocr->bin_threshold[1] };
     diagnostic["candidate_source"] = "same_frame_ocr_without_required_text_filter";
     diagnostic["candidates"] = json::array();
-    // Diagnostics never substitute a rejected OCR candidate for positive pause evidence.
+    std::vector<TextRect> candidates;
     if (ocr->without_det) {
         RegionOCRer analyzer(frame.image);
         analyzer.set_task_info(ocr);
         analyzer.set_required({});
         if (const auto candidate = analyzer.analyze()) {
-            diagnostic["candidates"].as_array().emplace_back(candidate->to_json());
+            candidates.emplace_back(*candidate);
         }
     }
     else {
         OCRer analyzer(frame.image);
         analyzer.set_task_info(ocr);
         analyzer.set_required({});
-        if (const auto candidates = analyzer.analyze()) {
-            for (const auto& candidate : *candidates) {
-                diagnostic["candidates"].as_array().emplace_back(candidate.to_json());
-            }
+        if (auto detected = analyzer.analyze()) {
+            candidates = std::move(*detected);
         }
+    }
+    for (const auto& candidate : candidates) {
+        diagnostic["candidates"].as_array().emplace_back(candidate.to_json());
+    }
+    if (task_name == "BattleControlPausedLocalized") {
+        auto rule = battle::localized_pause_evidence(std::move(candidates), roi);
+        rule["observation_id"] = snapshot.at("observation_id");
+        rule["captured_at_ms"] = snapshot.at("captured_at_ms");
+        diagnostic["candidate_source"] = "same_frame_localized_pause_rule_ocr";
+        diagnostic["match"] = rule.get("accepted", false) ? rule : json::value(nullptr);
+        diagnostic["fragment_rule"] = std::move(rule);
     }
     return diagnostic;
 }
