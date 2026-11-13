@@ -191,6 +191,8 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 
 PRTS 可使用 `{"provider":"prts","command":"prts-mcp","region":"cn"}`；适配器强制 stdio 和结构化输出请求。`intel_query` 支持 `stage/operator/enemy`，Intelligence 使用游戏唯一 ID，PRTS 使用关卡 ID 或干员/敌人中文名称。Intelligence 的 `routes_page`、`spawns_page` 从 1 开始，每页 50 条；返回保留来源、限制说明及分页信息，缓存 5 分钟。PRTS 关卡查询只返回敌人，不提供地图、路线或波次，也不自动混用外服数据。上游数据不是实时战况，本服务不自动合并或校准外部地图。
 
+PRTS 映射为 `stage → get_stage_enemies(stage_id)`、`operator → get_operator_basic_info(name, action=skills)`、`enemy → get_enemy_info(name)`，请求 `PRTS_TRANSPORT=stdio`、`PRTS_OUTPUT_CHANNEL=both`。上游 `structuredContent` 原样放在 `data`，`content` 独立保留；无结构化结果时 `data=null`，上游 `isError` 不缓存为成功。不替换描述 token、补回上游丢失文本，或推算潜能／专精／模组条件；上游提供的尖括号文本、blackboard 与条件字段原样保留。`action=skills` 不代表完整基础资料／天赋，更不是本账号实测配置。适配器不自动拼接其他 provider 或 raw 数据。
+
 ## 有界等待与决策资料
 
 等待不再需要客户端分开调用恢复和暂停：
@@ -266,6 +268,14 @@ PRTS 可使用 `{"provider":"prts","command":"prts-mcp","region":"cn"}`；适配
 Core 根据等级标签定位有人的槽位，保留名称无法读取的条目，读取等级 OCR 与正向精一／精二模板，再逐个打开身份唯一的普通成员头像。确认详情身份后只打开技能页签，有界滚动技能列表。完整有序列表中唯一的选中标记才产生 `selected_skill=1|2|3`；`equipped_skill_id` 还要求身份唯一且 `battle_data.json` 含有序 `skillIds`，静态 ID 不单独证明实际装备。不会点击选人卡片、技能选项、编队确认或开始按钮。目前跳过助战详情；缺少精英模板保持 null，**不推定为精零**，等级失败也不补 1。空位不是成员；等级标签缺失不能证明编队完整。
 
 检查 `snapshot.scan_status=complete|partial`、各成员 `fields`（值、来源、验证、原因、ROI、帧证据）、`evidence_frames`、`formation_restored`、`roster_unchanged` 和 `preparation_valid`。complete 只覆盖已定位成员，partial 不代表完整配置。PNG 路径和采集时间关联原始帧，所选技能证据另带跨帧滚动顺序。默认期限 120000 ms，**最大 180000 ms**，不同于普通命令的 30000 ms。取消／关闭会通知 Core 并等待有界收尾；只允许对身份匹配且已识别的详情页在原期限内返回一次，未知页面不盲点关闭。工作进程失败时恢复状态为未知。同一操作 ID 只接受相同参数；重放返回原证据，不导航，也不重新激活已失效快照。attach 前可用 `battle_status.preparation_session_id` 查询 `battle_get_operation` 的持久结果。
+
+打开详情和返回后均用新帧有界验证，单次转换最多等待 3 秒且不延长原期限；新扫描预留 5 秒收尾。头像只点击一次，仍在已确认编队时只读等待，错误成员或未知页不滚动、不确认、不放宽返回权限。最新证据确认仍在原编队且名单未变时，不发送返回。`evidence_frames.purpose` 标记采样用途，`page` 标记实际识别页面；详情另含 `target_identity_verified`，不能将用途当识别结论。`error` 保留原始导航／中断原因，`recovery_error` 单独报告恢复失败。`status`、字段完整度 `scan_status` 与可绑定性 `preparation_valid` 含义不同：partial 不自动失效，complete 也不证明没有漏检。
+
+打开详情和返回后的验证窗口都允许过渡／未知帧继续只读观察，不因首帧动画立即失败，也不发送额外输入或重新计时。永久未知仍在同一 3 秒／原期限窗口内停止；已识别错误成员或编队改变立即停止。取消停止新的打开扫描；已有受保护返回的只读收尾仍限原期限，证据失败不继续轮询。未知帧本身不能授权滚动、确认或返回。
+
+原始同名候选保留在 `game_ids`，仅根据静态实体职业排除装置／召唤物及未知类别后唯一化 `operator_game_id`；`fields.identity` 保留 `ordinary_operator_game_ids`、映射来源与姓名帧证据。多个普通干员候选仍未知。技能 ID 未知原因区分 `identity_unresolved`、`selected_skill_not_observed` 与已观察技能槽后才报告的 `skill_id_mapping_unavailable`；等级、精零或 S1 不补默认值。下游仅在战斗自身候选唯一且战前身份有证据时关联字段，不用战前名单消除现场歧义，也不把同名装置关联到普通干员；仅姓名快照保持配置未知。
+
+等级诊断保留可用的 `text`、`score`、`roi` 和原帧证据；`fields.actual_level.roi_within_frame=false` 时保持未知，不把被裁断区域当成完整等级 OCR。这不代表真实字体／缩放已校准。
 
 仅有效的最新结果可沿用明确重确认的 attach 关联。新采集使旧关联失效；页面／编队变化、证据失败或扫描中断不会建立有效关联。`decision_context.preparation.observed_fields` 单独保留原生观测，并记录与外部配置的冲突，不覆盖任一来源。这是战前测量，不是账号／关卡／配置的连续验证，也不是战斗现场测量。识别复用现有资源并有合成 Debug Core 回归，**不等于实机验收**；真实布局和选中标记兼容性仍须本地验证。
 

@@ -149,6 +149,11 @@ async def test_batch_preparation_reads_s3_and_restores_without_selection(battle)
         )
         assert len(selected["row_order_frames"]) == 3
         assert service.evidence_path(selected["evidence"]).is_file()
+    assert all(
+        frame["page"] == "operator_detail" and frame["target_identity_verified"]
+        for frame in value["evidence_frames"]
+        if frame["purpose"].startswith("skill_")
+    )
     before = events(root)
     # Only formation portraits, the skill tab, and the visually recognized back button.
     clicks = [list(map(int, e["args"])) for e in before if e["action"] == "click"]
@@ -205,7 +210,10 @@ async def test_batch_preparation_reads_selected_slot_with_variable_skill_count(
         "preparation:stuck",
         "preparation:unknown_elite",
         "preparation:unknown_level",
+        "preparation:level_out_of_bounds",
         "preparation:ambiguous",
+        "preparation:device_only",
+        "preparation:unknown_profession",
         "preparation:unreadable",
         "preparation:support",
         "preparation:empty",
@@ -224,13 +232,25 @@ async def test_batch_preparation_preserves_unknowns_and_unsupported_slots(battle
     if variant in ("no_marker", "multiple", "stuck"):
         assert all(o["selected_skill"] is None for o in opers)
         assert all(o["equipped_skill_id"] is None for o in opers)
+        assert all(
+            o["fields"]["equipped_skill_id"]["reason"] == "selected_skill_not_observed"
+            for o in opers
+        )
     elif variant == "unknown_elite":
         assert all(o["actual_elite"] is None for o in opers)
     elif variant == "unknown_level":
         assert all(o["actual_level"] is None for o in opers)
-    elif variant in ("ambiguous", "unreadable"):
+    elif variant == "level_out_of_bounds":
+        level = opers[-1]["fields"]["actual_level"]
+        assert level["value"] is None
+        assert level["reason"] == "level_roi_out_of_bounds"
+        assert level["roi_within_frame"] is False
+    elif variant in ("ambiguous", "unreadable", "device_only", "unknown_profession"):
         assert opers[0]["operator_game_id"] is None
         assert opers[0]["selected_skill"] is None
+        assert (
+            opers[0]["fields"]["equipped_skill_id"]["reason"] == "identity_unresolved"
+        )
         portraits = [
             e
             for e in events(root)
@@ -246,7 +266,7 @@ async def test_batch_preparation_preserves_unknowns_and_unsupported_slots(battle
 
 @pytest.mark.parametrize(
     "battle",
-    ["preparation:changed", "preparation:lost_page", "preparation:detail_mismatch"],
+    ["preparation:changed", "preparation:detail_mismatch"],
     indirect=True,
 )
 async def test_batch_preparation_stops_on_page_or_roster_change(battle):
@@ -266,11 +286,20 @@ async def test_batch_preparation_stops_on_page_or_roster_change(battle):
         assert value["formation_restored"] is False
         assert value["roster_unchanged"] is False
         assert len([e for e in events(root) if e["action"] == "click"]) == 1
+        assert value["error"]["code"] == "detail_identity_not_verified"
+        assert value["recovery_error"]["code"] == "formation_not_restored"
+        assert all(
+            frame["target_identity_verified"] is False
+            for frame in value["evidence_frames"]
+            if frame["page"] == "operator_detail"
+        )
     with pytest.raises(BattleError, match="stale"):
         await service.attach("main_01-07", "normal", value["preparation_id"], True)
 
 
-@pytest.mark.parametrize("battle", ["preparation:complete"], indirect=True)
+@pytest.mark.parametrize(
+    "battle", ["preparation:complete", "preparation:delayed_detail"], indirect=True
+)
 @pytest.mark.parametrize("close", [False, True])
 async def test_batch_preparation_cancel_cleans_up_and_persists_result(battle, close):
     service, _, root = battle
@@ -298,6 +327,181 @@ async def test_batch_preparation_cancel_cleans_up_and_persists_result(battle, cl
         if not task.done():
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize(
+    "battle",
+    ["preparation:delayed_detail", "preparation:delayed_return"],
+    indirect=True,
+)
+async def test_batch_preparation_verifies_delayed_transitions_without_retrying_input(
+    battle,
+):
+    _, _, root = battle
+    result = await inspect_preparation(battle)
+    value = result.structuredContent
+    assert not result.isError, value
+    assert value["preparation_valid"] is True
+    assert value["snapshot"]["scan_status"] == "complete"
+    assert len([e for e in events(root) if e["action"] == "click"]) == 6
+    purpose, page = (
+        ("detail_open_verify", "formation")
+        if (root / "preparation_variant").read_text() == "delayed_detail"
+        else ("formation_return_verify", "operator_detail")
+    )
+    assert any(
+        frame["purpose"] == purpose and frame["page"] == page
+        for frame in value["evidence_frames"]
+    )
+    assert (root / "mode").read_text() == "formation"
+
+
+@pytest.mark.parametrize(
+    "battle",
+    ["preparation:unknown_detail_transition", "preparation:unknown_return_transition"],
+    indirect=True,
+)
+async def test_batch_preparation_waits_through_unknown_transition_without_input(battle):
+    _, _, root = battle
+    result = await inspect_preparation(battle)
+    value = result.structuredContent
+    assert not result.isError, value
+    assert value["preparation_valid"] is True
+    assert value["snapshot"]["scan_status"] == "complete"
+    assert value["formation_restored"] is True
+    assert value["roster_unchanged"] is True
+    purpose, destination = (
+        ("detail_open_verify", "operator_detail")
+        if (root / "preparation_variant").read_text() == "unknown_detail_transition"
+        else ("formation_return_verify", "formation")
+    )
+    frames = [
+        frame for frame in value["evidence_frames"] if frame["purpose"] == purpose
+    ]
+    assert frames[0]["page"] == "unknown"
+    assert frames[1]["page"] == destination
+    if destination == "operator_detail":
+        assert frames[1]["target_identity_verified"] is True
+    recorded = events(root)
+    assert len([e for e in recorded if e["action"] == "click"]) == 6
+    assert not any(
+        e["mode"] == "unknown" and e["action"] in ("click", "swipe") for e in recorded
+    )
+    assert (root / "mode").read_text() == "formation"
+
+
+@pytest.mark.parametrize(
+    "battle", ["preparation:open_unknown", "preparation:lost_page"], indirect=True
+)
+async def test_batch_preparation_bounds_permanent_unknown_without_blind_input(battle):
+    service, _, root = battle
+    result = await inspect_preparation(battle)
+    value = result.structuredContent
+    assert result.isError, value
+    assert value["preparation_valid"] is False
+    assert value["formation_restored"] is False
+    assert value["roster_unchanged"] is False
+    assert service.preparation_snapshot is None
+    opening = (root / "preparation_variant").read_text() == "open_unknown"
+    purpose = "detail_open_verify" if opening else "formation_return_verify"
+    frames = [
+        frame for frame in value["evidence_frames"] if frame["purpose"] == purpose
+    ]
+    assert 2 <= len(frames) <= 31
+    assert all(frame["page"] == "unknown" for frame in frames)
+    # Allow one in-flight capture to finish at the edge of the three-second window.
+    assert frames[-1]["captured_at_ms"] - frames[0]["captured_at_ms"] < 4_000
+    assert value["error"]["code"] == (
+        "detail_page_not_verified" if opening else "formation_not_restored"
+    )
+    assert value["recovery_error"]["code"] == "formation_not_restored"
+    recorded = events(root)
+    assert len([e for e in recorded if e["action"] == "click"]) == (1 if opening else 3)
+    assert not any(
+        e["mode"] == "unknown" and e["action"] in ("click", "swipe") for e in recorded
+    )
+    with pytest.raises(BattleError, match="stale"):
+        await service.attach("main_01-07", "normal", value["preparation_id"], True)
+
+
+@pytest.mark.parametrize(
+    "battle",
+    [
+        "preparation:ignored_click",
+        "preparation:return_ignored",
+        "preparation:evidence_failure",
+    ],
+    indirect=True,
+)
+async def test_batch_preparation_failed_transition_stops_and_reports_latest_page(
+    battle,
+):
+    service, _, root = battle
+    result = await inspect_preparation(battle)
+    value = result.structuredContent
+    variant = (root / "preparation_variant").read_text()
+    assert result.isError, value
+    assert value["preparation_valid"] is False
+    assert value["snapshot"]["scan_status"] == "partial"
+    assert service.preparation_snapshot is None
+    clicks = [e for e in events(root) if e["action"] == "click"]
+    assert len(clicks) == (
+        3 if variant == "return_ignored" else 2 if variant == "evidence_failure" else 1
+    )
+    assert value["formation_restored"] is (
+        variant in ("ignored_click", "evidence_failure")
+    )
+    assert value["roster_unchanged"] is value["formation_restored"]
+    if variant == "ignored_click":
+        assert value["status"] == "failed"
+        assert value["error"]["code"] == "detail_transition_timeout"
+        assert "recovery_error" not in value
+        assert all(frame["page"] == "formation" for frame in value["evidence_frames"])
+    elif variant == "return_ignored":
+        assert value["recovery_error"]["code"] == "formation_not_restored"
+        assert value["evidence_frames"][-1]["page"] == "operator_detail"
+    else:
+        assert value["error"]["code"] == "evidence_write_failed"
+        assert any("evidence_error" in frame for frame in value["evidence_frames"])
+    if variant != "return_ignored":
+        assert not any(e["action"] == "swipe" for e in events(root))
+
+
+@pytest.mark.parametrize("battle", ["preparation:same_name_device"], indirect=True)
+async def test_batch_preparation_resolves_ordinary_operator_without_discarding_candidates(
+    battle,
+):
+    result = await inspect_preparation(battle)
+    value = result.structuredContent
+    assert not result.isError, value
+    oper = value["snapshot"]["operators"][0]
+    assert set(oper["game_ids"]) == {
+        "char_fixture_fang",
+        "trap_fixture_fang",
+        "unknown_fixture_fang",
+    }
+    assert oper["operator_game_id"] == "char_fixture_fang"
+    assert oper["fields"]["identity"]["ordinary_operator_game_ids"] == [
+        "char_fixture_fang"
+    ]
+    assert oper["equipped_skill_id"] == "fixture_s3"
+    assert value["snapshot"]["scan_status"] == "complete"
+
+
+@pytest.mark.parametrize("battle", ["preparation:missing_skill_mapping"], indirect=True)
+async def test_batch_preparation_reports_missing_mapping_only_after_observing_slot(
+    battle,
+):
+    result = await inspect_preparation(battle)
+    value = result.structuredContent
+    assert not result.isError, value
+    for oper in value["snapshot"]["operators"]:
+        assert oper["selected_skill"] == 3
+        assert oper["equipped_skill_id"] is None
+        assert (
+            oper["fields"]["equipped_skill_id"]["reason"]
+            == "skill_id_mapping_unavailable"
+        )
 
 
 @pytest.mark.parametrize("battle", ["preparation:complete"], indirect=True)

@@ -95,6 +95,19 @@ def prepare(root, tasks, variant):
     }
     if variant == "ambiguous":
         chars["char_fixture_duplicate"] = chars["char_fixture_fang"]
+    if variant == "same_name_device":
+        for game_id, profession in (
+            ("trap_fixture_fang", "TRAP"),
+            ("unknown_fixture_fang", "UNRECOGNIZED"),
+        ):
+            chars[game_id] = {**chars["char_fixture_fang"], "profession": profession}
+    if variant in ("device_only", "unknown_profession"):
+        chars["char_fixture_fang"]["profession"] = (
+            "TRAP" if variant == "device_only" else "UNRECOGNIZED"
+        )
+    if variant == "missing_skill_mapping":
+        for char in chars.values():
+            char.pop("skillIds")
     (root / "resource/battle_data.json").write_text(
         json.dumps({"chars": chars, "ranges": {}}), encoding="utf-8"
     )
@@ -110,6 +123,8 @@ def prepare(root, tasks, variant):
     )
     if variant == "support":
         slots.append((1100, 280, "Fang"))
+    if variant == "level_out_of_bounds":
+        slots.append((1248, 280, "Fang"))
     (root / "preparation_slots.json").write_text(json.dumps(slots))
     for x, y, name in slots:
         formation.paste(patterns["BattlePreparationNameFlags"], (x, y))
@@ -176,6 +191,14 @@ def _save(root, mode, image):
 
 def navigate(root, action, args, mode):
     variant = (root / "preparation_variant").read_text()
+    transition = root / "preparation_transition.json"
+    if action == "capture" and transition.exists():
+        state = json.loads(transition.read_text())
+        state["remaining"] -= 1
+        if state["remaining"] <= 0:
+            transition.unlink()
+            return state["target"]
+        transition.write_text(json.dumps(state))
     if action == "click":
         x, y = map(int, args)
         if mode == "formation" and y < 600 and x < 950:
@@ -183,8 +206,27 @@ def navigate(root, action, args, mode):
             target = min(
                 slots, key=lambda slot: (slot[0] - x) ** 2 + (slot[1] - 134 - y) ** 2
             )
-            return f"detail-{target[2]}-0"
+            detail = f"detail-{target[2]}-0"
+            if variant == "ignored_click":
+                return mode
+            if variant == "open_unknown":
+                return "unknown"
+            if variant in ("delayed_detail", "unknown_detail_transition"):
+                transition.write_text(json.dumps({"target": detail, "remaining": 2}))
+                return "unknown" if variant == "unknown_detail_transition" else mode
+            if variant == "evidence_failure":
+                for directory in (root.parent / "battle-control").iterdir():
+                    last = max(int(path.stem) for path in directory.glob("*.png"))
+                    (directory / f"{last + 1}.png").mkdir()
+            return detail
         if mode.startswith("detail-") and x < 100 and y < 80:
+            if variant in ("delayed_return", "unknown_return_transition"):
+                transition.write_text(
+                    json.dumps({"target": "formation", "remaining": 2})
+                )
+                return "unknown" if variant == "unknown_return_transition" else mode
+            if variant == "return_ignored":
+                return mode
             return (
                 "unknown"
                 if variant == "lost_page"

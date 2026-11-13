@@ -191,6 +191,8 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 
 PRTS 可使用 `{"provider":"prts","command":"prts-mcp","region":"cn"}`；配接器會要求 stdio 與結構化輸出。`intel_query` 支援 `stage/operator/enemy`：Intelligence 使用遊戲唯一 ID，PRTS 使用關卡 ID 或幹員／敵人簡體中文名稱。Intelligence 的 `routes_page`、`spawns_page` 從 1 開始，每頁 50 筆。結果保留來源、限制與分頁資訊，快取 5 分鐘。PRTS 關卡查詢只回傳敵人，不含地圖、路線或波次，也不會暗中混用其他區服資料。情報不是即時戰況；本服務不自動合併或校準外部地圖。
 
+PRTS 對應為 `stage → get_stage_enemies(stage_id)`、`operator → get_operator_basic_info(name, action=skills)`、`enemy → get_enemy_info(name)`，要求 `PRTS_TRANSPORT=stdio`、`PRTS_OUTPUT_CHANNEL=both`。上游 `structuredContent` 原樣放在 `data`，`content` 獨立保留；無結構化結果時 `data=null`，上游 `isError` 不快取為成功。不替換描述 token、補回上游遺失文字，或推算潛能／專精／模組條件；上游提供的角括號文字、blackboard 與條件欄位原樣保留。`action=skills` 不代表完整基本資料／天賦，更不是本帳號實測配置。配接器不自動拼接其他 provider 或 raw 資料。
+
 ## 有界等待與決策資料
 
 等待不再需要用戶端分別呼叫恢復和暫停：
@@ -266,6 +268,14 @@ PRTS 可使用 `{"provider":"prts","command":"prts-mcp","region":"cn"}`；配接
 Core 依等級標籤定位有人的欄位，保留名稱無法讀取的項目，讀取等級 OCR 與正向精一／精二模板，再逐一開啟身分唯一的普通成員頭像。確認詳情身分後只開啟技能頁籤，有界捲動技能清單。完整有序清單中唯一的選取標記才產生 `selected_skill=1|2|3`；`equipped_skill_id` 還要求身分唯一且 `battle_data.json` 含有序 `skillIds`，靜態 ID 不單獨證明實際裝備。不點選選人卡片、技能選項、編隊確認或開始按鈕。目前跳過助戰詳情；缺少精英模板保持 null，**不推定為精零**，等級失敗不補 1。空位不是成員；等級標籤缺失不能證明編隊完整。
 
 檢查 `snapshot.scan_status=complete|partial`、各成員 `fields`（值、來源、驗證、原因、ROI、影格證據）、`evidence_frames`、`formation_restored`、`roster_unchanged` 與 `preparation_valid`。complete 只涵蓋已定位成員，partial 不代表完整配置。PNG 路徑與擷取時間關聯原始影格，所選技能證據另帶跨影格捲動順序。預設期限 120000 ms，**最大 180000 ms**，不同於一般命令的 30000 ms。取消／關閉會通知 Core 並等待有界收尾；只允許對身分相符且已識別的詳情頁在原期限內返回一次，未知頁面不盲點關閉。工作程序失敗時恢復狀態為未知。同一操作 ID 只接受相同參數；重播回傳原證據，不導覽，也不重新啟用已失效快照。attach 前可用 `battle_status.preparation_session_id` 查詢 `battle_get_operation` 的持久結果。
+
+開啟詳情與返回後均以新影格有界驗證，單次轉換最多等待 3 秒且不延長原期限；新掃描預留 5 秒收尾。頭像只點擊一次，仍在已確認編隊時唯讀等待，錯誤成員或未知頁不捲動、不確認、不放寬返回權限。最新證據確認仍在原編隊且名單未變時，不送出返回。`evidence_frames.purpose` 標記採樣用途，`page` 標記實際識別頁面；詳情另含 `target_identity_verified`，不能把用途當識別結論。`error` 保留原始導覽／中斷原因，`recovery_error` 獨立回報恢復失敗。`status`、欄位完整度 `scan_status` 與可綁定性 `preparation_valid` 意義不同：partial 不自動失效，complete 也不證明沒有漏檢。
+
+開啟詳情與返回後的驗證窗口都允許過渡／未知影格繼續唯讀觀察，不因首格動畫立即失敗，也不送出額外輸入或重新計時。永久未知仍於同一 3 秒／原期限窗口內停止；已識別錯誤成員或編隊改變立即停止。取消停止新的開啟掃描；已有受保護返回的唯讀收尾仍限原期限，證據失敗不繼續輪詢。未知影格本身不能授權捲動、確認或返回。
+
+原始同名候選保留於 `game_ids`，僅依靜態實體職業排除裝置／召喚物與未知類別後唯一化 `operator_game_id`；`fields.identity` 保留 `ordinary_operator_game_ids`、對應來源與姓名影格證據。多個普通幹員候選仍未知。技能 ID 未知原因區分 `identity_unresolved`、`selected_skill_not_observed` 與觀察到技能槽後才回報的 `skill_id_mapping_unavailable`；等級、精零或 S1 不補預設值。下游僅在戰鬥本身候選唯一且戰前身分有證據時關聯欄位，不用戰前名單消除現場歧義，也不把同名裝置關聯到普通幹員；僅姓名快照維持配置未知。
+
+等級診斷保留可用的 `text`、`score`、`roi` 與原始影格證據；`fields.actual_level.roi_within_frame=false` 時維持未知，不將裁斷區域視為完整等級 OCR。這不代表真實字型／縮放已校準。
 
 僅有效的最新結果可沿用明確重新確認的 attach 關聯。新擷取使舊關聯失效；頁面／編隊變化、證據失敗或掃描中斷不建立有效關聯。`decision_context.preparation.observed_fields` 獨立保留原生觀測並記錄與外部配置的衝突，不覆寫任一來源。這是戰前測量，不是帳號／關卡／配置的連續驗證，也不是戰鬥現場測量。識別複用既有資源並有合成 Debug Core 迴歸，**不等於實機驗收**；真實版面與選取標記相容性仍須本機驗證。
 

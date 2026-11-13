@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 import pytest
+from mcp.types import TextContent
 
 from maa_battle_mcp.intelligence import IntelligenceClient, IntelligenceError
 from maa_battle_mcp.models import (
@@ -70,6 +71,102 @@ async def test_real_mcp_provider_roundtrip_and_cache():
     plain = await client.query("stage", "unstructured", 2, 1)
     assert plain["data"] is None
     assert any("unstructured" in warning for warning in plain["warnings"])
+
+
+@pytest.mark.parametrize(
+    "kind, identifier, tool, arguments",
+    [
+        (
+            "stage",
+            "act55side_ex02",
+            "get_stage_enemies",
+            {"stage_id": "act55side_ex02"},
+        ),
+        (
+            "operator",
+            "可露希尔",
+            "get_operator_basic_info",
+            {"name": "可露希尔", "action": "skills"},
+        ),
+        ("enemy", "测试敌人", "get_enemy_info", {"name": "测试敌人"}),
+    ],
+)
+async def test_prts_stdio_preserves_both_channels_and_raw_conditions(
+    tmp_path, kind, identifier, tool, arguments
+):
+    log = tmp_path / "prts-calls.jsonl"
+    client = IntelligenceClient(
+        IntelligenceConfig(
+            provider="prts",
+            command=sys.executable,
+            args=[str(Path(__file__).with_name("fake_intelligence.py"))],
+            env={
+                "PRTS_TRANSPORT": "http",
+                "PRTS_OUTPUT_CHANNEL": "text",
+                "PRTS_TEST_LOG": str(log),
+            },
+        )
+    )
+    result = await client.query(kind, identifier)
+    expected_content = [
+        TextContent(
+            type="text",
+            text="<fixture> {normal_interval:0.00}",
+            annotations={"audience": ["assistant"], "priority": 0.5},
+            _meta={"fixture": "preserve"},
+        ).model_dump(mode="json", by_alias=True),
+        TextContent(type="text", text="second channel fragment").model_dump(
+            mode="json", by_alias=True
+        ),
+    ]
+    assert result["tool"] == tool
+    assert result["arguments"] == arguments
+    assert result["data"] == {
+        "received": {"tool": tool, "arguments": arguments},
+        "description": "<fixture> {normal_interval:0.00}",
+        "skills": [
+            {
+                "blackboard": [{"key": "normal_interval", "value": 7.5}],
+                "condition": {"phase": 2, "level": 1},
+            }
+        ],
+        "talents": {
+            "candidates": [
+                {"requiredPotentialRank": 0, "description": "<first>"},
+                {"description": "<unspecified potential>"},
+            ]
+        },
+    }
+    assert result["content"] == expected_content
+    assert not result["cached"]
+    cached = await client.query(kind, identifier)
+    assert cached["cached"] is True
+    assert cached["data"] == result["data"]
+    assert cached["content"] == result["content"]
+    assert cached["fetched_at"] == result["fetched_at"]
+    assert len(log.read_text().splitlines()) == 1
+    refreshed = await client.query(kind, identifier, refresh=True)
+    assert refreshed["cached"] is False
+    assert refreshed["data"] == result["data"]
+    assert len(log.read_text().splitlines()) == 2
+    plain = await client.query(kind, "unstructured")
+    assert plain["data"] is None
+    assert plain["content"] == result["content"]
+    assert any("unstructured" in warning for warning in plain["warnings"])
+    with pytest.raises(IntelligenceError, match="fixture_error"):
+        await client.query(kind, "error")
+    assert (kind, "error", 1, 1, None) not in client.cache
+    assert (await client.query(kind, identifier))["data"] == result["data"]
+    if kind == "stage":
+        assert any("not tiles" in warning for warning in result["warnings"])
+    elif kind == "operator":
+        assert any("action=skills" in warning for warning in result["warnings"])
+    before = len(log.read_text().splitlines())
+    with pytest.raises(IntelligenceError, match="pagination"):
+        await client.query(kind, identifier, 2, 1)
+    with pytest.raises(IntelligenceError, match="cannot supply complete"):
+        await client.query_complete_stage(identifier, "normal", 7)
+    assert len(log.read_text().splitlines()) == before
 
 
 def complete_page(route_page, spawn_page):

@@ -487,11 +487,17 @@ def prepare(settings, known):
 
 def device(root, action, args):
     mode = (root / "mode").read_text(encoding="utf-8")
-    if (root / "preparation_variant").exists() and action in ("click", "swipe"):
+    if (root / "preparation_variant").exists() and action in (
+        "click",
+        "swipe",
+        "capture",
+    ):
         from preparation_fixture import navigate
 
         next_mode = navigate(root, action, args, mode)
         (root / "mode").write_text(next_mode)
+        if action == "capture":
+            mode = next_mode
     transition = root / "transition.json"
     if action == "capture" and mode == "running" and transition.exists():
         state = json.loads(transition.read_text())

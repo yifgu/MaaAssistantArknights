@@ -52,6 +52,38 @@ class DecisionContext:
                 "Loadout region/stage/mode does not match the explicit battle binding"
             )
 
+    @staticmethod
+    def _preparation_identity(oper: dict) -> str | None:
+        candidates = oper.get("game_ids", [])
+        if "operator_game_id" not in oper and not oper.get("fields"):
+            return candidates[0] if len(candidates) == 1 else None
+        resolved = oper.get("operator_game_id")
+        identity = oper.get("fields", {}).get("identity", {})
+        evidence = identity.get("evidence") or {}
+        if (
+            not isinstance(resolved, str)
+            or resolved not in candidates
+            or identity.get("value") != resolved
+            or not evidence.get("observation_id")
+            or not evidence.get("image_path")
+        ):
+            return None
+        if (
+            identity.get("source") == "preparation_vision_with_static_identity_mapping"
+            and identity.get("verification")
+            == "derived_from_observed_name_and_ordinary_operator_class"
+            and identity.get("mapping_source") == "bundled_battle_data_roles"
+            and identity.get("ordinary_operator_game_ids") == [resolved]
+        ):
+            return resolved
+        if (
+            candidates == [resolved]
+            and identity.get("source") == "preparation_vision"
+            and identity.get("verification") == "observed"
+        ):
+            return resolved
+        return None
+
     def enrich_snapshot(self, snapshot: dict) -> None:
         configured = (
             {}
@@ -118,23 +150,31 @@ class DecisionContext:
                         if resolved
                         else []
                     )
+                    prepared_identity = (
+                        self._preparation_identity(matches[0])
+                        if len(matches) == 1
+                        else None
+                    )
+                    identity_match = (
+                        None
+                        if not resolved
+                        or len(matches) == 1
+                        and prepared_identity is None
+                        else len(matches) == 1 and prepared_identity == resolved
+                    )
                     preparation = {
                         "preparation_id": self.preparation["preparation_id"],
                         "image_path": self.preparation.get("image_path"),
-                        "identity_match": len(matches) == 1 if resolved else None,
+                        "identity_match": identity_match,
                         "status": "matched"
-                        if len(matches) == 1
+                        if identity_match is True
                         else "conflict"
-                        if resolved
+                        if identity_match is False
                         else "unknown",
                         "configuration_verified": False,
                     }
                     unit["decision_context"]["preparation"] = preparation
-                    if (
-                        len(candidates) == 1
-                        and len(matches) == 1
-                        and matches[0]["game_ids"] == [resolved]
-                    ):
+                    if identity_match is True:
                         observed = matches[0].get("fields", {})
                         preparation["observed_fields"] = observed
                         preparation["configuration_verified"] = all(

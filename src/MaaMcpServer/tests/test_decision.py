@@ -220,10 +220,27 @@ def test_native_preparation_fields_preserve_supplied_values_and_conflicts(
     }
     context.preparation = {
         "preparation_id": "p",
-        "snapshot": {"operators": [{"game_ids": ["char_a"], "fields": observed}]},
+        "snapshot": {
+            "operators": [
+                {
+                    "game_ids": ["char_a", "trap_a"],
+                    "operator_game_id": "char_a",
+                    "fields": observed,
+                }
+            ]
+        },
+    }
+    observed["identity"] = {
+        "value": "char_a",
+        "source": "preparation_vision_with_static_identity_mapping",
+        "verification": "derived_from_observed_name_and_ordinary_operator_class",
+        "ordinary_operator_game_ids": ["char_a"],
+        "mapping_source": "bundled_battle_data_roles",
+        "evidence": observed["actual_elite"]["evidence"],
     }
     snapshot = {
-        "deployment": [{"game_ids": ["char_a"]}, {"game_ids": ["char_a", "char_b"]}]
+        "deployment": [{"game_ids": ["char_a"]}, {"game_ids": ["char_a", "trap_a"]}],
+        "battlefield": [{"game_ids": ["trap_a"]}],
     }
     context.enrich_snapshot(snapshot)
     known, ambiguous = [u["decision_context"] for u in snapshot["deployment"]]
@@ -236,3 +253,58 @@ def test_native_preparation_fields_preserve_supplied_values_and_conflicts(
     assert prep["conflicts"]["equipped_skill_id"]["user_supplied"] == "supplied"
     assert ambiguous["preparation"]["configuration_verified"] is False
     assert "observed_fields" not in ambiguous["preparation"]
+    device = snapshot["battlefield"][0]["decision_context"]["preparation"]
+    assert device["status"] == "conflict"
+    assert "observed_fields" not in device
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "names_only",
+        "ambiguous",
+        "unproved",
+        "missing_evidence",
+        "unknown",
+        "duplicate",
+        "legacy",
+    ],
+)
+def test_preparation_association_requires_unique_supported_identity(settings, variant):
+    context = DecisionContext(settings)
+    identity = {
+        "value": "char_a",
+        "source": "preparation_vision",
+        "verification": "observed",
+        "evidence": {"observation_id": "1", "image_path": "battle-control/s/1.png"},
+    }
+    oper = {
+        "game_ids": ["char_a"],
+        "operator_game_id": "char_a",
+        "fields": {"identity": identity, "actual_level": {"value": 50}},
+    }
+    if variant in ("names_only", "ambiguous"):
+        oper = {"game_ids": ["char_a"]}
+        if variant == "ambiguous":
+            oper["game_ids"].append("trap_a")
+    elif variant == "unproved":
+        oper["game_ids"].append("trap_a")
+    elif variant == "missing_evidence":
+        identity["evidence"] = None
+    elif variant == "unknown":
+        oper["operator_game_id"] = None
+        identity["value"] = None
+    roster = [oper] * (2 if variant == "duplicate" else 1)
+    context.preparation = {"preparation_id": "p", "snapshot": {"operators": roster}}
+    snapshot = {"deployment": [{"game_ids": ["char_a"]}]}
+    context.enrich_snapshot(snapshot)
+    preparation = snapshot["deployment"][0]["decision_context"]["preparation"]
+    if variant in ("names_only", "legacy"):
+        assert preparation["status"] == "matched"
+        assert preparation["observed_fields"] == oper.get("fields", {})
+    else:
+        assert preparation["status"] == (
+            "conflict" if variant == "duplicate" else "unknown"
+        )
+        assert "observed_fields" not in preparation
+    assert preparation["configuration_verified"] is False

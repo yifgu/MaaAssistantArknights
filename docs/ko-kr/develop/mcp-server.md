@@ -191,6 +191,8 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 
 PRTS는 `{"provider":"prts","command":"prts-mcp","region":"cn"}`으로 설정할 수 있습니다. 어댑터는 stdio와 구조화 출력을 요청합니다. `intel_query`는 `stage/operator/enemy`를 지원합니다. Intelligence는 게임 고유 ID를, PRTS는 스테이지 ID 또는 오퍼레이터/적의 중국어 이름을 사용합니다. Intelligence의 `routes_page`, `spawns_page`는 1부터 시작하며 페이지당 50개입니다. 출처, 제한, 페이지 정보를 보존하며 5분간 캐시합니다. PRTS 스테이지 조회는 적 정보만 반환하며 타일, 경로, 웨이브는 제공하지 않고 다른 지역 데이터로 조용히 대체하지도 않습니다. 정적 정보는 실시간 전황이 아니며 외부 맵을 자동 병합하거나 보정하지 않습니다.
 
+PRTS 매핑은 `stage → get_stage_enemies(stage_id)`, `operator → get_operator_basic_info(name, action=skills)`, `enemy → get_enemy_info(name)`이며 `PRTS_TRANSPORT=stdio`, `PRTS_OUTPUT_CHANNEL=both`를 요청합니다. 상위 서비스의 `structuredContent`는 `data`에, `content`는 별도로 원형 보존합니다. 구조화 결과가 없으면 `data=null`이며 상위 `isError`를 성공으로 캐시하지 않습니다. 제공된 꺾쇠 내부 텍스트, blackboard와 조건 필드는 유지하지만 설명 token 치환, 상위에서 누락된 텍스트 복구, 잠재/특화/모듈 조건 추론은 하지 않습니다. `action=skills`는 완전한 기본 정보/재능 조회나 이 계정의 실제 구성 측정이 아닙니다. 다른 provider나 raw 데이터와 자동 결합하지 않습니다.
+
 ## 제한 시간 대기와 판단 자료
 
 클라이언트에서 재개와 일시 정지를 따로 호출하지 않고 대기할 수 있습니다.
@@ -266,6 +268,14 @@ PRTS는 `{"provider":"prts","command":"prts-mcp","region":"cn"}`으로 설정할
 Core는 레벨 표시로 점유 슬롯을 찾고 이름을 읽지 못한 항목도 유지하며 레벨 OCR과 정예 1/2의 명확한 템플릿을 읽습니다. 이후 유일하게 식별된 일반 멤버의 초상화를 순서대로 열고 상세 화면의 이름을 확인한 다음 스킬 탭만 열어 횟수 제한 안에서 스크롤합니다. 완전하고 순서가 확인된 목록에서 선택 표시가 하나일 때만 `selected_skill=1|2|3`을 반환합니다. `equipped_skill_id`는 유일한 신원과 `battle_data.json`의 순서 있는 `skillIds`도 필요하며 정적 ID만으로 실제 장착을 판정하지 않습니다. 오퍼레이터 선택 카드, 스킬 선택지, 편성 확정, 시작 버튼은 누르지 않습니다. 지원 상세는 아직 건너뛰며 정예 템플릿 미검출은 null이고 **정예 0으로 추정하지 않습니다**. 레벨 실패도 1로 대체하지 않습니다. 빈 슬롯은 멤버가 아니며 레벨 표시 미검출은 편성 전체의 완전성을 증명하지 않습니다.
 
 `snapshot.scan_status=complete|partial`, 멤버별 `fields`(값, 출처, 검증, 이유, ROI, 프레임 증거), `evidence_frames`, `formation_restored`, `roster_unchanged`, `preparation_valid`를 확인하세요. complete는 검출한 멤버만 포함하며 partial은 완전한 구성을 뜻하지 않습니다. PNG 경로와 캡처 시각은 원본 프레임에 대응하고 선택 스킬에는 프레임 간 스크롤 순서도 포함됩니다. 기본 기한은 120000 ms, **최대 180000 ms**로 일반 명령의 30000 ms와 다릅니다. 취소/닫기는 Core에 알리고 제한된 정리를 기다립니다. 이름이 일치하는 확인된 상세 화면에서만 원래 기한 내 뒤로 가기를 한 번 허용하며 미확인 화면은 무작정 닫지 않습니다. 작업자 실패 시 복구 상태는 미확인입니다. 같은 작업 ID에는 같은 인수만 사용하세요. 재요청은 원래 증거만 반환하며 화면 이동이나 무효 스냅샷 재활성화를 하지 않습니다. attach 전 영구 결과는 `battle_status.preparation_session_id`로 `battle_get_operation`에서 조회합니다.
+
+상세 화면 열기와 복귀는 새 프레임으로 제한 검증하며 각 전환은 원래 기한 안에서 최대 3초, 새 스캔 전에는 정리용 5초를 확보합니다. 초상화는 한 번만 클릭하고 확인된 편성 화면에 남아 있으면 입력 없이 기다립니다. 다른 멤버나 미확인 화면에서는 스크롤, 확정, 뒤로 가기 권한 완화를 하지 않습니다. 새 증거로 원래 편성과 명단이 그대로임을 확인하면 뒤로 가기 입력을 보내지 않습니다. `evidence_frames.purpose`는 샘플링 목적이고 `page`는 실제 인식 결과이며 상세에는 `target_identity_verified`도 포함됩니다. 목적을 인식 증거로 취급하지 마세요. `error`는 이동/중단 원인을 유지하고 `recovery_error`는 복구 실패를 별도 보고합니다. 작업 `status`, 필드 완전성 `scan_status`, 연결 가능성 `preparation_valid`는 다릅니다. partial이 자동 무효는 아니며 complete도 미검출 슬롯이 없다는 증명이 아닙니다.
+
+상세 화면 열기와 복귀 후 검증은 전환 중/미확인 프레임에서도 읽기 전용으로 제한 관측하며 첫 애니메이션 프레임만으로 실패하지 않습니다. 추가 입력이나 관측 시간 재시작은 하지 않습니다. 계속 미확인이면 같은 3초/원래 기한 안에 멈추며 다른 멤버나 편성 변경을 인식하면 즉시 멈춥니다. 취소는 새 상세 스캔을 중단하며 이미 보호된 뒤로 가기 이후의 읽기 전용 정리도 원래 기한 안에서만 수행합니다. 증거 저장 실패 후에는 폴링을 계속하지 않습니다. 미확인 프레임으로 스크롤, 확정, 뒤로 가기 입력을 허용하지 않습니다.
+
+원래 동명 후보는 `game_ids`에 유지하며 정적 개체 직업으로 장치/소환물과 미확인 분류를 제외한 뒤 `operator_game_id`를 유일하게 결정합니다. `fields.identity`에는 `ordinary_operator_game_ids`, 매핑 출처와 이름 프레임 증거를 보존하며 일반 오퍼레이터 후보가 여러 개면 미확인입니다. 스킬 ID 미확인 이유는 `identity_unresolved`, `selected_skill_not_observed`, 슬롯 관측 후에만 보고하는 `skill_id_mapping_unavailable`로 구분하며 레벨, 정예 0, S1 기본값은 넣지 않습니다. 후속 필드 연결은 전투 자체 후보가 유일하고 전투 전 신원에 증거가 있을 때만 허용하며 편성 명단으로 현장 후보를 좁히거나 동명 장치를 일반 오퍼레이터와 연결하지 않습니다. 이름만 관측한 스냅샷은 구성 미확인을 유지합니다.
+
+레벨 진단은 사용 가능한 `text`, `score`, `roi`와 원본 프레임 증거를 유지합니다. `fields.actual_level.roi_within_frame=false`이면 미확인으로 두며 잘린 영역을 완전한 레벨 OCR로 읽지 않습니다. 실제 글꼴/배율 보정이 완료되었다는 의미는 아닙니다.
 
 유효한 최신 결과만 기존의 명시적 재확인 attach에 사용할 수 있습니다. 새 관측은 이전 연결을 무효화하며 화면/편성 변경, 증거 저장 실패, 중단된 스캔은 유효한 연결을 만들지 않습니다. `decision_context.preparation.observed_fields`는 네이티브 관측을 입력된 구성과 분리해 유지하고 충돌을 기록하지만 어느 쪽도 덮어쓰지 않습니다. 이는 전투 전 측정이지 계정/스테이지/구성의 지속 검증이나 실시간 전투 측정이 아닙니다. 기존 리소스를 재사용하는 인식기는 합성 Debug Core 회귀가 있지만 **실기기 검증은 아닙니다**. 실제 화면 배치와 선택 표시 호환성은 로컬에서 확인해야 합니다.
 
