@@ -102,7 +102,7 @@ Stop other MAA/GUI tasks controlling the same device, then manually enter a fixe
 
 A cross-process control lock protects each `--user-dir`. Always use the same directory for the same device; this lock cannot prevent another directory's server or an external GUI from controlling it.
 
-Summon deployment requires a trusted startup allowlist and uses separate instance records. Unapproved devices and summon skills/retreat remain rejected; see below.
+Reviewed summon adapters no longer require enumerating IDs at startup. Unknown interactions remain rejected; presence, requested location and input state are separate. The full deploy/retreat loop is not yet verified or complete; see below.
 
 ```bash
 uv run --project src/MaaMcpServer maa-battle-mcp \
@@ -267,7 +267,33 @@ Inspect `snapshot.scan_status=complete|partial`, per-operator `fields` (value, s
 
 Only a valid latest result can use the existing explicit attach reconfirmation. New observations invalidate the previous binding; page/roster changes, failed evidence or interrupted scans do not create a valid binding. `decision_context.preparation.observed_fields` preserves native observations separately from supplied loadout fields and records conflicting values without overwriting either. These are preparation-time measurements, not continuous account/stage/configuration verification or live battle measurements. The UI recognizers reuse existing resources and have synthetic Debug Core regression coverage, **not real-device acceptance**; game layouts and selected-marker compatibility still need local validation.
 
-Repeat startup option `--allow-summon GAME_ID` only for cards confirmed to use ordinary drag deployment. Use `battle_step(action="deploy")` with the usual arguments plus the observed `card_id`; it must identify a unique, available, unchanged card no older than 30 seconds. Each attempt creates `instance:<operation_id>` without overwriting same-name instances. Position/lifecycle are unverified action history; uncertain disappearance never automatically frees a tile. Instance skills/retreat, ambiguous cards and unapproved devices remain rejected; a helper return does not prove deployment.
+### Offline units and owned instances
+
+`battle_get_unit_info(game_id)` reads bundled `resource/unit_info.json` without a device connection or intelligence provider. It returns `unit`, `source`, `resource_sha256` and `scope`: TOKEN/TRAP/operator classification, description, base attribute key frames and range IDs, skill references/definitions, talent blackboards and conditional `tokenKey`/`overrideTokenKey` ID relations. These are static table values, not current card `cost`/`available`/`cooling` or an actual equipped loadout. User configuration never resolves ambiguous visual game IDs.
+
+`base_range_definitions` preserves game-relative row/column geometry named by `base_range_coordinate_system`; these are not visually measured MAA tiles.
+
+Capabilities have `value=true|false|null`, `source`, `reason`, `game_data_value` and `live_verified`. Reviewed adapter values describe a guarded interaction contract, not engine policy or live acceptance; `execution_support` separately lists input-only or unsupported operations. Unknown is not permission. The initial summon adapter is `token_10000_silent_healrb` (Medic Drone), standard drag with `direction="None"`; other TOKEN/TRAP interactions remain unknown and fail closed. Same-tile coexistence and summon skills are not supported.
+
+Use `battle_step(action="deploy", unit_id=..., card_id=...)`. `game_id` identifies a kind, `card_id` an observed card, and `instance:<operation_id>` an owned attempted deployment. Card selection precedes name uniqueness checks, so duplicate same-name cards can be selected by card ID. Game ID must still be unique. Card identity, layout, appearance, availability and 30-second freshness are rechecked after resume. Omitted `--allow-summon` means reviewed adapters may be used; the deprecated option remains an explicit restrictive filter and emits a warning. It never authorizes an unsupported interaction. An explicit empty native `allowed_summons` list excludes all summons; omitting the field enables reviewed adapters.
+
+Instances use separate typed presence, location evidence and operation state. Input does not prove placement; cost/cooldown changes do not commit occupancy. A bounded modifying detail check records two identity/icon frames; it does not establish this instance's presence or selected tile. Unknown instances reserve their requested tile. `battle_step(action="retreat", unit_id="instance:...")` checks capability and rejects possible same-kind/neighbour selections, then checks identity and a positive retreat button. **No production selected-tile anchor or definite departure rule is available yet: the retreat button is not clicked without a verified anchor, and uncertain tiles are not released.** A missing button yields `selection_unverified`, not a permanent non-retreatable policy; explicit false capability yields `not_retreatable`. Passive observation never clicks, resumes or infers disappearance from time/single missing frames. A verified terminal screen can mark owned instances gone. Replays preserve the journal/evidence without new input; restart/mid-battle reconstruction is not supported.
+
+Positive detail frames establish only that the selected kind exists (`selected_kind_present`), not that this deployment succeeded: owned-instance `presence` remains unknown without a tile anchor. A retreat icon match is `retreat_button_detected`, not proof that it is enabled; `retreat_button_available` stays null without an availability rule.
+
+Legacy `battle_deploy` accepts optional `card_id`; legacy deploy/retreat/skill enter the same bounded preflight and pause cleanup, still requiring a running battle initially. They cannot bypass instance/capability/location checks. Without a verified tile anchor, ordinary-unit skill/retreat is also rejected rather than using unverified action history.
+
+TL/TL-EX uses `act55side_*` IDs (for example `act55side_ex01`, not `TL-EX-1`). `trap_341_dsjtzd` (自爆榴弹, explosive stage device) can be queried offline: base cost 20, respawn time 20, range `x-4`, no listed skills, talent blackboard stun 5 seconds. **Respawn time is not an explosion countdown.** The tables do not prove drag/retreat policy. No validated real screenshot rule for explosion, definite disappearance or flip-tile changes is available; dynamic overlay stays unknown/unsupported and TL deployment returns `dynamic_terrain_unknown`. Static geometry is never changed on an estimated timer. This is not a completed or live-accepted TL loop.
+
+Regenerate from locally supplied pinned character/skill tables, after building the Debug `res_updater` target:
+
+```bash
+python tools/ResourceUpdater/generate_unit_info.py \
+  --updater build-mcp/bin/Debug/res_updater \
+  --input path/to/excel --output resource/unit_info.json
+```
+
+`tools/ResourceUpdater/unit_info_source.json` pins repository, commit, region and SHA-256 of character, patch-character, skill and range inputs; the wrapper verifies them before invoking the canonical C++ generator. No runtime download/Wiki is required. Generated JSON uses one record per line and is excluded from Prettier. Normal resource updates only regenerate this companion when their input directory supplies `unit_info_source.json`; updating the declared source requires regenerating and validating the companion. Source hashes do not prove compatibility with the installed game. External raw stage/enemy snapshots remain separately configured, not bundled.
 
 `battle_set_speed(request)` accepts `session_id`, `operation_id`, `multiplier=1|2` and `timeout_ms`. Only while positively paused, it reads speed, switches once if needed, and reads back with before/after evidence. It preserves pause ownership and never resumes; repeated 2x does not toggle to 1x. Unknown speed causes no click; unverifiable post-change state locks input. The host alone decides whether to accelerate. Wait remains host time: Core reserves cleanup based on observed capture cost and refuses resume if insufficient. `cleanup_reserve_ms`, `resumed_interval_upper_bound_ms`, `deadline_margin_ms` are diagnostics, not exact simulation-time guarantees.
 
@@ -277,7 +303,9 @@ Repeat startup option `--allow-summon GAME_ID` only for cards confirmed to use o
 
 `--intel-config` supports `provider="raw"` for trusted local files without automatic downloads. Configure `root` (absolute directory), `repository`, `commit` (40 hex characters), `data_version`, `region`, `stages`, and `enemy_database`. `stages` maps stage IDs to `{"path":"relative/path","sha256":"64-character hash"}`; `enemy_database` uses the same file structure. Each file is capped at 64 MiB, SHA-256 verified and confined to the root.
 
-Use the attached session's `intel_query(..., complete_stage=true)`. The adapter separately handles top-down map rows and bottom-up routes, emits `maa_grid`, and does not treat wait checkpoints as movement. One SPAWN action produces one record, retaining count, delays, interval, hidden groups and blocking fields. Enemy level inheritance, definition flags and level overrides support both Key/Value and key/value. Unknown mechanics and non-SPAWN actions are retained, never replaced with empty collections. `mode_modifiers` selects difficulty masks without claiming rune interpretation; `alignment=unknown`. `mode=normal|challenge` denotes difficulty, not practice/resource-consuming entry. External providers receive mode only if advertised in their tool schema, and caches isolate modes. Hashes and declared versions prove neither installed-game compatibility nor independent provider interoperability. Game data is not redistributed with the server.
+Use the attached session's `intel_query(..., complete_stage=true)`. The adapter separately handles top-down map rows and bottom-up routes, emits `maa_grid`, and does not treat wait checkpoints as movement. One SPAWN action produces one record, retaining count, delays, interval, hidden groups and blocking fields. Enemy level inheritance, definition flags and level overrides support both Key/Value and key/value. Unknown mechanics and non-SPAWN actions are retained, never replaced with empty collections. `mode_modifiers` selects difficulty masks without claiming rune interpretation; `alignment=unknown`. `mode=normal|challenge` denotes difficulty, not practice/resource-consuming entry. External providers receive mode only if advertised in their tool schema, and caches isolate modes. Hashes and declared versions prove neither installed-game compatibility nor independent provider interoperability. External provider data packs are not redistributed with the server.
+
+The non-redistribution statement above refers to external raw stage/enemy inputs; the offline unit metadata described above is bundled separately.
 
 ## Core protocol
 

@@ -39,6 +39,9 @@ bool asst::BattleControlTask::validate_command(const json::value& params) const
         return false;
     }
     const auto& args = params.at("args");
+    if (args.contains("card_id") && !args.find<std::string>("card_id")) {
+        return false;
+    }
     if (action == "identify") {
         return !args.contains("adopt_manual_pause") || args.find<bool>("adopt_manual_pause").has_value();
     }
@@ -75,7 +78,7 @@ bool asst::BattleControlTask::validate_command(const json::value& params) const
             return false;
         }
         if (step_action != "deploy") {
-            return !args.find<json::array>("location") && !args.find<std::string>("direction");
+            return !args.contains("location") && !args.contains("direction") && !args.contains("card_id");
         }
         if (!args.find<json::array>("location") || !args.find<std::string>("direction")) {
             return false;
@@ -98,7 +101,7 @@ bool asst::BattleControlTask::validate_command(const json::value& params) const
         return false;
     }
     if (action != "deploy") {
-        return true;
+        return !args.contains("card_id");
     }
     if (!args.find<json::array>("location") || !args.find<std::string>("direction")) {
         return false;
@@ -143,9 +146,16 @@ bool asst::BattleControlTask::set_params(const json::value& params)
         }
         m_session_id = session;
         m_preparation_only = params.get("preparation_only", false);
+        m_allowed_summons.clear();
+        m_restrict_summons = false;
+        if (params.contains("allowed_summons") && !params.find<json::array>("allowed_summons")) {
+            LogError << __FUNCTION__ << "Invalid explicit summon restriction";
+            return false;
+        }
         if (const auto allowed = params.find<json::array>("allowed_summons")) {
+            m_restrict_summons = true;
             for (const auto& id : *allowed) {
-                if (!id.is_string()) {
+                if (!id.is_string() || id.as_string().empty()) {
                     LogError << __FUNCTION__ << "Invalid summon allowlist";
                     return false;
                 }
@@ -224,6 +234,186 @@ std::string asst::BattleControlTask::unit_id(battle::Role role, const std::strin
     return name.empty() ? std::string() : std::to_string(static_cast<int>(role)) + ":" + name;
 }
 
+json::value asst::BattleControlTask::entity_summary(const std::vector<std::string>& ids) const
+{
+    if (ids.size() != 1) {
+        return json::object { { "game_id", nullptr },
+                              { "entity_kind", "unknown" },
+                              { "reason", "Visual name does not resolve to one game ID" } };
+    }
+    const auto info = BattleData.get_unit_info(ids.front());
+    return json::object {
+        { "game_id", ids.front() },
+        { "entity_kind", info.get("entity_kind", "unknown") },
+        { "capabilities", info.contains("capabilities") ? info.at("capabilities") : json::value(nullptr) },
+        { "metadata_status", info.get("metadata_status", "unavailable") },
+        { "execution_support",
+          info.contains("execution_support") ? info.at("execution_support") : json::value(nullptr) },
+        { "metadata_source",
+          json::object {
+              { "repository", info.get("source", "repository", "") },
+              { "commit", info.get("source", "commit", "") },
+              { "region", info.get("source", "region", "") },
+          } },
+    };
+}
+
+json::value asst::BattleControlTask::instance_info(const Instance& instance) const
+{
+    json::array selection_evidence;
+    for (const auto& evidence : instance.selection_evidence) {
+        selection_evidence.emplace_back(
+            json::object {
+                { "observation_id", evidence.observation_id },
+                { "image_path", evidence.image_path },
+                { "selected_name", evidence.name },
+                { "game_ids", json::array(evidence.game_ids) },
+                { "retreat_button_detected", evidence.button_detected },
+                { "retreat_button_available",
+                  evidence.button_available ? json::value(*evidence.button_available) : json::value(nullptr) },
+                { "accepted", evidence.accepted },
+                { "button_rect",
+                  json::array { evidence.button.x, evidence.button.y, evidence.button.width, evidence.button.height } },
+            });
+    }
+    const auto presence = instance.presence == Presence::Pending   ? "pending"
+                          : instance.presence == Presence::Present ? "present"
+                          : instance.presence == Presence::Gone    ? "gone"
+                                                                   : "unknown";
+    return json::object {
+        { "unit_id", instance.id },
+        { "operation_id", instance.operation_id },
+        { "game_id", instance.game_id },
+        { "game_ids", json::array { instance.game_id } },
+        { "name", instance.tag.name },
+        { "role", static_cast<int>(instance.tag.role) },
+        { "location", json::array { instance.location.x, instance.location.y } },
+        { "direction", instance.direction },
+        { "direction_source", "requested_unverified" },
+        { "position_source",
+          instance.location_evidence == LocationEvidence::VerifiedTileAnchor ? "verified_tile_anchor"
+          : instance.location_evidence == LocationEvidence::SelectedIdentityOnly
+              ? "requested_unverified_selected_identity_present"
+              : "requested_unverified" },
+        { "location_verified", instance.location_evidence == LocationEvidence::VerifiedTileAnchor },
+        { "presence", presence },
+        { "presence_source", instance.presence_source },
+        { "tile_reserved", instance.presence != Presence::Gone },
+        { "operation_state",
+          instance.operation_state == OperationState::Pending                ? "pending"
+          : instance.operation_state == OperationState::DeployInputAttempted ? "deployment_input_attempted"
+                                                                             : "retreat_input_attempted" },
+        { "helper_returned", instance.helper_returned },
+        { "selection_evidence", std::move(selection_evidence) },
+        { "selected_kind_present",
+          instance.selection_evidence.size() == 2 && std::ranges::all_of(
+                                                         instance.selection_evidence,
+                                                         [](const auto& evidence) { return evidence.accepted; })
+              ? json::value(true)
+              : json::value(nullptr) },
+        { "skill_ready", nullptr },
+        { "entity", entity_summary({ instance.game_id }) },
+    };
+}
+
+bool asst::BattleControlTask::tile_reserved(const Point& location) const
+{
+    return m_used_tiles.contains(location) || std::ranges::any_of(m_instances, [&](const auto& pair) {
+               return pair.second.location == location && pair.second.presence != Presence::Gone;
+           });
+}
+
+bool asst::BattleControlTask::selection_ambiguous(const Instance& instance) const
+{
+    // Selection can snap to a neighbour. Reject possible neighbours and every same-kind instance,
+    // including unconfirmed attempts. This is not a reconstruction of pre-existing battlefield units.
+    return std::ranges::any_of(m_instances, [&](const auto& pair) {
+        const auto& other = pair.second;
+        return other.id != instance.id && other.presence != Presence::Gone &&
+               (other.game_id == instance.game_id || (std::abs(other.location.x - instance.location.x) <= 1 &&
+                                                      std::abs(other.location.y - instance.location.y) <= 1));
+    });
+}
+
+bool asst::BattleControlTask::inspect_instance_selection(
+    const Command& command,
+    Instance& instance,
+    Rect& retreat_button,
+    bool& dismiss_allowed)
+{
+    dismiss_allowed = false;
+    if (selection_ambiguous(instance) || m_cancel_requested || std::chrono::steady_clock::now() >= command.deadline ||
+        input_blocked()) {
+        return false;
+    }
+    if (!click_oper_on_battlefield(instance.location)) {
+        return false;
+    }
+    instance.selection_evidence.clear();
+    bool verified = true;
+    for (int sample = 0; sample < 2; ++sample) {
+        if (m_cancel_requested || std::chrono::steady_clock::now() >= command.deadline || need_exit()) {
+            dismiss_allowed = false;
+            verified = false;
+            break;
+        }
+        const auto frame = capture_frame();
+        const auto snapshot = observe(frame, false, false);
+        if (frame.image.empty() || input_blocked() || snapshot.get("scene", "") != "running") {
+            dismiss_allowed = false;
+            verified = false;
+            break;
+        }
+        dismiss_allowed = true;
+        const auto name = analyze_detail_page_oper_name(frame.image, instance.tag.role);
+        const auto ids = BattleData.get_ids(instance.tag.role, name);
+        Matcher matcher(frame.image);
+        matcher.set_task_info("BattleOperRetreat");
+        matcher.set_roi(Rect(m_retreat_button_pos.x - 50, m_retreat_button_pos.y - 50, 100, 100));
+        const auto match = matcher.analyze();
+        const bool positive = match && match->score >= 0.95 && match->rect.include(m_retreat_button_pos);
+        verified = verified && !input_blocked() && snapshot.get("scene", "") == "running" &&
+                   name == instance.tag.name && ids.size() == 1 && ids.front() == instance.game_id && positive;
+        if (positive) {
+            retreat_button = match->rect;
+        }
+        // Keep the exact selected-detail screenshots, not just the final deselected frame.
+        auto selection_snapshot = snapshot;
+        selection_snapshot["selection_check"] = json::object {
+            { "selected_game_ids", json::array(ids) },
+            { "requested_instance", instance.id },
+            { "selected_name", name },
+            { "retreat_button_detected", positive },
+            { "retreat_button_available", nullptr },
+            { "selected_kind_verified", verified },
+        };
+        const auto saved = save_evidence(frame, std::move(selection_snapshot), true);
+        verified = verified && saved.get("status", "") == "succeeded";
+        instance.selection_evidence.emplace_back(
+            SelectionEvidence { snapshot.at("observation_id").as_string(),
+                                saved.get("image_path", ""),
+                                name,
+                                ids,
+                                positive ? match->rect : Rect(),
+                                positive,
+                                std::nullopt,
+                                verified });
+    }
+    if (verified) {
+        if (instance.location_evidence == LocationEvidence::VerifiedTileAnchor) {
+            instance.presence = Presence::Present;
+            instance.presence_source = "verified_anchor_and_two_selected_kind_frames";
+        }
+        else {
+            // A matching kind might be a pre-existing unit selected by snapping, not this deployment.
+            instance.presence = Presence::Unknown;
+            instance.presence_source = "selected_kind_present_instance_unverified";
+            instance.location_evidence = LocationEvidence::SelectedIdentityOnly;
+        }
+    }
+    return verified;
+}
+
 json::value asst::BattleControlTask::failure(const std::string& code, const std::string& message) const
 {
     LogWarn << __FUNCTION__ << code << message;
@@ -269,6 +459,14 @@ json::value asst::BattleControlTask::map_info() const
         { "coordinate_system", "maa_grid" },
         { "binding", "caller_supplied_not_visually_verified" },
         { "tiles", std::move(tiles) },
+        { "dynamic_overlay",
+          json::object {
+              { "status", m_map_data.key.stageId.starts_with("act55side") ? "unsupported" : "unknown" },
+              { "source", "no_live_terrain_adapter" },
+              { "tiles", nullptr },
+              { "static_geometry_is_current_terrain", false },
+              { "reason", "No explosion timer or single missing frame is used to change terrain" },
+          } },
     };
 }
 
@@ -399,6 +597,16 @@ json::value
     }
     snapshot["session_terminal"] = m_terminal_result;
     auto finish = [&]() {
+        if (include_battlefield) {
+            for (auto& [id, instance] : m_instances) {
+                if (m_terminal_result.get("terminal_state", "") == "victory" ||
+                    m_terminal_result.get("terminal_state", "") == "defeat") {
+                    instance.presence = Presence::Gone;
+                    instance.presence_source = "verified_terminal_screen";
+                }
+                snapshot["battlefield"].as_array().emplace_back(instance_info(instance));
+            }
+        }
         m_frame_cost = std::max(
             m_frame_cost,
             std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - frame.started));
@@ -411,7 +619,7 @@ json::value
     }
     auto deployment = result->deployment;
     const auto old_deployment = m_cur_deployment_opers;
-    update_deployment_(deployment, old_deployment, false, false);
+    update_deployment_(deployment, old_deployment, false, false, false);
     if (include_battlefield) {
         matcher.set_object_of_interest({ .costs = true });
         if (auto cost = matcher.analyze()) {
@@ -446,17 +654,27 @@ json::value
         }
         else {
             ++identified_count;
-            if (identity_counts[unit_id(oper.role, oper.name)] > 1) {
+            if (ids.size() != 1) {
                 ++ambiguous_count;
-                identity_reason = "duplicate_identity";
+                identity_reason = "ambiguous_game_id";
             }
             else if (oper.role == battle::Role::Drone) {
                 identity_reason = "instance_tracking_required";
             }
+            else if (identity_counts[unit_id(oper.role, oper.name)] > 1) {
+                identity_reason = "concrete_card_required";
+            }
         }
         const auto card_id = snapshot.at("observation_id").as_string() + ":" + std::to_string(oper.index);
         if (!oper.name.empty()) {
-            m_cards.insert_or_assign(card_id, Card { { oper.role, oper.name }, oper.rect, oper.index, frame.started });
+            m_cards.insert_or_assign(
+                card_id,
+                Card { { oper.role, oper.name },
+                       oper.rect,
+                       oper.index,
+                       frame.started,
+                       BattleData.get_ids(oper.role, oper.name),
+                       oper.avatar.clone() });
         }
         snapshot["deployment"].as_array().emplace_back(
             json::object {
@@ -465,6 +683,10 @@ json::value
                 { "name", oper.name.empty() ? json::value(nullptr) : json::value(oper.name) },
                 { "role", static_cast<int>(oper.role) },
                 { "game_ids", std::move(ids) },
+                { "game_id",
+                  BattleData.get_ids(oper.role, oper.name).size() == 1
+                      ? json::value(BattleData.get_ids(oper.role, oper.name).front())
+                      : json::value(nullptr) },
                 { "index", oper.index },
                 { "cost", oper.cost },
                 { "available", oper.available },
@@ -472,6 +694,7 @@ json::value
                 { "rect", json::array { oper.rect.x, oper.rect.y, oper.rect.width, oper.rect.height } },
                 { "source", "vision" },
                 { "identity_reason", std::move(identity_reason) },
+                { "entity", entity_summary(BattleData.get_ids(oper.role, oper.name)) },
             });
     }
     snapshot["identified_count"] = identified_count;
@@ -533,9 +756,6 @@ json::value
                     { "skill_ready", std::move(ready) },
                     { "skill_evidence", std::move(skill_evidence) },
                 });
-        }
-        for (const auto& instance : m_summons) {
-            snapshot["battlefield"].as_array().emplace_back(instance);
         }
     }
     std::erase_if(m_cards, [](const auto& pair) {
@@ -1135,10 +1355,11 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
     const bool adopt_manual_pause = args.at("adopt_manual_pause").as_boolean();
 
     auto deployment_oper = m_cur_deployment_opers.end();
-    auto battlefield_oper = m_battlefield_opers.end();
+    auto tracked_instance = m_instances.end();
     Point location;
     battle::DeployDirection direction = battle::DeployDirection::None;
     std::string summon_game_id;
+    std::optional<Card> selected_card;
     const bool may_own_pause = m_pause_requested || adopt_manual_pause || snapshot.get("scene", "") == "running";
     auto reject_preflight = [&](const std::string& code, const std::string& message) {
         json::value result = failure(code, message);
@@ -1163,30 +1384,55 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
     };
 
     if (action == "deploy") {
-        deployment_oper = std::ranges::find_if(m_cur_deployment_opers, [&](const auto& oper) {
-            return unit_id(oper.role, oper.name) == target;
-        });
-        const auto matches = std::ranges::count_if(m_cur_deployment_opers, [&](const auto& oper) {
-            return unit_id(oper.role, oper.name) == target;
-        });
-        if (matches != 1 || deployment_oper == m_cur_deployment_opers.end()) {
-            return reject_preflight("unit_not_unique", "Deployment unit is missing or ambiguous; identify first");
-        }
-        if (deployment_oper->role == battle::Role::Drone) {
+        if (args.contains("card_id")) {
             const auto card = m_cards.find(args.get("card_id", ""));
-            const auto ids = BattleData.get_ids(deployment_oper->role, deployment_oper->name);
-            if (ids.size() != 1 || !m_allowed_summons.contains(*ids.begin())) {
-                return reject_preflight(
-                    "unsupported_unit",
-                    "Summon deployment requires a unique game ID in the trusted startup allowlist");
-            }
-            summon_game_id = *ids.begin();
-            if (card == m_cards.end() || card->second.tag.name != deployment_oper->name ||
-                card->second.tag.role != deployment_oper->role || card->second.index != deployment_oper->index ||
-                card->second.rect != deployment_oper->rect ||
+            if (card == m_cards.end() ||
                 std::chrono::steady_clock::now() - card->second.seen > std::chrono::seconds(30)) {
+                return reject_preflight("stale_card", "Card is stale or unknown; capture fresh evidence");
+            }
+            selected_card = card->second;
+            if (unit_id(selected_card->tag.role, selected_card->tag.name) != target) {
+                return reject_preflight("card_identity_mismatch", "card_id and unit_id refer to different identities");
+            }
+            deployment_oper = std::ranges::find_if(m_cur_deployment_opers, [&](const auto& oper) {
+                return oper.index == selected_card->index && oper.rect == selected_card->rect &&
+                       unit_id(oper.role, oper.name) == target;
+            });
+        }
+        else {
+            deployment_oper = std::ranges::find_if(m_cur_deployment_opers, [&](const auto& oper) {
+                return unit_id(oper.role, oper.name) == target;
+            });
+            if (std::ranges::count_if(m_cur_deployment_opers, [&](const auto& oper) {
+                    return unit_id(oper.role, oper.name) == target;
+                }) != 1) {
+                return reject_preflight("unit_not_unique", "Use a concrete card_id for duplicate cards");
+            }
+        }
+        if (deployment_oper == m_cur_deployment_opers.end()) {
+            return reject_preflight("stale_card", "Card layout or identity changed; identify again");
+        }
+        const auto ids = BattleData.get_ids(deployment_oper->role, deployment_oper->name);
+        if (ids.size() != 1) {
+            return reject_preflight("unit_not_unique", "Visual identity does not resolve to a single game ID");
+        }
+        summon_game_id = ids.front();
+        const auto capabilities = BattleData.get_unit_capabilities(summon_game_id);
+        if (deployment_oper->role == battle::Role::Drone) {
+            if (m_restrict_summons && !m_allowed_summons.contains(summon_game_id)) {
+                return reject_preflight(
+                    "summon_restricted",
+                    "The explicit legacy startup restriction excludes this game ID");
+            }
+            if (!selected_card) {
                 return reject_preflight("stale_card", "Summon card is stale or changed; capture fresh evidence");
             }
+        }
+        if (capabilities.standard_drag != true) {
+            return reject_preflight("unsupported_interaction", "No reviewed standard deployment adapter for this unit");
+        }
+        if (args.at("direction").as_string() != "None" && capabilities.direction != true) {
+            return reject_preflight("unsupported_direction", "This adapter does not support directional deployment");
         }
         if (!deployment_oper->available || deployment_oper->cooling) {
             return reject_preflight("unit_unavailable", "Unit is cooling down or cannot currently be deployed");
@@ -1194,7 +1440,12 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
         const auto& requested_location = args.at("location");
         location = { requested_location[0].as_integer(), requested_location[1].as_integer() };
         const auto tile = m_normal_tile_info.find(location);
-        if (tile == m_normal_tile_info.end() || m_used_tiles.contains(location) ||
+        if (m_map_data.key.stageId.starts_with("act55side")) {
+            return reject_preflight(
+                "dynamic_terrain_unknown",
+                "TL flip-tile state has no validated visual adapter; static geometry is unsafe");
+        }
+        if (tile == m_normal_tile_info.end() || tile_reserved(location) ||
             tile->second.buildable == battle::LocationType::None ||
             tile->second.buildable == battle::LocationType::Invalid ||
             deployment_oper->location_type == battle::LocationType::None ||
@@ -1211,14 +1462,33 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
         direction = directions.at(args.at("direction").as_string());
     }
     else {
-        if (target.starts_with("instance:")) {
-            return reject_preflight("unsupported_instance_action", "Summon skill and retreat are not supported");
+        auto matches = [&](const auto& pair) {
+            return pair.second.presence != Presence::Gone &&
+                   (pair.first == target ||
+                    (!target.starts_with("instance:") && pair.second.tag.role != battle::Role::Drone &&
+                     unit_id(pair.second.tag.role, pair.second.tag.name) == target));
+        };
+        tracked_instance = std::ranges::find_if(m_instances, matches);
+        if (std::ranges::count_if(m_instances, matches) != 1 || tracked_instance == m_instances.end()) {
+            return reject_preflight("unit_not_tracked", "Unit has no unique owned instance in this session");
         }
-        battlefield_oper = std::ranges::find_if(m_battlefield_opers, [&](const auto& pair) {
-            return unit_id(pair.first.role, pair.first.name) == target;
-        });
-        if (battlefield_oper == m_battlefield_opers.end()) {
-            return reject_preflight("unit_not_tracked", "Unit has no tracked battlefield position");
+        if (action == "skill" && tracked_instance->second.tag.role == battle::Role::Drone) {
+            return reject_preflight("unsupported_instance_action", "Summon skills are not supported");
+        }
+        const auto capabilities = BattleData.get_unit_capabilities(tracked_instance->second.game_id);
+        if (action == "retreat" && capabilities.manual_retreat == false) {
+            return reject_preflight("not_retreatable", "Reviewed unit policy prohibits manual retreat");
+        }
+        if (action == "retreat" && capabilities.manual_retreat != true) {
+            return reject_preflight("retreat_capability_unknown", "No reviewed manual-retreat adapter for this unit");
+        }
+        if (selection_ambiguous(tracked_instance->second)) {
+            return reject_preflight(
+                "selection_ambiguous",
+                "Possible same-kind or neighbouring instances prevent selection");
+        }
+        if (action == "skill" && tracked_instance->second.location_evidence != LocationEvidence::VerifiedTileAnchor) {
+            return reject_preflight("instance_location_unknown", "No verified tile anchor for this owned instance");
         }
     }
 
@@ -1259,61 +1529,92 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
     }
 
     bool action_returned = false;
+    json::value action_error = nullptr;
     if (!m_cancel_requested && std::chrono::steady_clock::now() < command.deadline) {
         if (action == "deploy") {
             // Observation refreshes the deployment vector; do not retain its iterator across resume.
             deployment_oper = std::ranges::find_if(m_cur_deployment_opers, [&](const auto& oper) {
-                return unit_id(oper.role, oper.name) == target;
+                return unit_id(oper.role, oper.name) == target &&
+                       (!selected_card || (oper.index == selected_card->index && oper.rect == selected_card->rect));
             });
             if (deployment_oper == m_cur_deployment_opers.end() || !deployment_oper->available ||
-                deployment_oper->cooling || std::ranges::count_if(m_cur_deployment_opers, [&](const auto& oper) {
-                                                return unit_id(oper.role, oper.name) == target;
-                                            }) != 1) {
+                deployment_oper->cooling ||
+                (!selected_card && std::ranges::count_if(m_cur_deployment_opers, [&](const auto& oper) {
+                                       return unit_id(oper.role, oper.name) == target;
+                                   }) != 1)) {
                 return reject_preflight("unit_unavailable", "Deployment card changed after resume");
+            }
+            if (selected_card &&
+                (selected_card->game_ids != BattleData.get_ids(deployment_oper->role, deployment_oper->name) ||
+                 selected_card->avatar.size() != deployment_oper->avatar.size() ||
+                 selected_card->avatar.type() != deployment_oper->avatar.type() || selected_card->avatar.empty() ||
+                 cv::norm(selected_card->avatar, deployment_oper->avatar, cv::NORM_INF) > 0 ||
+                 std::chrono::steady_clock::now() - selected_card->seen > std::chrono::seconds(30))) {
+                return reject_preflight("stale_card", "Card appearance or identity changed after resume");
             }
             const auto role = deployment_oper->role;
             const auto name = deployment_oper->name;
-            if (role == battle::Role::Drone) {
-                const auto card = m_cards.find(args.get("card_id", ""));
-                if (card == m_cards.end() || card->second.index != deployment_oper->index ||
-                    card->second.rect != deployment_oper->rect) {
-                    return reject_preflight("stale_card", "Summon card layout changed after resume");
-                }
-                m_summons.emplace_back(
-                    json::object { { "unit_id", "instance:" + command.id },
-                                   { "operation_id", command.id },
-                                   { "name", name },
-                                   { "game_ids", json::array { summon_game_id } },
-                                   { "role", static_cast<int>(role) },
-                                   { "location", json::array { location.x, location.y } },
-                                   { "direction", args.at("direction") },
-                                   { "direction_source", "action_history_unverified" },
-                                   { "position_source", "action_history_unverified" },
-                                   { "lifecycle", "deployment_attempted_unverified" },
-                                   { "parent_id", nullptr },
-                                   { "skill_ready", nullptr },
-                                   { "helper_returned", nullptr } });
-            }
-            action_returned = deploy_oper(role, name, location, direction);
-            if (role == battle::Role::Drone) {
-                m_summons[m_summons.size() - 1]["helper_returned"] = action_returned;
-                m_battlefield_opers.erase(battle::OperNameTag { role, name });
-                m_used_tiles.emplace(location, battle::OperNameTag { role, name });
-            }
-            else if (action_returned) {
-                m_directions[target] = args.at("direction").as_string();
+            const auto id = "instance:" + command.id;
+            auto& instance = m_instances
+                                 .emplace(
+                                     id,
+                                     Instance { id,
+                                                command.id,
+                                                summon_game_id,
+                                                { role, name },
+                                                location,
+                                                args.at("direction").as_string() })
+                                 .first->second;
+            const auto card = *deployment_oper;
+            action_returned = deploy_card(card, location, direction, false, false);
+            instance.helper_returned = action_returned;
+            instance.operation_state = OperationState::DeployInputAttempted;
+            instance.presence = Presence::Unknown;
+            instance.presence_source = "input_is_not_placement_evidence";
+            Rect button;
+            bool dismiss_allowed = false;
+            inspect_instance_selection(command, instance, button, dismiss_allowed);
+            if (dismiss_allowed && !m_cancel_requested && !input_blocked() && !need_exit() &&
+                std::chrono::steady_clock::now() < command.deadline) {
+                cancel_oper_selection();
             }
         }
         else {
-            battlefield_oper = std::ranges::find_if(m_battlefield_opers, [&](const auto& pair) {
-                return unit_id(pair.first.role, pair.first.name) == target;
-            });
-            if (battlefield_oper == m_battlefield_opers.end()) {
-                return reject_preflight("unit_not_tracked", "Tracked unit changed after resume");
+            auto& instance = tracked_instance->second;
+            if (action == "retreat") {
+                Rect button;
+                bool dismiss_allowed = false;
+                const bool selected = inspect_instance_selection(command, instance, button, dismiss_allowed);
+                const bool button_enabled = selected && !instance.selection_evidence.empty() &&
+                                            instance.selection_evidence.back().button_available == true;
+                if (!selected || instance.location_evidence != LocationEvidence::VerifiedTileAnchor ||
+                    !button_enabled) {
+                    action_error = json::object {
+                        { "code",
+                          !selected ? "selection_unverified"
+                          : instance.location_evidence != LocationEvidence::VerifiedTileAnchor
+                              ? "instance_location_unknown"
+                              : "retreat_button_unverified" },
+                        { "message",
+                          "No verified selected tile anchor; retreat click was NOT sent. Missing button is not a "
+                          "permanent retreat policy." },
+                    };
+                }
+                else if (
+                    !m_cancel_requested && std::chrono::steady_clock::now() < command.deadline && !input_blocked()) {
+                    action_returned = ctrler()->click(button);
+                    instance.operation_state = OperationState::RetreatInputAttempted;
+                    instance.presence = Presence::Unknown;
+                    instance.presence_source = "retreat_input_without_departure_evidence";
+                }
+                if (dismiss_allowed && !m_cancel_requested && !input_blocked() && !need_exit() &&
+                    std::chrono::steady_clock::now() < command.deadline) {
+                    cancel_oper_selection();
+                }
             }
-            action_returned = action == "retreat"
-                                  ? retreat_oper(battlefield_oper->first.role, battlefield_oper->first.name)
-                                  : use_skill(battlefield_oper->second, 0);
+            else {
+                action_returned = use_skill(instance.location, 0);
+            }
         }
     }
 
@@ -1337,6 +1638,7 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
 
     return json::object {
         { "status", "outcome_unknown" },
+        { "error", action_error },
         { "action_returned", action_returned },
         { "message", "Action input may have occurred. Inspect both captures; never blindly retry." },
         { "capture_time_snapshot", capture_snapshot },
@@ -1436,6 +1738,16 @@ json::value asst::BattleControlTask::execute(const Command& command)
     if (command.action == "step") {
         return execute_step(command, std::move(snapshot));
     }
+    if (command.action == "deploy" || command.action == "retreat" || command.action == "skill") {
+        if (snapshot.get("scene", "") != "running" || m_pause_requested) {
+            return failure("battle_not_running", "Resume before using a legacy tactical entry point");
+        }
+        auto bounded = command;
+        bounded.action = "step";
+        bounded.args["action"] = command.action;
+        bounded.args["adopt_manual_pause"] = false;
+        return execute_step(bounded, std::move(snapshot));
+    }
     if (std::chrono::steady_clock::now() >= command.deadline) {
         return failure("deadline_exceeded", "Observation exhausted command deadline; no input sent");
     }
@@ -1506,7 +1818,7 @@ json::value asst::BattleControlTask::execute(const Command& command)
         if (auto result = matcher.analyze()) {
             auto deployment = result->deployment;
             const auto old_deployment = m_cur_deployment_opers;
-            update_deployment_(deployment, old_deployment, true);
+            update_deployment_(deployment, old_deployment, true, true, false);
             identified = true;
         }
         // Leave the battle paused; resuming is always a separate explicit command.
@@ -1532,62 +1844,6 @@ json::value asst::BattleControlTask::execute(const Command& command)
                 { "deployment", snapshot.at("deployment") },
             },
             pause_verified);
-    }
-    else {
-        if (!running || m_pause_requested) {
-            return failure("battle_not_running", "Resume the battle before deploying, retreating or using a skill");
-        }
-        const auto target = command.args.at("unit_id").as_string();
-        if (command.action == "deploy") {
-            auto matching = m_cur_deployment_opers | std::views::filter([&](const auto& oper) {
-                                return unit_id(oper.role, oper.name) == target;
-                            });
-            if (std::ranges::distance(matching) != 1) {
-                return failure("unit_not_unique", "Deployment unit is missing or ambiguous; identify first");
-            }
-            const auto oper = *matching.begin();
-            if (oper.role == battle::Role::Drone) {
-                return failure("unsupported_unit", "Summons and devices require instance-level identity tracking");
-            }
-            if (!oper.available || oper.cooling) {
-                return failure("unit_unavailable", "Unit is cooling down or cannot currently be deployed");
-            }
-            const auto& location = command.args.at("location");
-            const Point loc { location[0].as_integer(), location[1].as_integer() };
-            const auto tile = m_normal_tile_info.find(loc);
-            if (tile == m_normal_tile_info.end() || m_used_tiles.contains(loc) ||
-                tile->second.buildable == battle::LocationType::None ||
-                tile->second.buildable == battle::LocationType::Invalid ||
-                oper.location_type == battle::LocationType::None ||
-                (tile->second.buildable != battle::LocationType::All &&
-                 oper.location_type != battle::LocationType::All && tile->second.buildable != oper.location_type)) {
-                return failure("invalid_tile", "Tile is occupied, unknown or incompatible with this unit");
-            }
-            const std::map<std::string, battle::DeployDirection> directions {
-                { "Right", battle::DeployDirection::Right }, { "Down", battle::DeployDirection::Down },
-                { "Left", battle::DeployDirection::Left },   { "Up", battle::DeployDirection::Up },
-                { "None", battle::DeployDirection::None },
-            };
-            sent = deploy_oper(oper.role, oper.name, loc, directions.at(command.args.at("direction").as_string()));
-            if (sent) {
-                m_directions[target] = command.args.at("direction").as_string();
-            }
-        }
-        else {
-            const auto unit = std::ranges::find_if(m_battlefield_opers, [&](const auto& pair) {
-                return unit_id(pair.first.role, pair.first.name) == target;
-            });
-            if (unit == m_battlefield_opers.end()) {
-                return failure("unit_not_tracked", "Unit has no tracked battlefield position");
-            }
-            const auto tag = unit->first;
-            if (command.action == "retreat") {
-                sent = retreat_oper(tag.role, tag.name);
-            }
-            else {
-                sent = use_skill(tag.role, tag.name, 0);
-            }
-        }
     }
     return json::object {
         { "status", "outcome_unknown" },

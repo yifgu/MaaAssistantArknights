@@ -17,6 +17,17 @@ class BattleDataConfig final : public MAA_NS::SingletonHolder<BattleDataConfig>,
 public:
     virtual ~BattleDataConfig() override = default;
 
+    struct UnitCapabilities
+    {
+        std::optional<bool> standard_drag;
+        std::optional<bool> direction;
+        std::optional<bool> manual_retreat;
+    };
+
+    bool load_unit_info(const std::filesystem::path& path);
+    json::value get_unit_info(const std::string& game_id) const;
+    UnitCapabilities get_unit_capabilities(const std::string& game_id) const;
+
     // 按名取第一个命中条目的 id，找不到返回 nullopt。
     // role 为 Unknown 时全表按名找，指定 role 时只在对应职业桶内找；同名多条时命中哪条取决于哈希序，
     // 不含业务序含义，需要全部同名条目用 get_ids。
@@ -252,6 +263,7 @@ private:
 
     std::unordered_map<std::string, battle::AttackRange> m_ranges;
     std::unordered_map<std::string, std::vector<std::string>> m_skill_ids;
+    json::value m_unit_info = json::object();
     std::unordered_set<std::string> m_opers;
     std::unordered_set<std::string> m_drones_confusing; // confused summons: multiple summons of same oper
 

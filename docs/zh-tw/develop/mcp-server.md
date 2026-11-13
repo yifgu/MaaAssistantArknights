@@ -102,7 +102,7 @@ worker 使用獨立子程序與專用 stdin/stdout 管道，不繼承 MCP 的輸
 
 同一個 `--user-dir` 有跨程序控制鎖。同一裝置請固定使用同一目錄；此鎖無法阻止使用其他目錄的服務或外部 GUI 操作裝置。
 
-召喚物部署僅向可信任的啟動白名單開放，使用獨立實例記錄；未授權裝置及召喚物技能／撤退仍拒絕，詳見下文。
+已適配召喚卡不再要求啟動時列舉 ID；未知互動仍拒絕，輸入狀態、在場證據與請求位置分開記錄。完整部署／撤退閉環尚未完成或實機驗收，詳見下文。
 
 ```bash
 uv run --project src/MaaMcpServer maa-battle-mcp \
@@ -267,7 +267,33 @@ Core 依等級標籤定位有人的欄位，保留名稱無法讀取的項目，
 
 僅有效的最新結果可沿用明確重新確認的 attach 關聯。新擷取使舊關聯失效；頁面／編隊變化、證據失敗或掃描中斷不建立有效關聯。`decision_context.preparation.observed_fields` 獨立保留原生觀測並記錄與外部配置的衝突，不覆寫任一來源。這是戰前測量，不是帳號／關卡／配置的連續驗證，也不是戰鬥現場測量。識別複用既有資源並有合成 Debug Core 迴歸，**不等於實機驗收**；真實版面與選取標記相容性仍須本機驗證。
 
-啟動時可重複傳入 `--allow-summon GAME_ID`，只授權已確認採普通拖曳部署語義的召喚卡。`battle_step(action="deploy")` 除一般參數外須傳觀測卡片的 `card_id`；卡片須唯一、可用、位置不變且不超過 30 秒。每次產生獨立 `instance:<operation_id>`，同名不覆蓋；位置與存續僅為未驗證動作歷史，未知消失不自動釋放占格。實例技能／撤退、模糊卡片及未授權裝置仍拒絕，helper 回傳不證明部署成功。
+### 離線單位資料與自有實例
+
+`battle_get_unit_info(game_id)` 不需連接裝置或設定情報 provider，讀取隨包的 `resource/unit_info.json`，回傳 `unit`、`source`、`resource_sha256`、`scope`：TOKEN／TRAP／幹員分類、效果、基礎屬性關鍵影格及範圍 ID、技能引用與定義、天賦 blackboard、帶條件的 `tokenKey`／`overrideTokenKey` ID 關聯。靜態值不是現場卡片 `cost`／`available`／`cooling` 或實際配置測量；使用者設定不參與視覺 ID 消歧。
+
+`base_range_definitions` 保留遊戲相對行列座標，座標約定見 `base_range_coordinate_system`；不是實測 MAA 格子。
+
+能力含 `value=true|false|null`、`source`、`reason`、`game_data_value`、`live_verified`。已審閱適配值表示受限互動約定，不證明引擎策略或實機通過；`execution_support` 另行標示僅輸入嘗試或不支援的操作。unknown 不是許可。首個召喚適配是醫療探機 `token_10000_silent_healrb`，普通拖曳且 `direction="None"`；其他 TOKEN／TRAP 互動未知並拒絕。同格共存與召喚物技能不支援。
+
+使用 `battle_step(action="deploy", unit_id=..., card_id=...)`。`game_id` 是種類，`card_id` 是具體觀測卡，`instance:<operation_id>` 是自有部署嘗試。先綁定卡片再檢查姓名，同名多卡可依卡片部署，遊戲 ID 仍須唯一；恢復後重新核驗身分、布局、外觀、可用性和 30 秒新鮮度。不傳 `--allow-summon` 允許已適配卡；舊參數保留為明確限制並發出遷移警告，不授權未知互動。原生 `allowed_summons=[]` 排除所有召喚，省略才啟用適配卡。
+
+C++ 型別分開記錄 presence、位置證據與操作狀態；輸入不證明落地，費用／冷卻變化不提交占格。修改型有界詳情檢查記錄兩影格姓名／圖示證據，不證明本次實例在場或選中格；未知實例保留請求格占用。`battle_step(action="retreat", unit_id="instance:...")` 先查能力、拒絕同種或鄰格歧義，再查身分與正向撤退按鈕。**尚無真實選中格錨點或明確離場規則，無錨點不點撤退按鈕，未知占格不釋放。** 缺按鈕回傳 `selection_unverified`，不推定永久不可撤退；明確 false 才回傳 `not_retreatable`。被動觀察不點擊／恢復，不因計時或單影格漏識別判消失；已驗證終局可標為離場。重送保留日誌與截圖，不再輸入；不支援重啟／中途接入重建。
+
+正向詳情影格只證明所選種類存在（`selected_kind_present`），不證明本次部署成功；無格子錨點時自有實例 `presence` 仍為 unknown。撤退圖示匹配只記為 `retreat_button_detected`，不證明啟用；缺少可用性規則時 `retreat_button_available` 保持 null。
+
+舊 `battle_deploy` 接受可選 `card_id`；舊部署／撤退／技能入口起始仍須戰鬥運行，使用相同有界預檢與暫停收尾，不可繞過能力／實例／位置檢查。沒有選中格錨點時，普通幹員技能／撤退也拒絕，不依未驗證歷史操作。
+
+TL／TL-EX 使用 `act55side_*`（如 `act55side_ex01`，非 `TL-EX-1`）。｢自爆榴弹｣（爆炸型關卡裝置） `trap_341_dsjtzd` 可離線查詢：基礎費用 20、再部署 20 秒、範圍 `x-4`、未列技能、天賦 blackboard 暈眩 5 秒。**再部署時間不是爆炸倒數。** 原表不證明拖曳／撤退策略；缺少爆炸、明確消失和翻板變化的可靠實圖規則，動態覆蓋 unknown／unsupported，TL 部署回傳 `dynamic_terrain_unknown`。預估計時不修改靜態地圖；不宣稱 TL 閉環完成或實機通過。
+
+建置 Debug `res_updater` 後，以本地固定版本的角色／技能表重新生成：
+
+```bash
+python tools/ResourceUpdater/generate_unit_info.py \
+  --updater build-mcp/bin/Debug/res_updater \
+  --input path/to/excel --output resource/unit_info.json
+```
+
+`tools/ResourceUpdater/unit_info_source.json` 固定儲存庫、commit、區域及角色、升變角色、技能、範圍四份輸入的 SHA-256；包裝腳本核驗後呼叫唯一 C++ 生成器。執行時不下載或依賴 Wiki。生成 JSON 每筆一行、排除 Prettier；一般資源更新僅在輸入目錄提供 `unit_info_source.json` 時重生成伴隨檔。升級聲明來源須重新生成並驗證；來源雜湊不保證安裝遊戲相容。外部 raw 關卡／敵人快照仍須另行設定，不隨包提供。
 
 `battle_set_speed(request)` 接受 `session_id`、`operation_id`、`multiplier=1|2` 與 `timeout_ms`。只在明確暫停時讀取速度、必要時切換一次並回讀，回傳前後證據，不變更暫停所有權、不自動恢復；重複設 2 倍不切回 1 倍。速度未知不點擊，切換後無法確認則鎖定輸入。是否加速完全由宿主決定。等待仍是主機時間：依已觀測取影格成本預留暫停預算，不足時拒絕恢復；`cleanup_reserve_ms`、`resumed_interval_upper_bound_ms`、`deadline_margin_ms` 不保證精確遊戲時間。
 
@@ -277,7 +303,9 @@ Core 依等級標籤定位有人的欄位，保留名稱無法讀取的項目，
 
 `--intel-config` 支援 `provider="raw"`，只讀可信任本機檔案，不自動下載。設定 `root`（絕對根目錄）、`repository`、`commit`（40 位提交）、`data_version`、`region`、`stages`、`enemy_database`。`stages` 將 stage ID 映射至 `{"path":"相對路徑","sha256":"64位雜湊"}`，`enemy_database` 使用相同檔案結構。每檔上限 64 MiB、核驗 SHA-256，拒絕越出根目錄。
 
-透過已綁定會話呼叫 `intel_query(..., complete_stage=true)`。分別轉換自頂向下地圖與自底向上路線，輸出 `maa_grid`，等待檢查點不當移動點。一條 SPAWN action 對應一筆生成記錄，保留 count、delay、interval、隱藏組和阻塞欄位。敵人等級繼承、定義旗標與關卡覆寫會解析，支援 Key/Value 與 key/value；未知機制與非 SPAWN actions 保留，不偽造空集合。`mode_modifiers` 只選難度 mask，不宣稱解釋符文；`alignment=unknown`。`mode=normal|challenge` 表示難度，非演習／實戰。外部 provider 僅在 schema 宣告支援時接收 mode，快取依 mode 隔離。雜湊與版本聲明不證明本場遊戲相容或獨立 provider 互通；資料包不隨服務重新散布。
+透過已綁定會話呼叫 `intel_query(..., complete_stage=true)`。分別轉換自頂向下地圖與自底向上路線，輸出 `maa_grid`，等待檢查點不當移動點。一條 SPAWN action 對應一筆生成記錄，保留 count、delay、interval、隱藏組和阻塞欄位。敵人等級繼承、定義旗標與關卡覆寫會解析，支援 Key/Value 與 key/value；未知機制與非 SPAWN actions 保留，不偽造空集合。`mode_modifiers` 只選難度 mask，不宣稱解釋符文；`alignment=unknown`。`mode=normal|challenge` 表示難度，非演習／實戰。外部 provider 僅在 schema 宣告支援時接收 mode，快取依 mode 隔離。雜湊與版本聲明不證明本場遊戲相容或獨立 provider 互通；外部 provider 資料包不隨服務重新散布。
+
+上述不重新散布只指外部 raw 關卡／敵人輸入；前述離線單位資料另行隨包提供。
 
 ## Core 協議
 

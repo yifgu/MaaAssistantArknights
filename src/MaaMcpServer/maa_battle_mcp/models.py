@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 Identifier = Annotated[str, Field(min_length=1, max_length=128)]
+UnitIdentifier = Annotated[str, Field(min_length=1, max_length=137)]
 Timeout = Annotated[int, Field(ge=1, le=30_000)]
 Coordinate = Annotated[int, Field(ge=0, le=255)]
 ClientType = Literal["Official", "Bilibili", "YoStarEN", "YoStarJP", "YoStarKR", "txwy"]
@@ -24,7 +25,7 @@ class Settings(StrictModel):
     connection_config: str = "General"
     touch_mode: Literal["adb", "minitouch", "maatouch", "MaaFwAdb"] = "maatouch"
     client_type: ClientType = "Official"
-    allowed_summons: list[Identifier] = Field(default_factory=list)
+    allowed_summons: list[Identifier] | None = None
 
 
 class OperationRequest(StrictModel):
@@ -45,7 +46,7 @@ class PreparationRequest(StrictModel):
 
 
 class UnitRequest(OperationRequest):
-    unit_id: Identifier
+    unit_id: UnitIdentifier
 
 
 class IdentifyRequest(OperationRequest):
@@ -55,6 +56,7 @@ class IdentifyRequest(OperationRequest):
 class DeployRequest(UnitRequest):
     location: Annotated[list[Coordinate], Field(min_length=2, max_length=2)]
     direction: Literal["Right", "Down", "Left", "Up", "None"]
+    card_id: Identifier | None = None
 
 
 class PauseRequest(OperationRequest):
@@ -78,7 +80,7 @@ class TerminalRequest(OperationRequest):
 class BoundedStepRequest(OperationRequest):
     timeout_ms: Timeout = 10_000
     action: Literal["deploy", "retreat", "skill", "wait"]
-    unit_id: Identifier | None = None
+    unit_id: UnitIdentifier | None = None
     duration_ms: Annotated[int, Field(ge=100, le=8_000)] | None = None
     adopt_manual_pause: bool = False
     location: Annotated[list[Coordinate], Field(min_length=2, max_length=2)] | None = (

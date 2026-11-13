@@ -102,7 +102,7 @@ worker は MCP の入出力を継承せず、専用 stdin/stdout パイプを持
 
 同じ `--user-dir` はプロセス間ロックで保護されます。同じ端末には常に同じディレクトリを使用してください。別ディレクトリのサーバーや外部 GUI による操作は防げません。
 
-召喚物の配置は信頼できる起動時許可リストに限定し、個体別に記録します。未許可の装置と召喚物のスキル／撤退は引き続き拒否します。詳細は後述します。
+対応済み召喚カードは起動時の ID 列挙が不要です。未知の操作は拒否し、入力状態・存在証拠・要求位置を分離します。配置／撤退の完全なループは未完成・実機未検証です。詳細は後述します。
 
 ```bash
 uv run --project src/MaaMcpServer maa-battle-mcp \
@@ -267,7 +267,33 @@ Core はレベル表示から配置済み枠を検出し、名前を読めない
 
 有効な最新結果だけを既存の明示的な再確認付き attach に使用できます。新しい観測は旧紐付けを無効化し、画面／編成の変化、証拠保存失敗、中断した走査は有効な紐付けを作りません。`decision_context.preparation.observed_fields` はネイティブ観測を入力された構成と分離して保持し、不一致を記録しますが双方を上書きしません。これは戦闘前の測定であり、アカウント／ステージ／構成の連続確認や戦闘中の測定ではありません。既存リソースを使う認識器には合成 Debug Core 回帰がありますが、**実機の動作確認ではありません**。実際の画面配置と選択マークの互換性はローカルで確認が必要です。
 
-通常のドラッグ配置が確認済みの召喚カードだけ、起動時に `--allow-summon GAME_ID` を繰り返し指定して許可します。`battle_step(action="deploy")` には通常引数に加えて観測した `card_id` が必要です。一意、利用可能、位置不変、取得後 30 秒以内を要求します。毎回独立した `instance:<operation_id>` を作り、同名を上書きしません。位置と存続は未確認の操作履歴で、不明な消滅から占有を自動解放しません。個体スキル／撤退、曖昧なカード、未許可装置は拒否し、helper の返却値を配置成功とは扱いません。
+### オフラインのユニット情報と所有個体
+
+`battle_get_unit_info(game_id)` は端末接続・情報 provider なしで同梱の `resource/unit_info.json` を読み、`unit`・`source`・`resource_sha256`・`scope` を返します。TOKEN／TRAP／オペレーター分類、効果、基礎属性キーフレームと範囲 ID、スキル参照・定義、素質 blackboard、条件付き `tokenKey`／`overrideTokenKey` ID 関係を保持します。静的な表の値は現場の `cost`／`available`／`cooling` や実際の装備測定ではありません。ユーザー設定で視覚 ID の曖昧さを解消しません。
+
+`base_range_definitions` は `base_range_coordinate_system` のゲーム相対行／列座標を保持し、実測 MAA マスではありません。
+
+能力は `value=true|false|null`・`source`・`reason`・`game_data_value`・`live_verified` を持ちます。レビュー済み adapter 値は制限付き操作の仕様であり、エンジンの方針や実機検証の証明ではありません。`execution_support` は入力試行のみ／未対応の操作を別に示します。unknown は許可ではありません。最初の召喚 adapter は医療ドローン `token_10000_silent_healrb` の通常ドラッグと `direction="None"` です。他の TOKEN／TRAP は未知として拒否し、同マス共存と召喚物スキルは未対応です。
+
+`battle_step(action="deploy", unit_id=..., card_id=...)` を使います。`game_id` は種類、`card_id` は観測カード、`instance:<operation_id>` は所有する配置試行です。名前の一意性より先に具体的カードを選ぶので同名カードを区別できますが、ゲーム ID は一意でなければなりません。再開後に身元・配置・外観・利用可否・30 秒の鮮度を再確認します。`--allow-summon` 省略時は対応済み adapter を許可し、旧オプションは明示的な制限として警告付きで保持します。未対応操作を許可しません。ネイティブの `allowed_summons=[]` は全召喚を拒否し、フィールド省略で対応済みカードを有効化します。
+
+C++ 型で presence・位置証拠・操作状態を分離し、入力やコスト／再配置状態の変化では配置を確定しません。変更操作の有界詳細確認は 2 フレームの名前／アイコン証拠を記録しますが、この個体の存在や選択マスを証明しません。未知個体は要求マスを予約します。`battle_step(action="retreat", unit_id="instance:...")` は能力を確認し、同種・隣接個体の曖昧さを拒否して身元と正のボタン証拠を確認します。**実画像に基づく選択マスの anchor と明確な離場規則は未実装なので、anchor 未確認では撤退ボタンを押さず、不明な占有を解放しません。** ボタン不検出は `selection_unverified` で永久撤退不可とは推定せず、明示的 false のみ `not_retreatable` です。受動観測はクリック／再開せず、時間や単一フレーム不検出で消滅を断定しません。確認済み終局では離場を記録できます。再送は日誌・画像を保持して再入力せず、再起動／途中参加の復元は未対応です。
+
+正の詳細画像は選択した種類の存在（`selected_kind_present`）だけを示し、この配置の成功を証明しません。マス anchor なしでは所有個体の `presence` は unknown です。撤退アイコン一致は `retreat_button_detected` で、有効状態の証明ではありません。可用性規則がないので `retreat_button_available` は null です。
+
+旧 `battle_deploy` は任意の `card_id` を受け、旧配置／撤退／スキル入口も同じ有界事前確認・停止処理を通ります。開始時は実行中戦闘が必要で、能力・個体・位置検証を迂回できません。選択マス anchor がない通常オペレーターのスキル／撤退も未確認履歴で実行せず拒否します。
+
+TL／TL-EX の ID は `act55side_*`（例 `act55side_ex01`、`TL-EX-1` ではありません）です。｢自爆榴弹｣（爆発するステージ装置）`trap_341_dsjtzd` はオフライン照会可能で、基本コスト 20、再配置 20 秒、範囲 `x-4`、スキル記載なし、素質 blackboard のスタン 5 秒です。**再配置時間は爆発のカウントダウンではありません。** 原表はドラッグ／撤退方針を証明せず、爆発・確実な消滅・翻板変更の実画像規則がないので動的 overlay は unknown／unsupported、TL 配置は `dynamic_terrain_unknown` です。推定時間で静的地図を変更せず、TL の完全ループ・実機合格を宣言しません。
+
+Debug の `res_updater` をビルドし、固定版のローカルキャラクター／スキル表から再生成します。
+
+```bash
+python tools/ResourceUpdater/generate_unit_info.py \
+  --updater build-mcp/bin/Debug/res_updater \
+  --input path/to/excel --output resource/unit_info.json
+```
+
+`tools/ResourceUpdater/unit_info_source.json` はリポジトリ・commit・地域・キャラクター／昇格キャラクター／スキル／範囲の 4 入力 SHA-256 を固定し、wrapper が検証後に唯一の C++ generator を呼びます。実行時のダウンロード／Wiki は不要です。生成 JSON は 1 レコード 1 行で Prettier の対象外です。通常更新は入力ディレクトリに `unit_info_source.json` があるときのみこの補助ファイルを再生成します。宣言ソース更新時は再生成・検証が必要で、ハッシュはインストール済みゲームとの互換性を証明しません。外部 raw ステージ／敵スナップショットは別設定で同梱されません。
 
 `battle_set_speed(request)` は `session_id`、`operation_id`、`multiplier=1|2`、`timeout_ms` を受け付けます。明確な停止中だけ速度を読み、必要なら 1 回切り替えて再確認し、前後の証拠を返します。停止所有権を変えず、自動再開せず、2 倍の重複指定で 1 倍に戻りません。速度不明時はクリックせず、変更後に確認できなければ入力をロックします。加速の判断はホストだけが行います。待機はホスト時間で、観測済み取得コストから後処理予算を確保し、不足なら再開を拒否します。`cleanup_reserve_ms`、`resumed_interval_upper_bound_ms`、`deadline_margin_ms` は厳密なゲーム時間を保証しません。
 
@@ -277,7 +303,9 @@ Core はレベル表示から配置済み枠を検出し、名前を読めない
 
 `--intel-config` の `provider="raw"` は信頼できるローカルファイル専用で、自動ダウンロードしません。設定項目は `root`（絶対ディレクトリ）、`repository`、`commit`（40 桁）、`data_version`、`region`、`stages`、`enemy_database` です。`stages` は stage ID を `{"path":"relative/path","sha256":"64-character hash"}` に対応させ、`enemy_database` も同じ形式です。各ファイルは 64 MiB 以下で SHA-256 を検証し、ルート外を拒否します。
 
-紐付け済みセッションで `intel_query(..., complete_stage=true)` を使います。上起点のマップと下起点の経路を別々に変換して `maa_grid` を出力し、待機チェックポイントを移動扱いしません。SPAWN action ごとに 1 レコードを作り、count、delay、interval、隠しグループ、ブロック項目を保持します。敵のレベル継承、定義フラグ、ステージ上書きを処理し、Key/Value と key/value に対応します。不明な機構や非 SPAWN actions を空集合にしません。`mode_modifiers` は難易度 mask の選択のみで、ルーン解釈済みとは扱わず、`alignment=unknown` です。`mode=normal|challenge` は難易度で、演習／実戦ではありません。外部 provider に mode を渡すのは schema に宣言がある場合だけで、キャッシュも mode 別です。ハッシュや版の宣言はゲーム版との一致や独立 provider の互換性を証明せず、データはサービスに再配布しません。
+紐付け済みセッションで `intel_query(..., complete_stage=true)` を使います。上起点のマップと下起点の経路を別々に変換して `maa_grid` を出力し、待機チェックポイントを移動扱いしません。SPAWN action ごとに 1 レコードを作り、count、delay、interval、隠しグループ、ブロック項目を保持します。敵のレベル継承、定義フラグ、ステージ上書きを処理し、Key/Value と key/value に対応します。不明な機構や非 SPAWN actions を空集合にしません。`mode_modifiers` は難易度 mask の選択のみで、ルーン解釈済みとは扱わず、`alignment=unknown` です。`mode=normal|challenge` は難易度で、演習／実戦ではありません。外部 provider に mode を渡すのは schema に宣言がある場合だけで、キャッシュも mode 別です。ハッシュや版の宣言はゲーム版との一致や独立 provider の互換性を証明せず、外部 provider のデータパックはサービスと共に再配布しません。
+
+上の再配布しないという記述は外部 raw ステージ／敵入力のみを指し、前述のオフラインユニット情報は別途同梱します。
 
 ## Core プロトコル
 

@@ -62,13 +62,7 @@ class DecisionContext:
             for unit in snapshot.get(collection, []):
                 candidates = unit.get("game_ids", [])
                 matches = [game_id for game_id in candidates if game_id in configured]
-                resolved = (
-                    matches[0]
-                    if len(matches) == 1
-                    else candidates[0]
-                    if len(candidates) == 1
-                    else None
-                )
+                resolved = candidates[0] if len(candidates) == 1 else None
                 loadout = configured.get(resolved)
                 fields = {}
                 for field in (
@@ -106,9 +100,8 @@ class DecisionContext:
                     }
                 unit["decision_context"] = {
                     "operator_game_id": resolved,
-                    "identity_source": "user_supplied_disambiguation"
-                    if len(candidates) > 1 and resolved
-                    else "native_candidates",
+                    "identity_source": "native_candidates",
+                    "configured_candidate_game_ids": matches,
                     "identity_verified": False,
                     "loadout": fields,
                     "loadout_provenance": self.provenance

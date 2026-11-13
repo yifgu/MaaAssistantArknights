@@ -32,9 +32,9 @@ async def battle(tmp_path, monkeypatch, request):
         address="fixture",
         connection_config="BattleFixture",
         touch_mode="adb",
-        allowed_summons=["token_10000_silent_healrb"]
-        if getattr(request, "param", False) == "summon"
-        else [],
+        allowed_summons=[]
+        if getattr(request, "param", False) == "summon_unapproved"
+        else None,
     )
     root = prepare(settings, known=getattr(request, "param", False))
     popen = subprocess.Popen
@@ -59,7 +59,9 @@ async def battle(tmp_path, monkeypatch, request):
         if variant != "prepare" and not (
             isinstance(variant, str) and variant.startswith("preparation:")
         ):
-            await service.attach("main_01-07")
+            await service.attach(
+                "act55side_ex01" if variant == "summon_tl" else "main_01-07"
+            )
         yield service, create_server(service), root
     finally:
         await service.close()
@@ -1343,7 +1345,7 @@ async def test_preparation_rejects_wrong_page_and_reuses_one_controller(battle):
 
 @pytest.mark.parametrize(
     "battle, expected",
-    [("summon", "stale_card"), ("summon_unapproved", "unsupported_unit")],
+    [("summon", "stale_card"), ("summon_unapproved", "stale_card")],
     indirect=["battle"],
 )
 async def test_summon_preflight_never_adopts_an_unauthorized_manual_pause(
@@ -1410,11 +1412,38 @@ async def test_summon_instances_and_replay_are_separate(battle):
         assert result["pause_verified"] is True
         instances = result["return_time_snapshot"]["battlefield"]
         assert len(instances) == number + 1
+        if number == 0:
+            evidence = instances[0]["selection_evidence"]
+            assert len(evidence) == 2
+            assert len({item["observation_id"] for item in evidence}) == 2
+            assert all(item["retreat_button_available"] is None for item in evidence)
+            assert all(
+                first_pixel((root.parent / item["image_path"]).read_bytes())
+                == MARKERS["running"]
+                for item in evidence
+            )
         before = events(root)
         replay = await server.call_tool("battle_step", {"request": request})
         assert replay.structuredContent == result
         assert events(root) == before
     assert len({instance["unit_id"] for instance in instances}) == 2
+    assert all(instance["presence"] == "unknown" for instance in instances)
+    assert all(instance["tile_reserved"] for instance in instances)
+    assert all(instance["location_verified"] is False for instance in instances)
+    before = events(root)
+    rejected = await server.call_tool(
+        "battle_step",
+        {
+            "request": {
+                "session_id": service.session_id,
+                "operation_id": "ambiguous-retreat",
+                "action": "retreat",
+                "unit_id": instances[0]["unit_id"],
+            }
+        },
+    )
+    assert rejected.structuredContent["error"]["code"] == "selection_ambiguous"
+    assert not any(e["action"] == "click" for e in events(root)[len(before) :])
     denied = await server.call_tool(
         "battle_step",
         {
@@ -1427,6 +1456,267 @@ async def test_summon_instances_and_replay_are_separate(battle):
         },
     )
     assert denied.structuredContent["error"]["code"] == "unsupported_instance_action"
+
+
+@pytest.mark.parametrize("battle", ["summon_unapproved"], indirect=True)
+async def test_explicit_legacy_filter_does_not_authorize_or_expand_summons(battle):
+    service, server, root = battle
+    card = (await service.read(service.session_id, "capture"))["snapshot"][
+        "deployment"
+    ][0]
+    value = (
+        await server.call_tool(
+            "battle_step",
+            {
+                "request": {
+                    "session_id": service.session_id,
+                    "operation_id": "restricted",
+                    "action": "deploy",
+                    "unit_id": card["unit_id"],
+                    "card_id": card["card_id"],
+                    "location": [1, 1],
+                    "direction": "None",
+                }
+            },
+        )
+    ).structuredContent
+    assert value["error"]["code"] == "summon_restricted"
+    assert not any(e["action"] in ("click", "swipe", "resume") for e in events(root))
+
+
+@pytest.mark.parametrize("battle", ["summon"], indirect=True)
+async def test_card_identity_mismatch_and_unknown_retreat_do_not_send_blind_input(
+    battle,
+):
+    service, server, root = battle
+    snapshot = (await service.read(service.session_id, "capture"))["snapshot"]
+    card = snapshot["deployment"][0]
+    request = {
+        "session_id": service.session_id,
+        "operation_id": "mismatch",
+        "action": "deploy",
+        "unit_id": "1:Wrong",
+        "card_id": card["card_id"],
+        "location": [1, 1],
+        "direction": "None",
+    }
+    value = (
+        await server.call_tool("battle_step", {"request": request})
+    ).structuredContent
+    assert value["error"]["code"] == "card_identity_mismatch"
+    assert not any(e["action"] in ("click", "swipe", "resume") for e in events(root))
+
+    tile = next(
+        t["location"]
+        for t in (await service.read(service.session_id, "map"))["map"]["tiles"]
+        if t["buildable_type"] == 1
+    )
+    request.update(
+        operation_id="d" * 128,
+        unit_id=card["unit_id"],
+        location=tile,
+        adopt_manual_pause=True,
+        timeout_ms=30_000,
+    )
+    deployed = (
+        await server.call_tool("battle_step", {"request": request})
+    ).structuredContent
+    instance = deployed["return_time_snapshot"]["battlefield"][0]
+    assert instance["tile_reserved"] is True
+    before = events(root)
+    retreated = (
+        await server.call_tool(
+            "battle_step",
+            {
+                "request": {
+                    "session_id": service.session_id,
+                    "operation_id": "unconfirmed-retreat",
+                    "action": "retreat",
+                    "unit_id": instance["unit_id"],
+                    "timeout_ms": 30_000,
+                }
+            },
+        )
+    ).structuredContent
+    assert retreated["status"] == "outcome_unknown"
+    assert retreated["error"]["code"] == "selection_unverified"
+    # Selection/cancel are bounded inspection inputs, never the cached retreat button.
+    button = (572, 225)
+    assert not any(
+        e["action"] == "click" and tuple(map(int, e["args"])) == button
+        for e in events(root)[len(before) :]
+    )
+    assert retreated["return_time_snapshot"]["battlefield"][0]["tile_reserved"] is True
+
+
+@pytest.mark.parametrize("battle", ["summon_duplicate"], indirect=True)
+async def test_concrete_card_disambiguates_duplicate_names_before_helper_input(battle):
+    service, server, root = battle
+    cards = (await service.read(service.session_id, "capture"))["snapshot"][
+        "deployment"
+    ]
+    assert len(cards) == 2
+    assert cards[0]["unit_id"] == cards[1]["unit_id"]
+    assert cards[0]["card_id"] != cards[1]["card_id"]
+    assert cards[1]["game_ids"] == ["token_10000_silent_healrb"]
+    tile = next(
+        t["location"]
+        for t in (await service.read(service.session_id, "map"))["map"]["tiles"]
+        if t["buildable_type"] == 1
+    )
+    request = {
+        "session_id": service.session_id,
+        "operation_id": "second-card",
+        "action": "deploy",
+        "unit_id": cards[1]["unit_id"],
+        "card_id": cards[1]["card_id"],
+        "location": tile,
+        "direction": "None",
+        "adopt_manual_pause": True,
+        "timeout_ms": 30_000,
+    }
+    value = (
+        await server.call_tool("battle_step", {"request": request})
+    ).structuredContent
+    assert value["action_returned"] is True, value
+    swipe = next(e for e in events(root) if e["action"] == "swipe")
+    x, y, width, height = cards[1]["rect"]
+    assert list(map(int, swipe["args"][:2])) == [x + width // 2, y + height // 2]
+    before = events(root)
+    request.update(operation_id="occupied-unknown")
+    rejected = (
+        await server.call_tool("battle_step", {"request": request})
+    ).structuredContent
+    assert rejected["error"]["code"] == "invalid_tile"
+    assert not any(e["action"] == "swipe" for e in events(root)[len(before) :])
+
+
+@pytest.mark.parametrize("battle", ["summon"], indirect=True)
+async def test_unknown_selected_scene_does_not_send_a_blind_dismissal(battle):
+    service, server, root = battle
+    card = (await service.read(service.session_id, "capture"))["snapshot"][
+        "deployment"
+    ][0]
+    tile = next(
+        t["location"]
+        for t in (await service.read(service.session_id, "map"))["map"]["tiles"]
+        if t["buildable_type"] == 1
+    )
+    (root / "field-click-target").write_text("unknown")
+    value = (
+        await server.call_tool(
+            "battle_step",
+            {
+                "request": {
+                    "session_id": service.session_id,
+                    "operation_id": "unknown-selection",
+                    "action": "deploy",
+                    "unit_id": card["unit_id"],
+                    "card_id": card["card_id"],
+                    "location": tile,
+                    "direction": "None",
+                    "adopt_manual_pause": True,
+                    "timeout_ms": 8_000,
+                }
+            },
+        )
+    ).structuredContent
+    assert value["action_returned"] is True, value
+    assert value["return_time_snapshot"]["battlefield"][0]["tile_reserved"] is True
+    trace = events(root)
+    boundary = next(
+        index
+        for index, event in enumerate(trace)
+        if event["action"] == "capture" and event["mode"] == "unknown"
+    )
+    assert not any(
+        event["action"] in ("click", "swipe", "resume", "pause")
+        for event in trace[boundary:]
+    )
+
+
+@pytest.mark.parametrize(
+    "battle, code",
+    [
+        ("summon_ambiguous_id", "unit_not_unique"),
+        ("grenade", "unsupported_interaction"),
+        ("summon_tl", "dynamic_terrain_unknown"),
+    ],
+    indirect=["battle"],
+)
+async def test_ambiguous_game_ids_and_unadapted_traps_never_deploy(battle, code):
+    service, server, root = battle
+    card = (await service.read(service.session_id, "capture"))["snapshot"][
+        "deployment"
+    ][0]
+    value = (
+        await server.call_tool(
+            "battle_step",
+            {
+                "request": {
+                    "session_id": service.session_id,
+                    "operation_id": "unsupported-card",
+                    "action": "deploy",
+                    "unit_id": card["unit_id"],
+                    "card_id": card["card_id"],
+                    "location": [1, 1],
+                    "direction": "None",
+                }
+            },
+        )
+    ).structuredContent
+    assert value["error"]["code"] == code
+    assert not any(e["action"] in ("click", "swipe", "resume") for e in events(root))
+
+
+@pytest.mark.parametrize("battle", ["summon"], indirect=True)
+async def test_only_positive_terminal_evidence_releases_unknown_instance_tiles(battle):
+    service, server, root = battle
+    card = (await service.read(service.session_id, "capture"))["snapshot"][
+        "deployment"
+    ][0]
+    tile = next(
+        t["location"]
+        for t in (await service.read(service.session_id, "map"))["map"]["tiles"]
+        if t["buildable_type"] == 1
+    )
+    result = (
+        await server.call_tool(
+            "battle_step",
+            {
+                "request": {
+                    "session_id": service.session_id,
+                    "operation_id": "disappearance-evidence",
+                    "action": "deploy",
+                    "unit_id": card["unit_id"],
+                    "card_id": card["card_id"],
+                    "location": tile,
+                    "direction": "None",
+                    "adopt_manual_pause": True,
+                    "timeout_ms": 30_000,
+                }
+            },
+        )
+    ).structuredContent
+    assert result["return_time_snapshot"]["battlefield"][0]["presence"] == "unknown"
+    before = events(root)
+    (root / "mode").write_text("unknown")
+    missing = (await service.read(service.session_id, "capture"))["snapshot"][
+        "battlefield"
+    ][0]
+    assert missing["presence"] == "unknown"
+    assert missing["tile_reserved"] is True
+    (root / "mode").write_text("victory")
+    ended = (await service.read(service.session_id, "capture"))["snapshot"][
+        "battlefield"
+    ][0]
+    assert ended["presence"] == "gone"
+    assert ended["presence_source"] == "verified_terminal_screen"
+    assert ended["tile_reserved"] is False
+    assert not any(
+        e["action"] in ("click", "swipe", "pause", "resume")
+        for e in events(root)[len(before) :]
+    )
 
 
 @pytest.mark.parametrize(
