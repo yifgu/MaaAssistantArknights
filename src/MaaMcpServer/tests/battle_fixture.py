@@ -53,6 +53,7 @@ MARKERS = {
     "victory_overlay": (150, 160, 170),
     "conflict": (160, 170, 180),
     "paused_unknown_speed": (170, 180, 190),
+    "paused_speed_conflict": (171, 181, 191),
     "paused_localized": (180, 190, 200),
     "pausex_only": (190, 200, 210),
     "misplaced_localized": (200, 210, 220),
@@ -80,6 +81,21 @@ SPLIT_MODES = (
     "split_results",
 )
 MARKERS.update({mode: (50 + index, 100, 150) for index, mode in enumerate(SPLIT_MODES)})
+
+SPLIT_PAUSE_MODES = (
+    "paused_split",
+    "split_pause_prefix",
+    "split_pause_suffix",
+    "split_pause_reversed",
+    "split_pause_distant",
+    "split_pause_other_row",
+    "split_pause_extra_suffix",
+    "running_split",
+    "victory_split",
+)
+MARKERS.update(
+    {mode: (80 + index, 110, 160) for index, mode in enumerate(SPLIT_PAUSE_MODES)}
+)
 
 
 def prepare(settings, known):
@@ -139,6 +155,41 @@ def prepare(settings, known):
             "BattleControlVictoryAccomplished",
         ):
             del tasks[name]
+    if known == "speed_templates":
+        from PIL import Image
+
+        patches = [
+            patch
+            for patch in patches
+            if patch[0] not in ("BattleControlSpeedOne", "BattleSpeedUpCheck")
+        ]
+        del tasks["BattleSpeedUpCheck"]
+        (templates / "BattleSpeedUpCheck.png").unlink()
+        # Exercise the native template alternative when no required OCR text matches.
+        tasks["BattleControlSpeedOne"] = {
+            "baseTask": "#none",
+            "algorithm": "OcrDetect",
+            "text": ["NOT A SPEED LABEL"],
+            "fullMatch": True,
+            "roi": [1060, 20, 80, 70],
+        }
+        for name, template in (
+            ("BattleControlSpeedOne", "BattleSpeedUp.png"),
+            ("BattleSpeedUpCheck", "BattleSpeedUpCheck.png"),
+        ):
+            with Image.open(
+                settings.resource_dir / "resource/template/Battle/BattleFlag" / template
+            ) as label:
+                patches.append(
+                    (
+                        name,
+                        1075,
+                        30,
+                        label.width,
+                        label.height,
+                        label.convert("RGB").tobytes(),
+                    )
+                )
     avatar = random.Random(5).randbytes(60 * 60 * 3)
     patches.append(("avatar", 62, 628, 60, 60, avatar))
     patches.append(("running-brightness", 1200, 40, 16, 16, b"\xff" * 16 * 16 * 3))
@@ -155,7 +206,7 @@ def prepare(settings, known):
         "running_localized": ("pausex", "paused-zh-cn"),
         "victory_localized": ("pausex", "paused-zh-cn"),
     }
-    if known == "localized_ocr":
+    if known in ("localized_ocr", "localized_split_ocr"):
         from PIL import Image
 
         del tasks["BattleControlPaused"]
@@ -178,6 +229,26 @@ def prepare(settings, known):
                         label.convert("RGB").tobytes(),
                     )
                 )
+        if known == "localized_split_ocr":
+            with Image.open(
+                Path(__file__).parent / "fixtures/paused-zh-cn.png"
+            ) as label:
+                for name, crop, size, x, y in (
+                    ("split-pause-prefix", (0, 0, 68, 40), (68, 40), 590, 360),
+                    ("split-pause-suffix", (68, 0, 104, 40), (27, 20), 690, 370),
+                    ("split-pause-extra", (68, 0, 104, 40), (27, 20), 690, 370),
+                ):
+                    fragment = label.crop(crop).resize(size).convert("RGB")
+                    patches.append(
+                        (
+                            name,
+                            x,
+                            y,
+                            fragment.width,
+                            fragment.height,
+                            fragment.tobytes(),
+                        )
+                    )
     if known:
         cache = settings.user_dir / "cache/avatars"
         cache.mkdir(parents=True)
@@ -188,7 +259,9 @@ def prepare(settings, known):
         )
         (cache / f"{game_id}.png").write_bytes(png(60, 60, avatar))
     for mode, marker in MARKERS.items():
-        if mode in ocr_labels and known != "localized_ocr":
+        if mode in ocr_labels and known not in ("localized_ocr", "localized_split_ocr"):
+            continue
+        if mode in SPLIT_PAUSE_MODES and known != "localized_split_ocr":
             continue
         if mode in SPLIT_MODES and known not in ("terminal", "terminal_ocr"):
             continue
@@ -221,6 +294,7 @@ def prepare(settings, known):
                     "victory_overlay",
                     "conflict",
                     "victory_localized",
+                    "victory_split",
                     "split_and_full",
                 ):
                     continue
@@ -259,21 +333,51 @@ def prepare(settings, known):
                 if name == "BattleControlPaused" and mode not in (
                     "paused",
                     "paused_unknown_speed",
+                    "paused_speed_conflict",
                 ):
                     continue
                 if name == "BattleControlSpeedOne" and (
-                    speed != 1 or mode == "paused_unknown_speed"
+                    (speed != 1 and mode != "paused_speed_conflict")
+                    or mode == "paused_unknown_speed"
                 ):
                     continue
                 if name == "BattleSpeedUpCheck" and (
-                    speed != 2 or mode == "paused_unknown_speed"
+                    (speed != 2 and mode != "paused_speed_conflict")
+                    or mode == "paused_unknown_speed"
                 ):
                     continue
                 if name in (
                     "BattleOfficiallyBegin",
                     "running-brightness",
-                ) and mode not in ("running", "running_localized", "split_running"):
+                ) and mode not in (
+                    "running",
+                    "running_localized",
+                    "running_split",
+                    "split_running",
+                ):
                     continue
+                if name.startswith("split-pause-"):
+                    if mode not in SPLIT_PAUSE_MODES:
+                        continue
+                    if name.endswith("prefix"):
+                        if mode == "split_pause_suffix":
+                            continue
+                        if mode == "split_pause_reversed":
+                            x = 647
+                        elif mode == "split_pause_distant":
+                            x = 570
+                    else:
+                        if mode == "split_pause_prefix":
+                            continue
+                        if name.endswith("extra"):
+                            if mode != "split_pause_extra_suffix":
+                                continue
+                        elif mode == "split_pause_reversed":
+                            x = 590
+                        elif mode == "split_pause_extra_suffix":
+                            x = 655
+                        elif mode == "split_pause_other_row":
+                            y = 400
                 if name in ("pause", "pausex", "paused-zh-cn", "paused-zh-cn-suffix"):
                     if name not in ocr_labels.get(mode, ()):
                         continue
@@ -339,9 +443,16 @@ def prepare(settings, known):
     ]
     (root / "resource/config.json").write_text(json.dumps(config), encoding="utf-8")
     (root / "mode").write_text(
-        "paused_localized" if known == "localized_ocr" else "paused", encoding="utf-8"
+        "paused_split"
+        if known == "localized_split_ocr"
+        else "paused_localized"
+        if known == "localized_ocr"
+        else "paused",
+        encoding="utf-8",
     )
     (root / "speed").write_text("1")
+    if known == "localized_split_ocr":
+        (root / "pause-target").write_text("paused_split")
     return root
 
 
@@ -374,9 +485,13 @@ def device(root, action, args):
             "paused_english",
             "paused_chinese",
             "paused_bilingual",
+            "paused_split",
         )
         event["action"] = "resume" if paused else "pause"
-        mode = "running" if paused else "paused"
+        target = root / "pause-target"
+        mode = (
+            "running" if paused else target.read_text() if target.exists() else "paused"
+        )
         (root / "mode").write_text(mode, encoding="utf-8")
         if event["action"] == "pause" and (root / "pause-sequence.json").exists():
             sequence.write_text((root / "pause-sequence.json").read_text())

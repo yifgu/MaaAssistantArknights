@@ -36,5 +36,10 @@
         "text": ["1", "1X", "1x", "1×", "×1"],
         "fullMatch": true,
         "roi": [1060, 20, 80, 70]
+    },
+    "BattleControlSpeedOneTemplate": {
+        "baseTask": "BattleSpeedUpCheck",
+        "template": "BattleSpeedUp.png",
+        "templThreshold": 0.9
     }
 }

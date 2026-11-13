@@ -106,8 +106,8 @@ jobs:
           case "$CONFIGURATION" in Debug|RelWithDebInfo) ;; *) exit 1 ;; esac
           cmake --preset "$CMAKE_PRESET" -B build-mcp \
             -DBUILD_WPF_GUI=OFF -DBUILD_DEBUG_DEMO=OFF -DBUILD_RESOURCE_UPDATER=OFF \
-            -DINSTALL_RESOURCE=ON -DINSTALL_PYTHON=OFF -DWITH_HASH_VERSION=ON
-          cmake --build build-mcp --config Debug --target MaaCore --parallel 2
+            -DINSTALL_RESOURCE=ON -DINSTALL_PYTHON=OFF -DWITH_HASH_VERSION=ON -DBUILD_MCP_TESTS=ON
+          cmake --build build-mcp --config Debug --target MaaCore MaaMcpPauseEvidenceTest --parallel 2
           cmake --install build-mcp --config Debug --prefix "$PWD/debug-core"
 
       - name: Download MaaFramework control unit
@@ -132,7 +132,12 @@ jobs:
       - name: Prepare local Windows Debug CRT for testing
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./tools/PrepareMcpRuntime.ps1 -CoreDir debug-core
+        run: |
+          ./tools/PrepareMcpRuntime.ps1 -CoreDir debug-core
+          ./tools/PrepareMcpRuntime.ps1 -CoreDir build-mcp/bin/Debug
+
+      - name: Test native pause evidence in Debug
+        run: ctest --test-dir build-mcp -C Debug --output-on-failure
 
       - name: Test installed MCP wheel against Debug Core
         env:

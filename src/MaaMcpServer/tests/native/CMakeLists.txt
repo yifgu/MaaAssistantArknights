@@ -1,0 +1,4 @@
+add_executable(MaaMcpPauseEvidenceTest test_pause_evidence.cpp)
+target_include_directories(MaaMcpPauseEvidenceTest PRIVATE ${PROJECT_SOURCE_DIR}/src/MaaCore)
+target_link_libraries(MaaMcpPauseEvidenceTest PRIVATE HeaderOnlyLibraries)
+add_test(NAME MaaMcpPauseEvidenceTest COMMAND MaaMcpPauseEvidenceTest)
