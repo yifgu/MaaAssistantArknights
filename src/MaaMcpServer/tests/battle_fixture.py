@@ -518,6 +518,13 @@ def device(root, action, args):
     with (root / "events.jsonl").open("a", encoding="utf-8") as log:
         log.write(json.dumps(event) + "\n")
     if action == "capture":
+        if mode == "running" and (root / "wait-for-cancel").exists():
+            # Hold the resume frame until the real native cancellation call returns.
+            deadline = time.monotonic() + 10
+            while not (root / "cancel-accepted").exists():
+                if time.monotonic() >= deadline:
+                    raise TimeoutError("Native cancellation did not release capture")
+                time.sleep(0.01)
         if (root / "capture-delay").exists():
             delay = json.loads((root / "capture-delay").read_text())
             time.sleep(delay.get(mode, 0) if isinstance(delay, dict) else delay)
@@ -549,6 +556,7 @@ if __name__ == "__main__":
 
         class FixtureCore(native.NativeCore):
             def __init__(self, settings, progress):
+                self.fixture_root = settings.user_dir / "fixture"
                 super().__init__(settings, progress)
                 self._require(
                     self.lib.AsstLoadResource(
@@ -556,6 +564,14 @@ if __name__ == "__main__":
                     ),
                     "AsstLoadResource(synthetic fixture)",
                 )
+
+            def _require(self, value, operation):
+                super()._require(value, operation)
+                if (
+                    operation == "BattleControl cancellation"
+                    and (self.fixture_root / "wait-for-cancel").exists()
+                ):
+                    (self.fixture_root / "cancel-accepted").touch()
 
         native.NativeCore = FixtureCore
         native._worker()

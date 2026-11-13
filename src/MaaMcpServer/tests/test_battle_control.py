@@ -1430,22 +1430,53 @@ async def test_summon_instances_and_replay_are_separate(battle):
 
 
 @pytest.mark.parametrize("battle", [False, "localized_split_ocr"], indirect=True)
-async def test_wait_cancel_reaches_core_and_preserves_pause(battle):
+@pytest.mark.parametrize("cleanup_delay", [0, 8.1])
+async def test_wait_cancel_reaches_core_and_preserves_pause(battle, cleanup_delay):
     service, _, root = battle
+    paused_mode = (root / "mode").read_text()
+    (root / "wait-for-cancel").touch()
     task = asyncio.create_task(wait_step(battle, duration_ms=8_000, timeout_ms=30_000))
     try:
         async with asyncio.timeout(30):
-            while not any(e["action"] == "resume" for e in events(root)):
+            while not any(
+                e["action"] == "capture" and e["mode"] == "running"
+                for e in events(root)
+            ):
                 assert not task.done()
                 await asyncio.sleep(0.01)
+        (root / "capture-delay").write_text(json.dumps({paused_mode: cleanup_delay}))
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
         result = service.operation(service.session_id, "wait")
         assert result["status"] == "failed"
         assert result["error"]["code"] == "cancelled"
+        assert (root / "cancel-accepted").exists()
+        assert result["resumed"] is True
+        assert result["samples"] == []
         assert result["pause_verified"] is True
-        assert result["actual_observed_envelope_ms"] < 8_000
+        assert result["safe_state"] == "paused"
+        assert result["session_input_blocked"] is False
+        assert result["return_time_snapshot"]["scene"] == "paused"
+        assert (root / "mode").read_text() == paused_mode
+        # The command deadline includes OCR and cleanup; duration_ms only bounds advancement.
+        assert result["actual_observed_envelope_ms"] < 30_000
+        assert result["deadline_margin_ms"] > 0
+        if cleanup_delay:
+            assert result["actual_observed_envelope_ms"] >= cleanup_delay * 1000
+        observed_events = events(root)
+        assert [
+            e["action"]
+            for e in observed_events
+            if e["action"] in ("pause", "resume", "click", "swipe", "speed")
+        ] == ["resume", "pause"]
+        assert (
+            sum(
+                e["action"] == "capture" and e["mode"] == "running"
+                for e in observed_events
+            )
+            == 1
+        )
     finally:
         if not task.done():
             task.cancel()
