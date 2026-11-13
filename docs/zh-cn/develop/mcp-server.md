@@ -24,20 +24,22 @@ Windows x64 将配置命令的 `linux-x64` 换为 `windows-x64`；macOS 根据�
 
 ## 使用 GitHub Actions 产物
 
-在自己的仓库中打开 **Actions → Release Pipeline → Run workflow**，选择包含 MCP 改动的分支，勾选 `mcp_only`，并选择 `mcp_configuration`：
+`dev-v2` 上匹配现有构建路径的推送（包括 PR 合并）自动运行 **Battle MCP Bundle**，默认构建 Windows/Linux x64 的 `RelWithDebInfo` 完整包，不再自动启动全量 Release Pipeline。纯文档改动不触发 MCP 构建；其它文档与验证工作流、PR 全量构建、`v*` 标签发布和手动全量构建保持原有触发规则。
+
+需要手动构建时，在自己的仓库中打开 **Actions → Battle MCP Bundle → Run workflow**，选择包含 MCP 改动的分支，并选择 `configuration`：
 
 - `RelWithDebInfo`：默认的完整运行包，无需本地安装 Python、uv、ADB 或 Visual Studio。
 - `Debug`：开发测试包。Linux 可直接自测；Windows 需本机提供不可再分发的 Debug CRT。
 
 两种配置都会先编译 Debug Core 并运行完整测试，再打包所选配置；不编译 GUI，也不发布 Release。命令行等价操作：
 
-`mcp_platform` 默认为 `all`，可选 `win-x64` 或 `linux-x64` 只构建所需平台，避免重复占用 runner。
+`platform` 默认为 `all`，可选 `win-x64` 或 `linux-x64` 只构建所需平台，避免重复占用 runner。
 
 ```bash
-gh workflow run ci.yml --ref <branch> -f mcp_only=true -f mcp_configuration=RelWithDebInfo
+gh workflow run mcp-build.yml --ref <branch> -f configuration=RelWithDebInfo -f platform=all
 ```
 
-相关 PR 的 Release Pipeline 也会运行同样的 `Battle MCP` 作业。实现位于 `.github/workflows/mcp-build.yml`（**Battle MCP Bundle**），正式流水线和 Nightly 共用它；新工作流尚未进入默认分支时，仍可通过已有的 Release Pipeline 手动触发。手动 MCP 构建使用独立并发组，不会被同分支的 PR 构建取消。
+相关 PR 的 Release Pipeline 也会运行同样的 `Battle MCP` 作业。实现位于 `.github/workflows/mcp-build.yml`，正式流水线和 Nightly 继续共用它。原有的 **Release Pipeline → Run workflow** 入口仍可用：勾选 `mcp_only`，通过 `mcp_configuration` 和 `mcp_platform` 选择配置与平台；不勾选则运行全量构建。手动 MCP 构建不会被同分支的 PR 构建取消。
 
 成功后，在该次运行的 **Artifacts** 下载 `MAAMcp-win-x64-RelWithDebInfo` 或 `MAAMcp-linux-x64-RelWithDebInfo`（Debug 配置则对应 `-Debug`），再解压其中的同名 `.zip` 或 `.tar.gz`。包内包含 `core/`（Core、原生依赖、资源和 ADB ControlUnit）、`python/`（独立 Python 及锁定的全部 Python 运行/测试依赖）、`adb/`、启动脚本、源码与测试、wheel/sdist、依赖许可证及 `BUILD-INFO.json`（实际源码提交和构建链接）。旁附 SHA-256 校验文件；Windows 运行包还包含可再分发的 VC++ CRT。无需克隆仓库、重新编译或联网安装 Python 包。Linux 仍需要兼容的 x64 系统与系统 glibc；这不是容器或完整操作系统。
 
