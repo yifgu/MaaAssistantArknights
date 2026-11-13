@@ -1,0 +1,107 @@
+name: Native runtime
+
+on:
+  workflow_call:
+    inputs:
+      platform:
+        type: string
+        required: true
+      version:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Native (${{ inputs.platform }})
+    runs-on: ${{ startsWith(inputs.platform, 'win-') && 'windows-2025-vs2026' || 'ubuntu-latest' }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      TARGET_PLATFORM: ${{ inputs.platform }}
+      CORE_VERSION: ${{ inputs.version }}
+      CMAKE_PRESET: ${{ format('{0}-publish-{1}', startsWith(inputs.platform, 'win-') && 'windows' || 'linux', endsWith(inputs.platform, 'arm64') && 'arm64' || 'x64') }}
+      RUNTIME_ARTIFACT: MAARuntime-${{ startsWith(inputs.platform, 'win-') && inputs.platform || (endsWith(inputs.platform, 'arm64') && 'linux-aarch64' || 'linux-x86_64') }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          show-progress: false
+          persist-credentials: false
+
+      - name: Fetch submodules
+        run: bash .github/scripts/sync-optional-submodules.sh --init --depth 1 src/MaaUtils 3rdparty/EmulatorExtras
+
+      - name: Set up MaaDeps
+        uses: ./.github/actions/setup-maadeps
+        with:
+          triplet: ${{ format('{0}-{1}', endsWith(inputs.platform, 'arm64') && 'arm64' || 'x64', startsWith(inputs.platform, 'win-') && 'windows' || 'linux') }}
+
+      - name: Configure, build and install native targets
+        run: |
+          case "$TARGET_PLATFORM" in win-x64|win-arm64|linux-x64|linux-arm64) ;; *) exit 1 ;; esac
+          cmake --preset "$CMAKE_PRESET" -B build -DMAA_HASH_VERSION="$CORE_VERSION"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            # MaaUtils enables MSVC /MP for file-level parallelism; do not build the external WPF project.
+            cmake --build build --config RelWithDebInfo --target MaaCore MAA.Updater MaaAppHostStub --parallel 2
+          else
+            cmake --build build --config RelWithDebInfo --target MaaCore --parallel 3
+          fi
+          cmake --install build --config RelWithDebInfo --prefix "$PWD/native/install"
+          python tools/MaaMcpBundle/native_runtime.py --build build --runtime native \
+            --platform "$TARGET_PLATFORM" --configuration RelWithDebInfo
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            mkdir native/build-files
+            shopt -s nullglob
+            pdbs=(build/bin/RelWithDebInfo/*.pdb)
+            if (( ${#pdbs[@]} )); then cp "${pdbs[@]}" native/build-files/; fi
+            cp build/bin/RelWithDebInfo/MaaAppHostStub.exe native/build-files/
+          fi
+        env:
+          CLICOLOR_FORCE: 1
+
+      - name: Download MaaFramework
+        uses: robinraju/release-downloader@v1
+        with:
+          repository: MaaXYZ/MaaFramework
+          tag: ${{ startsWith(inputs.platform, 'win-') && 'v5.13.0' || '' }}
+          latest: ${{ startsWith(inputs.platform, 'linux-') }}
+          fileName: ${{ format('*{0}-{1}*.zip', startsWith(inputs.platform, 'win-') && 'win' || 'linux', endsWith(inputs.platform, 'arm64') && 'aarch64' || 'x86_64') }}
+          extract: true
+          out-file-path: MaaFramework-temp
+
+      - name: Copy ControlUnits
+        run: |
+          cp MaaFramework-temp/bin/*AdbControlUnit* native/install/
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            cp MaaFramework-temp/bin/*Win32ControlUnit* native/install/
+          fi
+
+      - name: Archive native installation
+        run: |
+          tar --exclude=native/build-files -cf native.tar native
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            tar -cf native-build-files.tar -C native/build-files .
+          fi
+
+      - name: Upload native runtime for downstream jobs
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.RUNTIME_ARTIFACT }}
+          path: native.tar
+          if-no-files-found: error
+          compression-level: 1
+          retention-days: 1
+
+      - name: Upload Windows symbols and launcher for WPF packaging
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: MAARuntime-build-files-${{ inputs.platform }}
+          path: native-build-files.tar
+          if-no-files-found: error
+          compression-level: 1
+          retention-days: 1

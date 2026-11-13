@@ -31,7 +31,7 @@ Windows x64 将配置命令的 `linux-x64` 换为 `windows-x64`；macOS 根据�
 - `RelWithDebInfo`：默认的完整运行包，无需本地安装 Python、uv、ADB 或 Visual Studio。
 - `Debug`：开发测试包。Linux 可直接自测；Windows 需本机提供不可再分发的 Debug CRT。
 
-两种配置都会先编译 Debug Core 并运行完整测试，再打包所选配置；不编译 GUI，也不发布 Release。命令行等价操作：
+两种配置都会运行完整的 Debug Core 测试，全部通过后才上传完整包。Python 环境与纯 Python 测试、Debug Core、独立构建所需的 `RelWithDebInfo` Core 分别在独立作业中并行执行；Debug 配置只编译一次 Core。该工作流不编译 GUI，也不发布 Release。命令行等价操作：
 
 `platform` 默认为 `all`，可选 `win-x64` 或 `linux-x64` 只构建所需平台，避免重复占用 runner。
 
@@ -40,6 +40,8 @@ gh workflow run mcp-build.yml --ref <branch> -f configuration=RelWithDebInfo -f 
 ```
 
 相关 PR 的 Release Pipeline 也会运行同样的 `Battle MCP` 作业。实现位于 `.github/workflows/mcp-build.yml`，正式流水线和 Nightly 继续共用它。原有的 **Release Pipeline → Run workflow** 入口仍可用：勾选 `mcp_only`，通过 `mcp_configuration` 和 `mcp_platform` 选择配置与平台；不勾选则运行全量构建。手动 MCP 构建不会被同分支的 PR 构建取消。
+
+全量 Release Pipeline 的 `RelWithDebInfo` MCP 作业复用同次运行对应平台的 x64 原生运行库，不等待 GUI、CLI 或其它平台；独立构建、`mcp_only` 与 Nightly 则自行编译。复用前校验源码提交、平台、配置、编译选项、依赖与 Core 版本，`BUILD-INFO.json` 同时记录源码提交和实际 Core 版本。MCP 的 ADB ControlUnit 仍固定为 MaaFramework `v5.13.0`，不会混用 Linux 发布包的 latest 版本。测试输出包含耗时统计与 JUnit 报告，失败时保留诊断产物；`MCP-intermediate-*` 和 `MAARuntime-*` 是短期内部产物，不是可运行的 MCP 完整包。
 
 成功后，在该次运行的 **Artifacts** 下载 `MAAMcp-win-x64-RelWithDebInfo` 或 `MAAMcp-linux-x64-RelWithDebInfo`（Debug 配置则对应 `-Debug`），再解压其中的同名 `.zip` 或 `.tar.gz`。包内包含 `core/`（Core、原生依赖、资源和 ADB ControlUnit）、`python/`（独立 Python 及锁定的全部 Python 运行/测试依赖）、`adb/`、启动脚本、源码与测试、wheel/sdist、依赖许可证及 `BUILD-INFO.json`（实际源码提交和构建链接）。旁附 SHA-256 校验文件；Windows 运行包还包含可再分发的 VC++ CRT。无需克隆仓库、重新编译或联网安装 Python 包。Linux 仍需要兼容的 x64 系统与系统 glibc；这不是容器或完整操作系统。
 

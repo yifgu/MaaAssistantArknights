@@ -1,0 +1,379 @@
+name: Battle MCP platform
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        default: ""
+      configuration:
+        type: string
+        default: RelWithDebInfo
+      platform:
+        type: string
+        required: true
+      runtime_artifact:
+        description: Same-run RelWithDebInfo runtime; empty builds a standalone Core
+        type: string
+        default: ""
+      core_version:
+        description: Explicit version of a shared Core; standalone builds use the source commit
+        type: string
+        default: ""
+      phase:
+        type: string
+        default: all
+
+permissions:
+  contents: read
+
+env:
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONIOENCODING: utf-8
+  CONFIGURATION: ${{ inputs.configuration }}
+  TARGET_PLATFORM: ${{ inputs.platform }}
+  BUNDLE_NAME: MAAMcp-${{ inputs.platform }}-${{ inputs.configuration }}
+
+jobs:
+  python:
+    name: Python environment and unit tests
+    if: inputs.phase != 'bundle'
+    runs-on: ${{ inputs.platform == 'win-x64' && 'windows-2025-vs2026' || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          show-progress: false
+          persist-credentials: false
+
+      - name: Checkout workflow tooling independently of the source ref
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: workflow-tools
+          sparse-checkout: tools/MaaMcpBundle
+          show-progress: false
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          architecture: x64
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: src/MaaMcpServer/uv.lock
+
+      - name: Download Python and ADB runtimes
+        env:
+          UV_PYTHON_INSTALL_DIR: ${{ runner.temp }}/mcp-python
+          ADB_PLATFORM: ${{ inputs.platform == 'win-x64' && 'win' || 'linux' }}
+        run: |
+          case "$TARGET_PLATFORM" in win-x64|linux-x64) ;; *) echo "Unsupported platform: $TARGET_PLATFORM" >&2; exit 1 ;; esac
+          case "$CONFIGURATION" in Debug|RelWithDebInfo) ;; *) exit 1 ;; esac
+          uv python install 3.12.13 --no-bin --no-registry
+          uv python find --managed-python 3.12.13 | tr -d '\r' > python-path.txt
+          curl --fail --location --silent --show-error --retry 3 --connect-timeout 20 --max-time 180 \
+            "https://dl.google.com/android/repository/platform-tools_r35.0.2-$ADB_PLATFORM.zip" \
+            --output platform-tools.zip
+          python -m zipfile -e platform-tools.zip adb-download
+          if [[ "$RUNNER_OS" == "Linux" ]]; then chmod +x adb-download/platform-tools/adb; fi
+
+      - name: Assemble Python environment without waiting for Core
+        run: |
+          mkdir bundle
+          git archive HEAD src/MaaMcpServer docs/{zh-cn,zh-tw,en-us,ja-jp,ko-kr}/develop/mcp-server.md tools/PrepareMcpRuntime.ps1 LICENSE \
+            | tar -xf - -C bundle
+          uv build --project src/MaaMcpServer --out-dir bundle/dist
+          python workflow-tools/tools/MaaMcpBundle/assemble.py --phase prepare --python "$(cat python-path.txt)" \
+            --adb adb-download/platform-tools --output bundle \
+            --configuration "$CONFIGURATION" --platform "$TARGET_PLATFORM"
+
+      - name: Lint and test installed wheel without native Core
+        env:
+          MAA_MCP_RESOURCE_DIR: ${{ github.workspace }}
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then py=bundle/python/python.exe; else py=bundle/python/bin/python3; fi
+          "$py" -I -B -m ruff check --no-cache src/MaaMcpServer tools/MaaMcpBundle
+          "$py" -I -B -m ruff format --check --no-cache src/MaaMcpServer tools/MaaMcpBundle
+          "$py" -I -B -m pytest bundle/src/MaaMcpServer/tests tools/MaaMcpBundle \
+            --ignore=bundle/src/MaaMcpServer/tests/test_native.py \
+            --ignore=bundle/src/MaaMcpServer/tests/test_battle_control.py \
+            -q -p no:cacheprovider --durations=25 --junitxml=reports/python.xml
+
+      - name: Upload Python test diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: MCP-TestResults-python-${{ inputs.platform }}-${{ inputs.configuration }}
+          path: reports/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Archive Python environment
+        run: tar -cf python.tar bundle
+
+      - name: Upload Python environment
+        uses: actions/upload-artifact@v7
+        with:
+          name: MCP-intermediate-python-${{ inputs.platform }}-${{ inputs.configuration }}
+          path: python.tar
+          if-no-files-found: error
+          compression-level: 1
+          retention-days: 1
+
+  debug:
+    name: Debug Core and native unit tests
+    if: inputs.phase != 'bundle'
+    uses: ./.github/workflows/mcp-core.yml
+    with:
+      ref: ${{ inputs.ref }}
+      platform: ${{ inputs.platform }}
+      configuration: Debug
+      core_version: ${{ inputs.core_version }}
+
+  release:
+    name: Standalone release Core
+    if: inputs.phase == 'all' && inputs.configuration != 'Debug' && inputs.runtime_artifact == ''
+    uses: ./.github/workflows/mcp-core.yml
+    with:
+      ref: ${{ inputs.ref }}
+      platform: ${{ inputs.platform }}
+      configuration: RelWithDebInfo
+      core_version: ${{ inputs.core_version }}
+
+  native-tests:
+    name: Installed wheel against Debug Core
+    needs: [python, debug]
+    runs-on: ${{ inputs.platform == 'win-x64' && 'windows-2025-vs2026' || 'ubuntu-latest' }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          show-progress: false
+          persist-credentials: false
+
+      - name: Checkout workflow tooling independently of the source ref
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: workflow-tools
+          sparse-checkout: tools/MaaMcpBundle
+          show-progress: false
+          persist-credentials: false
+
+      - name: Fetch MaaUtils for dependency provenance
+        run: bash .github/scripts/sync-optional-submodules.sh --init --depth 1 src/MaaUtils
+
+      - name: Download Python environment
+        uses: actions/download-artifact@v8
+        with:
+          name: MCP-intermediate-python-${{ inputs.platform }}-${{ inputs.configuration }}
+          path: python-artifact
+
+      - name: Download Debug Core
+        uses: actions/download-artifact@v8
+        with:
+          name: MCP-intermediate-core-${{ inputs.platform }}-Debug
+          path: debug-artifact
+
+      - name: Restore environments and verify Debug Core provenance
+        env:
+          CORE_VERSION: ${{ inputs.core_version }}
+        run: |
+          tar -xf python-artifact/python.tar
+          mkdir debug-runtime
+          tar -xf debug-artifact/native.tar -C debug-runtime --strip-components=1
+          if [[ "$RUNNER_OS" == "Windows" ]]; then py=bundle/python/python.exe; else py=bundle/python/bin/python3; fi
+          "$py" -B workflow-tools/tools/MaaMcpBundle/native_runtime.py --verify --runtime debug-runtime \
+            --platform "$TARGET_PLATFORM" --configuration Debug --core-version "$CORE_VERSION"
+
+      - name: Prepare local Windows Debug CRT for integration tests
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./tools/PrepareMcpRuntime.ps1 -CoreDir debug-runtime/install
+
+      - name: Test installed MCP wheel against Debug Core
+        env:
+          MAA_MCP_NATIVE_CORE: ${{ github.workspace }}/debug-runtime/install
+          MAA_MCP_RESOURCE_DIR: ${{ github.workspace }}/debug-runtime/install
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then py=bundle/python/python.exe; else py=bundle/python/bin/python3; fi
+          "$py" -I -B -m pytest bundle/src/MaaMcpServer/tests/test_native.py \
+            bundle/src/MaaMcpServer/tests/test_battle_control.py \
+            -q -p no:cacheprovider --durations=25 --junitxml=reports/native.xml
+
+      - name: Upload integration test diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: MCP-TestResults-native-${{ inputs.platform }}-${{ inputs.configuration }}
+          path: reports/
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Record successful Debug and installed-wheel test gate
+        env:
+          CORE_VERSION: ${{ inputs.core_version }}
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then py=bundle/python/python.exe; else py=bundle/python/bin/python3; fi
+          "$py" -B workflow-tools/tools/MaaMcpBundle/native_runtime.py --tested-bundle tested.json \
+            --platform "$TARGET_PLATFORM" --configuration "$CONFIGURATION" --core-version "$CORE_VERSION"
+
+      - name: Upload successful test gate
+        uses: actions/upload-artifact@v7
+        with:
+          name: MCP-intermediate-tested-${{ inputs.platform }}-${{ inputs.configuration }}
+          path: tested.json
+          if-no-files-found: error
+          retention-days: 1
+
+  bundle:
+    name: Assemble and verify relocated bundle
+    needs: [python, debug, release, native-tests]
+    if: >-
+      !cancelled() && (inputs.phase == 'bundle' ||
+      (inputs.phase == 'all' && needs.python.result == 'success' && needs.debug.result == 'success' &&
+      needs.native-tests.result == 'success' && (needs.release.result == 'success' || needs.release.result == 'skipped')))
+    runs-on: ${{ inputs.platform == 'win-x64' && 'windows-2025-vs2026' || 'ubuntu-latest' }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          show-progress: false
+          persist-credentials: false
+
+      - name: Checkout workflow tooling independently of the source ref
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: workflow-tools
+          sparse-checkout: tools/MaaMcpBundle
+          show-progress: false
+          persist-credentials: false
+
+      - name: Fetch MaaUtils for dependency provenance
+        run: bash .github/scripts/sync-optional-submodules.sh --init --depth 1 src/MaaUtils
+
+      - name: Download Python environment
+        uses: actions/download-artifact@v8
+        with:
+          name: MCP-intermediate-python-${{ inputs.platform }}-${{ inputs.configuration }}
+          path: python-artifact
+
+      - name: Download successful test gate
+        uses: actions/download-artifact@v8
+        with:
+          name: MCP-intermediate-tested-${{ inputs.platform }}-${{ inputs.configuration }}
+          path: test-status
+
+      - name: Download selected native runtime
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ inputs.configuration == 'Debug' && format('MCP-intermediate-core-{0}-Debug', inputs.platform) || inputs.runtime_artifact || format('MCP-intermediate-core-{0}-RelWithDebInfo', inputs.platform) }}
+          path: native-artifact
+
+      - name: Restore environments
+        run: |
+          tar -xf python-artifact/python.tar
+          mkdir selected-runtime
+          tar -xf native-artifact/native.tar -C selected-runtime --strip-components=1
+
+      - name: Install selected Core and native licenses
+        env:
+          CORE_VERSION: ${{ inputs.core_version }}
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then py=bundle/python/python.exe; else py=bundle/python/bin/python3; fi
+          "$py" -B workflow-tools/tools/MaaMcpBundle/assemble.py --phase finalize --native-runtime selected-runtime \
+            --output bundle --configuration "$CONFIGURATION" --platform "$TARGET_PLATFORM" \
+            --core-version "$CORE_VERSION" --test-result test-status/tested.json
+
+      - name: Download MaaFramework control unit
+        if: runner.os != 'Windows' || inputs.configuration != 'Debug'
+        uses: robinraju/release-downloader@v1
+        with:
+          repository: MaaXYZ/MaaFramework
+          tag: v5.13.0
+          fileName: ${{ inputs.platform == 'win-x64' && '*win-x86_64*.zip' || '*linux-x86_64*.zip' }}
+          extract: true
+          out-file-path: mcp-framework
+
+      - name: Install fixed-version control unit and license
+        if: runner.os != 'Windows' || inputs.configuration != 'Debug'
+        run: |
+          cp mcp-framework/bin/*AdbControlUnit* bundle/core/
+          mkdir -p bundle/licenses/MaaFramework
+          cp mcp-framework/LICENSE.md bundle/licenses/MaaFramework/
+
+      - name: Install redistributable Windows CRT
+        if: runner.os == 'Windows' && inputs.configuration == 'RelWithDebInfo'
+        shell: pwsh
+        run: ./tools/PrepareMcpRuntime.ps1 -CoreDir bundle/core -Configuration RelWithDebInfo
+
+      - name: Archive the bundle
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            bundle/python/python.exe -I -B -c "import os, shutil; shutil.make_archive(os.environ['BUNDLE_NAME'], 'zip', 'bundle')"
+            sha256sum "$BUNDLE_NAME.zip" > "$BUNDLE_NAME.zip.sha256"
+          else
+            tar -czf "$BUNDLE_NAME.tar.gz" -C bundle .
+            sha256sum "$BUNDLE_NAME.tar.gz" > "$BUNDLE_NAME.tar.gz.sha256"
+          fi
+
+      - name: Extract into a different directory
+        env:
+          RELOCATED: ${{ runner.temp }}/MCP relocated
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then py=bundle/python/python.exe; else py=bundle/python/bin/python3; fi
+          "$py" -I -B - <<'PY'
+          import os
+          import shutil
+          from pathlib import Path
+
+          suffix = ".zip" if os.name == "nt" else ".tar.gz"
+          shutil.unpack_archive(os.environ["BUNDLE_NAME"] + suffix, os.environ["RELOCATED"])
+          Path("bundle").rename("bundle-original")
+          PY
+
+      - name: Prepare local Debug CRT for relocated Windows bundle
+        if: runner.os == 'Windows' && inputs.configuration == 'Debug'
+        shell: pwsh
+        run: ./tools/PrepareMcpRuntime.ps1 -CoreDir "${{ runner.temp }}/MCP relocated/core"
+
+      - name: Verify relocated bundle without uv or system Python
+        env:
+          RELOCATED: ${{ runner.temp }}/MCP relocated
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then py="$RELOCATED/python/python.exe"; else py="$RELOCATED/python/bin/python3"; fi
+          "$py" -I -B "$RELOCATED/run_mcp.py" --check
+          "$py" -I -B "$RELOCATED/run_mcp.py" --help
+          if [[ "$CONFIGURATION" == "Debug" ]]; then
+            "$py" -I -B "$RELOCATED/run_mcp.py" --self-test
+          fi
+
+      - name: Upload the verified bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.BUNDLE_NAME }}
+          path: ${{ env.BUNDLE_NAME }}.*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

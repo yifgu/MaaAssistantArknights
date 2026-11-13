@@ -1,0 +1,110 @@
+name: Battle MCP Core
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        default: ""
+      configuration:
+        type: string
+        required: true
+      platform:
+        type: string
+        required: true
+      core_version:
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Core (${{ inputs.configuration }})
+    runs-on: ${{ inputs.platform == 'win-x64' && 'windows-2025-vs2026' || 'ubuntu-latest' }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      BUILD_CONFIGURATION: ${{ inputs.configuration }}
+      TARGET_PLATFORM: ${{ inputs.platform }}
+      CMAKE_PRESET: ${{ inputs.platform == 'win-x64' && 'windows-x64' || 'linux-x64' }}
+      CORE_VERSION: ${{ inputs.core_version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          show-progress: false
+          persist-credentials: false
+
+      - name: Checkout workflow tooling independently of the source ref
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: workflow-tools
+          sparse-checkout: |
+            .github/actions/setup-maadeps
+            tools/MaaMcpBundle
+          show-progress: false
+          persist-credentials: false
+
+      - name: Fetch submodules
+        run: bash .github/scripts/sync-optional-submodules.sh --init --depth 1 src/MaaUtils 3rdparty/EmulatorExtras
+
+      - name: Set up MaaDeps
+        uses: ./workflow-tools/.github/actions/setup-maadeps
+        with:
+          triplet: ${{ inputs.platform == 'win-x64' && 'x64-windows' || 'x64-linux' }}
+
+      - name: Configure and build Core
+        run: |
+          case "$TARGET_PLATFORM" in win-x64|linux-x64) ;; *) exit 1 ;; esac
+          case "$BUILD_CONFIGURATION" in Debug|RelWithDebInfo) ;; *) exit 1 ;; esac
+          version="${CORE_VERSION:-$(git rev-parse HEAD)}"
+          tests=OFF
+          targets=(MaaCore)
+          if [[ "$BUILD_CONFIGURATION" == "Debug" ]]; then
+            tests=ON
+            targets+=(MaaMcpPauseEvidenceTest)
+          fi
+          cmake --preset "$CMAKE_PRESET" -B build-mcp \
+            -DBUILD_WPF_GUI=OFF -DBUILD_DEBUG_DEMO=OFF -DBUILD_RESOURCE_UPDATER=OFF \
+            -DINSTALL_RESOURCE=ON -DINSTALL_PYTHON=OFF -DMAA_HASH_VERSION="$version" -DBUILD_MCP_TESTS="$tests"
+          cmake --build build-mcp --config "$BUILD_CONFIGURATION" --target "${targets[@]}" \
+            --parallel "$([[ "$RUNNER_OS" == "Windows" ]] && echo 2 || echo 3)"
+          cmake --install build-mcp --config "$BUILD_CONFIGURATION" --prefix "$PWD/native/install"
+          python workflow-tools/tools/MaaMcpBundle/native_runtime.py --build build-mcp --runtime native \
+            --platform "$TARGET_PLATFORM" --configuration "$BUILD_CONFIGURATION"
+
+      - name: Archive native runtime before installing local Debug CRT
+        run: tar -cf native.tar native
+
+      - name: Prepare local Windows Debug CRT for testing
+        if: runner.os == 'Windows' && inputs.configuration == 'Debug'
+        shell: pwsh
+        run: ./tools/PrepareMcpRuntime.ps1 -CoreDir build-mcp/bin/Debug
+
+      - name: Test native pause evidence in Debug
+        if: inputs.configuration == 'Debug'
+        run: ctest --test-dir build-mcp -C Debug --output-on-failure --output-junit "$PWD/native-tests.xml"
+
+      - name: Upload native test diagnostics on failure
+        if: failure() && inputs.configuration == 'Debug'
+        uses: actions/upload-artifact@v7
+        with:
+          name: MCP-TestResults-cpp-${{ inputs.platform }}
+          path: native-tests.xml
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Upload native runtime
+        uses: actions/upload-artifact@v7
+        with:
+          name: MCP-intermediate-core-${{ inputs.platform }}-${{ inputs.configuration }}
+          path: native.tar
+          if-no-files-found: error
+          compression-level: 1
+          retention-days: 1

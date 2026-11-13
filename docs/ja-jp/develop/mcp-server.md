@@ -31,7 +31,7 @@ Windows x64 では `linux-x64` を `windows-x64` に、macOS では `macos-arm64
 - `RelWithDebInfo`：既定の完全な実行パッケージ。Python、uv、ADB、Visual Studio の別途インストールは不要です。
 - `Debug`：開発・テスト用。Linux はそのまま実行でき、Windows は再配布できない Debug CRT をローカルで用意する必要があります。
 
-どちらも先に Debug Core をビルドして全テストを実行し、その後に選択した構成をパッケージ化します。GUI のビルドや Release 公開は行いません。
+どちらの構成も Debug Core の全テストに合格してから完全なパッケージをアップロードします。Python 環境と純粋な Python テスト、Debug Core、単独ビルドで必要な `RelWithDebInfo` Core は別々のジョブで並列実行し、Debug 構成の Core は一度だけコンパイルします。このワークフローでは GUI のビルドや Release 公開は行いません。
 
 `platform` の既定値は `all` です。`win-x64` または `linux-x64` を選ぶと必要なプラットフォームだけをビルドし、runner の重複使用を避けられます。
 
@@ -40,6 +40,8 @@ gh workflow run mcp-build.yml --ref <branch> -f configuration=RelWithDebInfo -f 
 ```
 
 関連 PR では引き続き Release Pipeline から同じ `Battle MCP` ジョブを実行します。`.github/workflows/mcp-build.yml` は通常と Nightly で引き続き共用します。既存の **Release Pipeline → Run workflow** も利用できます。`mcp_only` を有効にして `mcp_configuration` と `mcp_platform` を選び、全体ビルドが必要な場合は `mcp_only` を無効にしてください。手動 MCP ビルドは同じブランチの PR ビルドにキャンセルされません。
+
+全体の Release Pipeline の `RelWithDebInfo` MCP ジョブは、GUI、CLI、他のプラットフォームを待たず、同じ実行の対応プラットフォームの x64 ネイティブランタイムを再利用します。単独ビルド、`mcp_only`、Nightly は Core を個別にビルドします。再利用前にソースコミット、プラットフォーム、構成、ビルドオプション、依存関係、Core バージョンを検証し、`BUILD-INFO.json` にソースコミットと実際の Core バージョンを記録します。MCP の ADB ControlUnit は引き続き MaaFramework `v5.13.0` に固定し、Linux リリースの latest 版を混在させません。テストには所要時間と JUnit レポートを出力し、失敗時は診断成果物を保存します。`MCP-intermediate-*` と `MAARuntime-*` は短期間の内部成果物であり、実行可能な MCP パッケージではありません。
 
 成功した実行の **Artifacts** から `MAAMcp-win-x64-RelWithDebInfo` または `MAAMcp-linux-x64-RelWithDebInfo`（Debug 選択時は `-Debug`）を取得し、同名の `.zip` または `.tar.gz` を展開します。`core/`（Core、ネイティブ依存、リソース、ADB ControlUnit）、`python/`（独立した Python とロック済みの全実行・テスト依存）、`adb/`、起動スクリプト、ソースとテスト、wheel/sdist、依存ライセンス、コミットと実行 URL を記録した `BUILD-INFO.json`、SHA-256 が含まれます。Windows 実行パッケージには再配布可能な VC++ CRT も同梱されます。チェックアウト、再ビルド、オンラインでの Python パッケージインストールは不要です。Linux は互換性のある x64 OS とシステム glibc が必要であり、コンテナーや OS 自体は含みません。
 

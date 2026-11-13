@@ -1,0 +1,29 @@
+name: Set up MaaDeps
+description: Restore exact target dependencies for the checked-out MaaUtils revision
+inputs:
+  triplet:
+    description: MaaDeps target triplet without the maa- prefix
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Identify MaaUtils revision
+      id: revision
+      shell: bash
+      run: echo "revision=$(git -C src/MaaUtils rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+    - name: Cache MaaDeps
+      id: cache
+      uses: actions/cache@v6
+      continue-on-error: true
+      with:
+        path: src/MaaUtils/MaaDeps
+        key: maadeps-v2-${{ runner.os }}-${{ inputs.triplet }}-${{ steps.revision.outputs.revision }}-${{ hashFiles('tools/maadeps-download.py', 'src/MaaUtils/tools/maadeps_download.py', 'src/MaaUtils/tools/maadeps_extract.py') }}
+
+    - name: Bootstrap MaaDeps
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        DEPS_TRIPLET: ${{ inputs.triplet }}
+      run: python3 tools/maadeps-download.py "$DEPS_TRIPLET"
