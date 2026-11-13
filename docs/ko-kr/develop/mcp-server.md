@@ -172,7 +172,7 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 
 `battle_identify`는 `identified_count`, `unresolved_count`, `ambiguous_count`와 카드별 `identity_reason`을 반환합니다. 이름이 빈 캐시 항목은 더 이상 상세 OCR을 억제하지 않습니다. 다른 행동이 `outcome_unknown`을 반환하면 MCP `isError=true`이며 `helper_returned=true` 또는 `action_returned=true`도 게임 내 성공을 증명하지 않습니다. 새 증거를 확인하고 무작정 재시도하지 마세요. 위치 출처는 `action_history_unverified`, 적 상태는 null이며 모델의 직접 상태 덮어쓰기는 지원하지 않습니다. 별도의 일시 정지 요청은 정지 확인이 아니며 재개는 이 서버가 요청하거나 명시적으로 인계한 정지에만 허용됩니다.
 
-모든 명령의 `timeout_ms` 상한은 30000입니다. 일반 명령 시간 초과/취소 시 worker를 종료하고 세션을 무효화하여 미확인 결과를 저장합니다. step은 정지 정리를 기다리지만 기기 장애 시 정지를 보장하지 않습니다. `battle_close`는 일반 명령을 중단하거나 step 정리를 기다리며 자체적으로 게임을 정지/종료하지 않습니다. `battle_get_operation`은 영구 결과를 읽고 저장 실패는 명시적으로 알리며 이 서비스의 후속 명령을 차단합니다. `--user-dir`에 로그와 `operations.sqlite3`를 저장하고 일반 이미지는 최근 128장, 중요 증거는 별도 보관하므로 직접 정리해야 합니다.
+일반 명령의 `timeout_ms` 상한은 30000이며 아래 전투 전 일괄 확인은 별도 상한을 사용합니다. 일반 명령 시간 초과/취소 시 worker를 종료하고 세션을 무효화하여 미확인 결과를 저장합니다. step은 정지 정리를 기다리지만 기기 장애 시 정지를 보장하지 않습니다. `battle_close`는 일반 명령을 중단하거나 step/전투 전 확인 정리를 기다리며 자체적으로 게임을 정지/종료하지 않습니다. `battle_get_operation`은 영구 결과를 읽고 저장 실패는 명시적으로 알리며 이 서비스의 후속 명령을 차단합니다. `--user-dir`에 로그와 `operations.sqlite3`를 저장하고 일반 이미지는 최근 128장, 중요 증거는 별도 보관하므로 직접 정리해야 합니다.
 
 ## 선택적 정보 서버
 
@@ -247,6 +247,25 @@ PRTS는 `{"provider":"prts","command":"prts-mcp","region":"cn"}`으로 설정할
 `skill_ready`는 true 또는 null이며 분류기 부정을 확인된 쿨다운으로 취급하지 않습니다. `skill_evidence`는 동일 프레임 ID, 시각, ROI, 기준점, 분류 점수와 확률을 보존합니다. 발동 단계/탄약/쿨다운은 미확인일 수 있고 점수는 보정된 정확도가 아닙니다. `asst.log`의 `Battle frame` / `Battle command result`, `battle-control/<session>/`의 PNG, `operations.sqlite3`를 보관하세요. 합성 회귀는 실제 OCR, ROI, 버튼 호환성 확인이 아니므로 로컬 재검증이 필요하지만 로컬 이미지를 클라우드 개발의 필수 입력으로 요구하지 않습니다.
 
 연결 후 attach 전에 `battle_observe_preparation(stage_name, mode)`로 수동으로 연 편성 화면을 입력 없이 읽습니다. 이름, 후보 ID, 이름 영역과 증거를 반환하며 선택 스킬, 육성 상태, 지원 여부는 미확인이고 상세 화면을 열지 않습니다. 최신 결과를 `battle_attach(..., preparation_id=..., confirm_preparation_unchanged=true)`로 연결합니다. 이는 호출자의 재확인이지 지속적인 시각 검증이 아닙니다. 편성/스킬/스테이지/계정 변경 후 `battle_invalidate_preparation`을 호출하고 다시 수집하세요. 재수집, 연결 소비, 종료 후에는 이전 결과를 재사용할 수 없고 현장 식별 불일치는 `decision_context.preparation`에 충돌로 기록됩니다.
+
+네이티브 일괄 확인은 별도의 **변경 도구** `battle_inspect_preparation`을 한 번 호출합니다.
+
+```json
+{
+  "request": {
+    "operation_id": "preparation-001",
+    "stage_name": "main_01-07",
+    "mode": "normal",
+    "timeout_ms": 120000
+  }
+}
+```
+
+Core는 레벨 표시로 점유 슬롯을 찾고 이름을 읽지 못한 항목도 유지하며 레벨 OCR과 정예 1/2의 명확한 템플릿을 읽습니다. 이후 유일하게 식별된 일반 멤버의 초상화를 순서대로 열고 상세 화면의 이름을 확인한 다음 스킬 탭만 열어 횟수 제한 안에서 스크롤합니다. 완전하고 순서가 확인된 목록에서 선택 표시가 하나일 때만 `selected_skill=1|2|3`을 반환합니다. `equipped_skill_id`는 유일한 신원과 `battle_data.json`의 순서 있는 `skillIds`도 필요하며 정적 ID만으로 실제 장착을 판정하지 않습니다. 오퍼레이터 선택 카드, 스킬 선택지, 편성 확정, 시작 버튼은 누르지 않습니다. 지원 상세는 아직 건너뛰며 정예 템플릿 미검출은 null이고 **정예 0으로 추정하지 않습니다**. 레벨 실패도 1로 대체하지 않습니다. 빈 슬롯은 멤버가 아니며 레벨 표시 미검출은 편성 전체의 완전성을 증명하지 않습니다.
+
+`snapshot.scan_status=complete|partial`, 멤버별 `fields`(값, 출처, 검증, 이유, ROI, 프레임 증거), `evidence_frames`, `formation_restored`, `roster_unchanged`, `preparation_valid`를 확인하세요. complete는 검출한 멤버만 포함하며 partial은 완전한 구성을 뜻하지 않습니다. PNG 경로와 캡처 시각은 원본 프레임에 대응하고 선택 스킬에는 프레임 간 스크롤 순서도 포함됩니다. 기본 기한은 120000 ms, **최대 180000 ms**로 일반 명령의 30000 ms와 다릅니다. 취소/닫기는 Core에 알리고 제한된 정리를 기다립니다. 이름이 일치하는 확인된 상세 화면에서만 원래 기한 내 뒤로 가기를 한 번 허용하며 미확인 화면은 무작정 닫지 않습니다. 작업자 실패 시 복구 상태는 미확인입니다. 같은 작업 ID에는 같은 인수만 사용하세요. 재요청은 원래 증거만 반환하며 화면 이동이나 무효 스냅샷 재활성화를 하지 않습니다. attach 전 영구 결과는 `battle_status.preparation_session_id`로 `battle_get_operation`에서 조회합니다.
+
+유효한 최신 결과만 기존의 명시적 재확인 attach에 사용할 수 있습니다. 새 관측은 이전 연결을 무효화하며 화면/편성 변경, 증거 저장 실패, 중단된 스캔은 유효한 연결을 만들지 않습니다. `decision_context.preparation.observed_fields`는 네이티브 관측을 입력된 구성과 분리해 유지하고 충돌을 기록하지만 어느 쪽도 덮어쓰지 않습니다. 이는 전투 전 측정이지 계정/스테이지/구성의 지속 검증이나 실시간 전투 측정이 아닙니다. 기존 리소스를 재사용하는 인식기는 합성 Debug Core 회귀가 있지만 **실기기 검증은 아닙니다**. 실제 화면 배치와 선택 표시 호환성은 로컬에서 확인해야 합니다.
 
 일반 드래그 배치 방식이 확인된 소환 카드만 시작 시 `--allow-summon GAME_ID`를 반복 지정해 허용합니다. `battle_step(action="deploy")`에는 기존 인수 외에 관측한 `card_id`가 필요하며 유일하고 사용 가능하며 위치가 같고 30초 이내인 카드여야 합니다. 매 시도마다 독립적인 `instance:<operation_id>`를 만들고 동명 개체를 덮어쓰지 않습니다. 위치/생존은 미검증 행동 이력이고 미확인 소멸로 타일을 자동 해제하지 않습니다. 개체 스킬/퇴각, 모호한 카드, 미허용 장치는 거부하며 helper 반환값은 배치 성공 증거가 아닙니다.
 

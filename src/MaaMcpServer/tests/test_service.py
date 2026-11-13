@@ -11,6 +11,7 @@ from maa_battle_mcp.models import (
     IdentifyRequest,
     OperationRequest,
     PauseRequest,
+    PreparationRequest,
     SpeedRequest,
 )
 from maa_battle_mcp.native import NativeError
@@ -109,6 +110,59 @@ async def test_preparation_binding_requires_current_snapshot_and_confirmation(se
     finally:
         await service.close()
         service.journal.close()
+
+
+async def test_batch_preparation_replay_never_revalidates_or_navigates(settings):
+    class PreparationBackend(FakeBackend):
+        def request(self, operation, payload, timeout):
+            if operation == "preparation":
+                self.calls.append((operation, payload, timeout))
+                return {
+                    "status": "succeeded",
+                    "preparation_valid": True,
+                    "formation_restored": True,
+                    "snapshot": {"operators": [], "scan_status": "partial"},
+                }
+            return super().request(operation, payload, timeout)
+
+    backend = PreparationBackend()
+    service = BattleService(settings, lambda _: backend)
+    request = PreparationRequest(
+        operation_id="batch", stage_name="main_01-07", mode="normal"
+    )
+    try:
+        with pytest.raises(BattleError, match="requires a connection"):
+            await service.inspect_preparation(request)
+        await service.connect()
+        first = await service.inspect_preparation(request)
+        assert service.preparation_snapshot == first
+        assert first["binding"]["source"] == "caller_supplied"
+        assert backend.calls[-1][2] == 130
+        await service.invalidate_preparation()
+        assert await service.inspect_preparation(request) == first
+        assert service.preparation_snapshot is None
+        assert len([c for c in backend.calls if c[0] == "preparation"]) == 1
+        changed = request.model_copy(update={"mode": "challenge"})
+        with pytest.raises(BattleError, match="different parameters"):
+            await service.inspect_preparation(changed)
+        latest = await service.inspect_preparation(
+            request.model_copy(update={"operation_id": "new"})
+        )
+        await service.attach("main_01-07", "normal", latest["preparation_id"], True)
+        assert service.decision.preparation == latest
+        with pytest.raises(BattleError, match="without an attached battle"):
+            await service.inspect_preparation(request)
+    finally:
+        await service.close()
+        service.journal.close()
+
+
+@pytest.mark.parametrize("timeout", [0, 180_001, True, "120000"])
+def test_batch_preparation_rejects_invalid_deadlines(timeout):
+    with pytest.raises(ValidationError):
+        PreparationRequest(
+            operation_id="batch", stage_name="stage", mode="normal", timeout_ms=timeout
+        )
 
 
 async def test_journal_failure_is_explicit_and_never_replays(connected, monkeypatch):

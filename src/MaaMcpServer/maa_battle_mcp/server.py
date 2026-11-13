@@ -22,6 +22,7 @@ from .models import (
     IntelligenceConfig,
     PauseRequest,
     Placement,
+    PreparationRequest,
     RawIntelligenceConfig,
     Settings,
     SpeedRequest,
@@ -112,6 +113,7 @@ def create_server(
             {
                 "connected": service.backend is not None,
                 "session_id": service.session_id,
+                "preparation_session_id": service.preparation_session_id,
                 **service.diagnostics(),
                 "intelligence_configured": intelligence is not None,
                 "loadout_configured": service.decision.config is not None,
@@ -155,6 +157,11 @@ def create_server(
     ) -> CallToolResult:
         """Before attach, read the manually opened formation page without input. Only names are recognized; skills/configuration remain unknown."""
         return evidence_result(await service.prepare(stage_name, mode), "image_path")
+
+    @server.tool(annotations=MUTATING)
+    async def battle_inspect_preparation(request: PreparationRequest) -> CallToolResult:
+        """Before attach, inspect the current roster in one bounded native transaction. Opens details and scrolls, never selects operators/skills or starts battle. Unknown/ambiguous fields stay null; inspect scan_status, evidence_frames and formation_restored."""
+        return evidence_result(await service.inspect_preparation(request), "image_path")
 
     @server.tool(annotations=MUTATING)
     async def battle_invalidate_preparation() -> CallToolResult:
