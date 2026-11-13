@@ -51,6 +51,7 @@
 
 ## 文档维护
 
+- 对外接口有重大变更时，必须在同一改动中更新根目录 `README.md`，同步本仓库相对于上游的差异、当前能力、使用入口与限制；包括 MCP 工具或 Core 协议的新增／删除、请求或返回结构、兼容性、安全语义，以及启动配置或打包接入方式的重大变化。涉及具体参数或流程时，同时更新对应接口文档及已有五语言段落；只记录已实现能力，不将未合并 PR、计划功能或合成测试描述为已支持或已实机验收。
 - 全仓库 Markdown 由 markdownlint 检查和自动修复，配置位于根目录 `.markdownlint-cli2.yaml`；Prettier 不再处理 Markdown，但根目录 `.prettierrc` 与 `docs/.prettierrc.cjs` 保留相同的 Markdown 显式选项，维护时须同步。可表达的样式对齐 Prettier：ATX 标题、`-` 无序列表、`---` 分隔线、`_强调_`、`**加粗**`、表格两侧竖线。表格仍使用 `MD060: compact` 紧凑样式；CHANGELOG 保持以二级版本标题开头，根目录 CHANGELOG 沿用发布模板的 `*` 列表与 `----` 分隔线。`proseWrap: preserve` 不限制正文行长，不能将 `printWidth: 120` 当作 `MD013` 的硬限制。
 - 改任一语言后同步其余四语言（zh-cn/zh-tw/en-us/ja-jp/ko-kr）的对应段落（行号未必对应）：语义一致即可，某语言本就缺段落则保持现状但提示。
 - 文档中的 UI 均指 WPF UI，修改时不必处理 Avalonia（MAAUnified）等社区实现的相关描述；明日方舟 PC 端不进文档。

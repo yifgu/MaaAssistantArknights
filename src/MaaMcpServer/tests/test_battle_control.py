@@ -1429,9 +1429,19 @@ async def test_summon_instances_and_replay_are_separate(battle):
     assert denied.structuredContent["error"]["code"] == "unsupported_instance_action"
 
 
-@pytest.mark.parametrize("battle", [False, "localized_split_ocr"], indirect=True)
-async def test_wait_cancel_reaches_core_and_preserves_pause(battle):
+@pytest.mark.parametrize(
+    "battle, paused_capture_delay",
+    [(False, 4.1), ("localized_split_ocr", 0)],
+    indirect=["battle"],
+)
+async def test_wait_cancel_reaches_core_and_preserves_pause(
+    battle, paused_capture_delay
+):
     service, _, root = battle
+    if paused_capture_delay:
+        (root / "capture-delay").write_text(
+            json.dumps({"paused": paused_capture_delay})
+        )
     task = asyncio.create_task(wait_step(battle, duration_ms=8_000, timeout_ms=30_000))
     try:
         async with asyncio.timeout(30):
@@ -1445,7 +1455,17 @@ async def test_wait_cancel_reaches_core_and_preserves_pause(battle):
         assert result["status"] == "failed"
         assert result["error"]["code"] == "cancelled"
         assert result["pause_verified"] is True
-        assert result["actual_observed_envelope_ms"] < 8_000
+        assert result["capture_time_snapshot"]["scene"] == "running"
+        assert result["return_time_snapshot"]["scene"] == "paused"
+        # Cancellation must stop wait sampling, not bound OCR and evidence cleanup.
+        assert result["samples"] == []
+        if paused_capture_delay:
+            assert result["actual_observed_envelope_ms"] >= 8_000
+        assert [
+            e["action"]
+            for e in events(root)
+            if e["action"] in ("pause", "resume", "click", "swipe")
+        ] == ["resume", "pause"]
     finally:
         if not task.done():
             task.cancel()
