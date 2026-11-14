@@ -742,7 +742,7 @@ bool asst::AdbController::screencap(cv::Mat& image_payload, bool allow_reconnect
         clear_lf_info();
 
         auto start_time = steady_clock::now();
-        if (m_support_socket && m_server_started &&
+        if (!m_adb.screencap_raw_by_nc.empty() && m_support_socket && m_server_started &&
             screencap(m_adb.screencap_raw_by_nc, decode_raw, allow_reconnect, true, 5000) == ScreencapResult::Success) {
             auto duration = duration_cast<milliseconds>(steady_clock::now() - start_time);
             if (duration < min_cost) {
@@ -760,8 +760,9 @@ bool asst::AdbController::screencap(cv::Mat& image_payload, bool allow_reconnect
         clear_lf_info();
 
         start_time = steady_clock::now();
-        if (screencap(m_adb.screencap_raw_with_gzip, decode_raw_with_gzip, allow_reconnect) ==
-            ScreencapResult::Success) {
+        if (!m_adb.screencap_raw_with_gzip.empty() &&
+            screencap(m_adb.screencap_raw_with_gzip, decode_raw_with_gzip, allow_reconnect) ==
+                ScreencapResult::Success) {
             auto duration = duration_cast<milliseconds>(steady_clock::now() - start_time);
             if (duration < min_cost) {
                 fastest_method = AdbProperty::ScreencapMethod::RawWithGzip;
@@ -778,7 +779,8 @@ bool asst::AdbController::screencap(cv::Mat& image_payload, bool allow_reconnect
         clear_lf_info();
 
         start_time = steady_clock::now();
-        if (screencap(m_adb.screencap_encode, decode_encode, allow_reconnect) == ScreencapResult::Success) {
+        if (!m_adb.screencap_encode.empty() &&
+            screencap(m_adb.screencap_encode, decode_encode, allow_reconnect) == ScreencapResult::Success) {
             auto duration = duration_cast<milliseconds>(steady_clock::now() - start_time);
             if (duration < min_cost) {
                 fastest_method = AdbProperty::ScreencapMethod::Encode;
@@ -988,6 +990,10 @@ asst::AdbController::ScreencapResult asst::AdbController::screencap(
     bool by_socket,
     int timeout)
 {
+    if (cmd.empty()) {
+        return ScreencapResult::Failed;
+    }
+
     try {
         if ((!m_support_socket || !m_server_started) && by_socket) [[unlikely]] {
             return ScreencapResult::Failed;
@@ -1347,7 +1353,7 @@ bool asst::AdbController::connect(const std::string& adb_path, const std::string
     m_adb.back_to_home = m_conn_ctx.replace_cmd(adb_cfg.back_to_home);
     m_adb.fps = m_conn_ctx.replace_cmd(adb_cfg.fps);
 
-    if (m_support_socket && !m_server_started) {
+    if (!adb_cfg.screencap_raw_by_nc.empty() && m_support_socket && !m_server_started) {
         std::string bind_address;
         if (size_t pos = address.rfind(':'); pos != std::string::npos) {
             bind_address = address.substr(0, pos);
@@ -1358,11 +1364,13 @@ bool asst::AdbController::connect(const std::string& adb_path, const std::string
 
         // reference from
         // https://github.com/ArknightsAutoHelper/ArknightsAutoHelper/blob/master/automator/connector/ADBConnector.py#L436
-        auto nc_address_ret = call_command(m_conn_ctx.replace_cmd(adb_cfg.nc_address));
-        if (nc_address_ret && !m_server_started) {
-            auto& nc_result_str = nc_address_ret.value();
-            if (auto pos = nc_result_str.find(' '); pos != std::string::npos) {
-                m_conn_ctx.nc_address = nc_result_str.substr(0, pos);
+        if (!adb_cfg.nc_address.empty()) {
+            auto nc_address_ret = call_command(m_conn_ctx.replace_cmd(adb_cfg.nc_address));
+            if (nc_address_ret && !m_server_started) {
+                auto& nc_result_str = nc_address_ret.value();
+                if (auto pos = nc_result_str.find(' '); pos != std::string::npos) {
+                    m_conn_ctx.nc_address = nc_result_str.substr(0, pos);
+                }
             }
         }
 

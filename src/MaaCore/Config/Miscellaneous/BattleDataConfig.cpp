@@ -10,17 +10,23 @@ bool asst::BattleDataConfig::load_unit_info(const std::filesystem::path& path)
         return true;
     }
     m_unit_info = json::object();
-    const auto data = json::open(path);
-    if (!data || data->get("schema_version", 0) != 1 || !data->find<json::object>("source") ||
-        !data->find<json::object>("chars") || !data->find<json::object>("skills") ||
-        !data->find<json::object>("ranges")) {
+    auto data = json::open(path);
+    // find<T>() copies the field, including entire nested objects and arrays.
+    using JsonType = json::value::value_type;
+    const auto has_type = [](const json::value& record, const std::string& key, JsonType type) {
+        const auto* field = record.find_value(key);
+        return field && field->type() == type;
+    };
+    if (!data || data->get("schema_version", 0) != 1 || !has_type(*data, "source", JsonType::object) ||
+        !has_type(*data, "chars", JsonType::object) || !has_type(*data, "skills", JsonType::object) ||
+        !has_type(*data, "ranges", JsonType::object)) {
         LogError << __FUNCTION__ << "Invalid unit metadata" << path;
         return false;
     }
     for (const auto& [id, unit] : data->at("chars").as_object()) {
-        if (!unit.is_object() || unit.get("game_id", "") != id || !unit.find<std::string>("entity_kind") ||
-            !unit.find<json::object>("capabilities") || !unit.find<json::array>("skills") ||
-            !unit.find<json::array>("base_attributes")) {
+        if (!unit.is_object() || unit.get("game_id", "") != id || !has_type(unit, "entity_kind", JsonType::string) ||
+            !has_type(unit, "capabilities", JsonType::object) || !has_type(unit, "skills", JsonType::array) ||
+            !has_type(unit, "base_attributes", JsonType::array)) {
             LogError << __FUNCTION__ << "Invalid unit record" << id;
             return false;
         }
@@ -31,7 +37,7 @@ bool asst::BattleDataConfig::load_unit_info(const std::filesystem::path& path)
             }
         }
         for (const auto& phase : unit.at("base_attributes").as_array()) {
-            if (!phase.is_object() || !phase.find<std::string>("range_id")) {
+            if (!phase.is_object() || !has_type(phase, "range_id", JsonType::string)) {
                 LogError << __FUNCTION__ << "Invalid unit base attribute phase" << id;
                 return false;
             }
@@ -39,13 +45,14 @@ bool asst::BattleDataConfig::load_unit_info(const std::filesystem::path& path)
         for (const auto& [key, capability] : unit.at("capabilities").as_object()) {
             if (!capability.is_object() || !capability.contains("value") ||
                 (!capability.at("value").is_null() && !capability.at("value").is_boolean()) ||
-                !capability.find<std::string>("source") || !capability.find<std::string>("reason")) {
+                !has_type(capability, "source", JsonType::string) ||
+                !has_type(capability, "reason", JsonType::string)) {
                 LogError << __FUNCTION__ << "Invalid unit capability" << id << key;
                 return false;
             }
         }
     }
-    m_unit_info = *data;
+    m_unit_info = std::move(*data);
     return true;
 }
 
