@@ -1,4 +1,4 @@
-"""Record and validate same-run native runtimes before reusing them in MCP bundles."""
+"""Validate same-run native runtimes and require all four Debug integration shards."""
 
 import argparse
 import fnmatch
@@ -7,6 +7,8 @@ import json
 import shutil
 import subprocess
 from pathlib import Path
+
+from native_test_shards import verify_shard_results
 
 
 def git(*args: str) -> str:
@@ -174,6 +176,7 @@ def main() -> None:
     parser.add_argument("--verify", action="store_true")
     parser.add_argument("--core-version", default="")
     parser.add_argument("--tested-bundle", type=Path)
+    parser.add_argument("--shard-results", type=Path)
     parser.add_argument("--runtime", type=Path)
     parser.add_argument(
         "--platform",
@@ -185,6 +188,13 @@ def main() -> None:
     )
     args = parser.parse_args()
     if args.tested_bundle:
+        args.tested_bundle.unlink(missing_ok=True)
+        if not args.shard_results:
+            parser.error("--tested-bundle requires --shard-results")
+        passed = verify_shard_results(
+            args.shard_results,
+            test_result(args.platform, args.configuration, args.core_version),
+        )
         args.tested_bundle.write_text(
             json.dumps(
                 test_result(args.platform, args.configuration, args.core_version),
@@ -193,6 +203,7 @@ def main() -> None:
             + "\n",
             encoding="utf-8",
         )
+        print(f"Accepted all four Debug Core shards: {passed} tests passed")
     elif not args.runtime:
         parser.error("--runtime is required when recording or verifying a runtime")
     elif args.verify:

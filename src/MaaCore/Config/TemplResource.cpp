@@ -1,8 +1,8 @@
 #include "TemplResource.h"
 
-#include <array>
 #include <filesystem>
 #include <string_view>
+#include <vector>
 
 #include "MaaUtils/ImageIo.h"
 #include "MaaUtils/NoWarningCV.hpp"
@@ -47,6 +47,14 @@ bool asst::TemplResource::load(const std::filesystem::path& path)
         }
     }
 
+    // Keep the relative-path iteration order within each basename bucket, including duplicate matches.
+    std::unordered_map<std::string_view, std::vector<decltype(relative_path_index)::const_iterator>> basename_index;
+    basename_index.reserve(relative_path_index.size());
+    for (auto iter = relative_path_index.cbegin(); iter != relative_path_index.cend(); ++iter) {
+        const std::string_view relative_path = iter->first;
+        basename_index[relative_path.substr(relative_path.find_last_of('/') + 1)].push_back(iter);
+    }
+
     // 查找
     for (const std::string& name : m_load_required) {
         bool template_found = false;
@@ -57,32 +65,36 @@ bool asst::TemplResource::load(const std::filesystem::path& path)
         std::string search_name = file_path.string();
         std::replace(search_name.begin(), search_name.end(), '\\', '/');
 
-        // 遍历所有文件以检查重复匹配
-        for (const auto& [rel_path, full_path] : relative_path_index) {
-            if (rel_path.ends_with(search_name)) {
-                size_t pos = rel_path.length() - search_name.length();
-                if (pos != 0 && rel_path[pos - 1] != '/') { // path!=, 且不在路径分隔符边界上
+        const std::string_view search_path = search_name;
+        const auto candidates = basename_index.find(search_path.substr(search_path.find_last_of('/') + 1));
+        if (candidates != basename_index.cend()) {
+            for (const auto& iter : candidates->second) {
+                const auto& [rel_path, full_path] = *iter;
+                if (rel_path.ends_with(search_name)) {
+                    size_t pos = rel_path.length() - search_name.length();
+                    if (pos != 0 && rel_path[pos - 1] != '/') { // path!=, 且不在路径分隔符边界上
+                        continue;
+                    }
+                }
+                else {
                     continue;
                 }
-            }
-            else {
-                continue;
-            }
 
-            if (template_found) {
-                Log.error("Templ file exists in multiple paths:", m_templ_paths.at(name), full_path);
+                if (template_found) {
+                    LogError << "Templ file exists in multiple paths:" << m_templ_paths.at(name) << full_path;
 #ifdef ASST_DEBUG
-                file_dumplicate = true;
+                    file_dumplicate = true;
 #else
-                return false;
+                    return false;
 #endif
+                }
+                auto path_iter = m_templ_paths.find(name);
+                if (path_iter == m_templ_paths.end() || path_iter->second != full_path) {
+                    m_templs.erase(name);
+                    m_templ_paths.insert_or_assign(name, full_path);
+                }
+                template_found = true;
             }
-            auto path_iter = m_templ_paths.find(name);
-            if (path_iter == m_templ_paths.end() || path_iter->second != full_path) {
-                m_templs.erase(name);
-                m_templ_paths.insert_or_assign(name, full_path);
-            }
-            template_found = true;
         }
 
         if (!template_found && !m_templ_paths.contains(name)) {

@@ -151,8 +151,12 @@ jobs:
       core_version: ${{ inputs.core_version }}
 
   native-tests:
-    name: Installed wheel against Debug Core
+    name: Debug Core integration shard ${{ matrix.shard }}
     needs: [python, debug]
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     runs-on: ${{ inputs.platform == 'win-x64' && 'windows-2025-vs2026' || 'ubuntu-latest' }}
     timeout-minutes: 90
     defaults:
@@ -206,32 +210,81 @@ jobs:
         shell: pwsh
         run: ./tools/PrepareMcpRuntime.ps1 -CoreDir debug-runtime/install
 
-      - name: Test installed MCP wheel against Debug Core
+      - name: Test installed MCP wheel against Debug Core (verbose, isolated shard)
         env:
+          CORE_VERSION: ${{ inputs.core_version }}
           MAA_MCP_NATIVE_CORE: ${{ github.workspace }}/debug-runtime/install
           MAA_MCP_RESOURCE_DIR: ${{ github.workspace }}/debug-runtime/install
         run: |
           if [[ "$RUNNER_OS" == "Windows" ]]; then py=bundle/python/python.exe; else py=bundle/python/bin/python3; fi
-          "$py" -I -B -m pytest bundle/src/MaaMcpServer/tests/test_native.py \
-            bundle/src/MaaMcpServer/tests/test_battle_control.py \
-            -q -p no:cacheprovider --durations=25 --junitxml=reports/native.xml
+          "$py" -I -B -u workflow-tools/tools/MaaMcpBundle/native_test_shards.py \
+            --shard-index "${{ matrix.shard }}" --report-dir reports \
+            --runtime debug-runtime --platform "$TARGET_PLATFORM" \
+            --configuration "$CONFIGURATION" --core-version "$CORE_VERSION" \
+            bundle/src/MaaMcpServer/tests/test_native.py \
+            bundle/src/MaaMcpServer/tests/test_battle_control.py
 
-      - name: Upload integration test diagnostics on failure
-        if: failure()
+      - name: Upload shard collection, durations, and test diagnostics
+        if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: MCP-TestResults-native-${{ inputs.platform }}-${{ inputs.configuration }}
+          name: MCP-TestResults-native-${{ inputs.platform }}-${{ inputs.configuration }}-shard-${{ matrix.shard }}
           path: reports/
           if-no-files-found: ignore
           retention-days: 14
 
-      - name: Record successful Debug and installed-wheel test gate
+      - name: Upload completed passing shard receipt
+        uses: actions/upload-artifact@v7
+        with:
+          name: MCP-intermediate-native-shard-${{ inputs.platform }}-${{ inputs.configuration }}-${{ matrix.shard }}
+          path: reports/shard-${{ matrix.shard }}.json
+          if-no-files-found: error
+          retention-days: 1
+
+  tested:
+    name: Require all four Debug Core integration shards
+    needs: [native-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          show-progress: false
+          persist-credentials: false
+
+      - name: Checkout workflow tooling independently of the source ref
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: workflow-tools
+          sparse-checkout: tools/MaaMcpBundle
+          show-progress: false
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Download all successful shard receipts from this run
+        uses: actions/download-artifact@v8
+        with:
+          pattern: MCP-intermediate-native-shard-${{ inputs.platform }}-${{ inputs.configuration }}-*
+          path: shard-results
+          merge-multiple: true
+
+      - name: Verify complete disjoint test coverage before recording the platform gate
         env:
           CORE_VERSION: ${{ inputs.core_version }}
         run: |
-          if [[ "$RUNNER_OS" == "Windows" ]]; then py=bundle/python/python.exe; else py=bundle/python/bin/python3; fi
-          "$py" -B workflow-tools/tools/MaaMcpBundle/native_runtime.py --tested-bundle tested.json \
-            --platform "$TARGET_PLATFORM" --configuration "$CONFIGURATION" --core-version "$CORE_VERSION"
+          python -B workflow-tools/tools/MaaMcpBundle/native_runtime.py --tested-bundle tested.json \
+            --shard-results shard-results --platform "$TARGET_PLATFORM" \
+            --configuration "$CONFIGURATION" --core-version "$CORE_VERSION"
 
       - name: Upload successful test gate
         uses: actions/upload-artifact@v7
@@ -243,11 +296,11 @@ jobs:
 
   bundle:
     name: Assemble and verify relocated bundle
-    needs: [python, debug, release, native-tests]
+    needs: [python, debug, release, tested]
     if: >-
       !cancelled() && (inputs.phase == 'bundle' ||
       (inputs.phase == 'all' && needs.python.result == 'success' && needs.debug.result == 'success' &&
-      needs.native-tests.result == 'success' && (needs.release.result == 'success' || needs.release.result == 'skipped')))
+      needs.tested.result == 'success' && (needs.release.result == 'success' || needs.release.result == 'skipped')))
     runs-on: ${{ inputs.platform == 'win-x64' && 'windows-2025-vs2026' || 'ubuntu-latest' }}
     timeout-minutes: 90
     defaults:
