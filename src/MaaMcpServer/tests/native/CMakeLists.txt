@@ -10,6 +10,11 @@ add_executable(MaaMcpResourceLoadingTest
     ${PROJECT_SOURCE_DIR}/src/MaaCore/Config/AbstractConfig.cpp)
 target_include_directories(MaaMcpResourceLoadingTest PRIVATE ${PROJECT_SOURCE_DIR}/src/MaaCore)
 target_link_libraries(MaaMcpResourceLoadingTest PRIVATE HeaderOnlyLibraries MaaUtils ${OpenCV_LIBS})
+if(WIN32)
+    target_sources(MaaMcpResourceLoadingTest PRIVATE
+        ${PROJECT_SOURCE_DIR}/src/MaaCore/Utils/Platform/PlatformWin32.cpp)
+    target_compile_definitions(MaaMcpResourceLoadingTest PRIVATE _UNICODE UNICODE)
+endif()
 add_test(NAME MaaMcpResourceLoadingTest COMMAND MaaMcpResourceLoadingTest)
 
 add_custom_target(MaaMcpNativeTests DEPENDS MaaMcpPauseEvidenceTest MaaMcpResourceLoadingTest)
