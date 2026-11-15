@@ -134,7 +134,9 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 }
 ```
 
-`battle_connect`, `battle_attach(stage_name="main_01-07")`, `battle_capture_evidence`, `battle_observe` 순서로 호출합니다. 스테이지 ID는 실제 화면과 일치해야 합니다. 맵 지정은 호출자가 제공하며 자동 인식이 아닙니다. `battle_get_map`은 정적 타일과 두 가지 화면 투영을 반환합니다. 알 수 없는 이름은 null입니다. `battle_identify`는 상세 화면을 열어 인식하며 일시 정지를 요청합니다. 이후 스크린샷을 확인하고 `battle_set_paused(paused=false)`로 명시적으로 재개하세요.
+`battle_connect`, `battle_attach(stage_name="main_01-07")`, `battle_capture_evidence`, `battle_observe` 순서로 호출합니다. 스테이지 ID는 실제 화면과 일치해야 합니다. 맵 지정은 호출자가 제공하며 자동 인식이 아닙니다. `battle_get_map`은 정적 타일, 두 가지 화면 투영과 실시간 픽셀 변화를 반환합니다. 알 수 없는 이름은 null입니다. `battle_identify`는 상세 화면을 열어 인식하며 일시 정지를 요청합니다. 이후 스크린샷을 확인하고 `battle_set_paused(paused=false)`로 명시적으로 재개하세요.
+
+`battle_get_map`의 MCP 이미지는 현재 PNG(`image_path`), 기준 PNG(`baseline_image_path`) 순서입니다. 경로가 같으면 한 장만 첨부하며 유효한 기준이 없으면 기준 이미지를 첨부하지 않습니다. 호스트가 Core 파일 시스템에 직접 접근하지 않고 재인식할 수 있습니다. 변화 필드와 제한은 아래에 설명합니다.
 
 수동 정지를 인계하려면 `battle_identify`의 엄격한 boolean 인수 `request.adopt_manual_pause=true`가 필요하며 기본값은 false입니다. 재개를 허용하지는 않습니다. Core는 명확한 정지 증거를 요구합니다. 실행 버튼이 없다는 이유만으로 정지로 판단하지 않고 입장 제목 전환도 인계하지 않습니다. 정지 상태에서 카드를 확인하고 부분 OCR에서도 `pause_verified`, `safe_state`, 같은 프레임의 `snapshot` / `image_path`와 PNG를 반환합니다. 저장 실패는 `evidence_error`에 기록하며 취소나 worker 장애로 최종 증거를 얻지 못해도 자동 재개하지 않습니다.
 
@@ -297,7 +299,13 @@ C++ 타입으로 presence, 위치 증거 및 작업 상태를 분리합니다. �
 
 이전 `battle_deploy`는 선택적 `card_id`를 받으며 이전 배치/퇴각/스킬 진입점도 동일 유한 사전 검사 및 일시정지 정리를 사용합니다. 시작 시 실행 중 전투가 필요하고 능력/개체/위치 검사를 우회할 수 없습니다. 선택 타일 anchor 없는 일반 오퍼레이터 스킬/퇴각도 미검증 이력으로 실행하지 않고 거부합니다.
 
-TL/TL-EX는 `act55side_*` ID를 사용합니다(예: `act55side_ex01`, `TL-EX-1` 아님). ｢自爆榴弹｣(폭발하는 스테이지 장치) `trap_341_dsjtzd`는 오프라인 조회 가능하며 기본 비용 20, 재배치 20초, 범위 `x-4`, 나열된 스킬 없음, 재능 blackboard 기절 5초입니다. **재배치 시간은 폭발 카운트다운이 아닙니다.** 원본 표는 드래그/퇴각 정책을 증명하지 않습니다. 폭발, 확실한 소멸 및 翻板 변화의 검증된 실제 이미지 규칙이 없어 동적 overlay는 unknown/unsupported이고 TL 배치는 `dynamic_terrain_unknown`입니다. 예상 시간으로 정적 지도를 바꾸지 않으며 TL 완전 루프 또는 실기기 합격을 주장하지 않습니다.
+TL/TL-EX는 `act55side_*` ID를 사용합니다(예: `act55side_ex01`, `TL-EX-1` 아님). 도전 모드는 `act55side_ex01#f#`와 명시적인 `mode="challenge"`를 사용합니다. 이제 스테이지 전체의 배치를 거부하지 않고 대상 타일의 불변 규칙을 확인합니다. 지원되는 저지대 `tile_road`/`tile_fence_bound`/`tile_infection`은 기존 배치 유형 검사를 유지하며, `tile_trench`는 판자의 유무와 무관하게 배치 가능한 일반 원거리 오퍼레이터만 허용합니다. 판자로 덮인 참호에서는 기절할 수 있으므로 전술적 영향은 호스트가 판단해야 합니다. 참호의 근거리/소환물 배치와 미지원 동적 상호작용은 계속 `dynamic_terrain_unknown`을 반환합니다. 픽셀이 같아도 권한은 확대되지 않으며 카드, 점유, 능력, 인스턴스 검사는 유지됩니다. 완전한 전투 루프나 실기기 검증을 뜻하지 않습니다.
+
+`battle_get_map`은 이제 읽기 전용으로 현재 PNG, `snapshot`, `map`을 반환하며 정적 `map.tiles`는 변경하지 않습니다. 관측/캡처/행동 스냅샷과 `map.dynamic_overlay`는 같은 프레임의 `observation_id`/`captured_at_ms`를 사용합니다. 최초의 조작 가능한 1280×720 전투 프레임을 고정 `baseline`으로 삼아 PNG 경로를 보존하고 세션 중 교체하지 않습니다. 이는 **최초 관측이지 게임 시작 상태가 아닙니다**. 중간 접속에서는 판자 변화나 적설이 이미 있을 수 있습니다. 첫 캡처 전 바인딩은 `status="not_observed"`입니다.
+
+`dynamic_overlay.tiles`는 `location`, 고정 지도 투영의 `roi`/`screen_polygon`, `changed_from_baseline`을 제공합니다. true는 다각형 내부 픽셀 차이, false는 완전한 일치, null은 기준 생성 중 또는 이미지 범위 밖을 뜻합니다. 장면을 사용할 수 없으면 `status="unavailable"`, `tiles=null`이며 이전 결과를 재사용하지 않습니다. `exact_masked_pixels`에는 노이즈 허용치가 없고 `scene_changed_from_baseline`은 일시정지 표시 등의 장면 차이를 알립니다. 호스트가 기준 및 현재 이미지로 재확인해야 합니다. 판자, 적설, 유닛, 효과, UI, 캡처 노이즈 모두 변화 원인이며, 이미지가 같아도 가림이 없다는 뜻은 아닙니다. 지형, 기믹 상태, 시각적 덮개는 겹칠 수 있으므로 Core는 상태 목록을 추측하지 않으며 `semantic_state="unknown"`, `static_geometry_is_current_terrain=false`를 유지합니다. 차이는 배치 성공, 이탈, 선택 타일, 배치 가능성을 증명하지 않고 점유를 해제하지 않습니다.
+
+｢自爆榴弹｣(폭발하는 스테이지 장치) `trap_341_dsjtzd`는 계속 오프라인 조회 가능하며 기본 비용 20, 재배치 20초, 범위 `x-4`, 나열된 스킬 없음, 재능 blackboard 기절 5초입니다. **재배치 시간은 폭발 카운트다운이 아닙니다.** 드래그/퇴각 지원은 추가하지 않으며 시간이나 픽셀 변화로 폭발/소멸을 추정하지 않습니다. 타일 변화 보고와 배치 불변 규칙은 판자 상태 인식이 아니며 실제 이미지 및 전체 전투 검증은 추후 필요합니다.
 
 Debug `res_updater`를 빌드한 후 고정 버전의 로컬 캐릭터/스킬 표로 재생성합니다.
 

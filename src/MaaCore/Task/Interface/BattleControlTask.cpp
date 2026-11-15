@@ -460,13 +460,15 @@ json::value asst::BattleControlTask::map_info() const
         { "binding", "caller_supplied_not_visually_verified" },
         { "tiles", std::move(tiles) },
         { "dynamic_overlay",
-          json::object {
-              { "status", m_map_data.key.stageId.starts_with("act55side") ? "unsupported" : "unknown" },
-              { "source", "no_live_terrain_adapter" },
-              { "tiles", nullptr },
-              { "static_geometry_is_current_terrain", false },
-              { "reason", "No explosion timer or single missing frame is used to change terrain" },
-          } },
+          m_terrain_observation.is_object()
+              ? m_terrain_observation
+              : json::object {
+                    { "status", "not_observed" },
+                    { "source", "no_live_frame" },
+                    { "tiles", nullptr },
+                    { "semantic_state", "unknown" },
+                    { "static_geometry_is_current_terrain", false },
+                } },
     };
 }
 
@@ -503,6 +505,8 @@ json::value
     if (image.empty()) {
         snapshot["error"] = "empty_screenshot";
         snapshot["scene"] = "unknown";
+        m_terrain_observation = observe_terrain(frame, snapshot);
+        snapshot["dynamic_overlay"] = m_terrain_observation;
         snapshot["terminal"] = m_terminal_result;
         m_terminal_seen = m_terminal_seen || m_battle_observed;
         update_input_state(snapshot);
@@ -597,6 +601,8 @@ json::value
     }
     snapshot["session_terminal"] = m_terminal_result;
     auto finish = [&]() {
+        m_terrain_observation = observe_terrain(frame, snapshot);
+        snapshot["dynamic_overlay"] = m_terrain_observation;
         if (include_battlefield) {
             for (auto& [id, instance] : m_instances) {
                 if (m_terminal_result.get("terminal_state", "") == "victory" ||
@@ -776,7 +782,7 @@ json::value asst::BattleControlTask::save_evidence(const CapturedFrame& frame, j
     if (!MAA_NS::imwrite(file, image)) {
         return failure("evidence_write_failed", "Could not save screenshot");
     }
-    if (!retain && !input_blocked()) {
+    if (!retain && !input_blocked() && relative.generic_string() != m_terrain_baseline.get("image_path", "")) {
         m_evidence_files.emplace_back(file);
     }
     if (m_evidence_files.size() > 128) {
@@ -1440,10 +1446,12 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
         const auto& requested_location = args.at("location");
         location = { requested_location[0].as_integer(), requested_location[1].as_integer() };
         const auto tile = m_normal_tile_info.find(location);
-        if (m_map_data.key.stageId.starts_with("act55side")) {
+        if (tile != m_normal_tile_info.end() && tile->second.buildable != battle::LocationType::None &&
+            tile->second.buildable != battle::LocationType::Invalid &&
+            !terrain_allows_deploy(location, *deployment_oper)) {
             return reject_preflight(
                 "dynamic_terrain_unknown",
-                "TL flip-tile state has no validated visual adapter; static geometry is unsafe");
+                "No state-independent deployment rule for this tile and unit; pixel changes do not authorize input");
         }
         if (tile == m_normal_tile_info.end() || tile_reserved(location) ||
             tile->second.buildable == battle::LocationType::None ||
@@ -1683,12 +1691,17 @@ json::value asst::BattleControlTask::execute(const Command& command)
     if (command.action == "prepare" || command.action == "inspect_preparation") {
         return failure("already_attached", "Preparation capture is only available before battle binding");
     }
-    if (command.action == "map") {
-        return json::object { { "status", "succeeded" }, { "map", map_info() } };
-    }
     const bool already_blocked = input_blocked();
     auto frame = capture_frame();
     auto snapshot = observe(frame, false, command.action != "step");
+    if (command.action == "map") {
+        auto result = save_evidence(frame, snapshot);
+        result["map"] = map_info();
+        if (m_terrain_baseline.contains("image_path")) {
+            result["baseline_image_path"] = m_terrain_baseline.at("image_path");
+        }
+        return result;
+    }
     if (command.action == "capture") {
         return save_evidence(frame, std::move(snapshot));
     }

@@ -131,7 +131,7 @@ def create_server(
                     "Reviewed summon adapters need a fresh concrete card_id, not a startup ID enumeration. Explicit legacy allowlists remain restrictions.",
                     "Instance presence and requested location are separate. Selected-name evidence alone never verifies a tile or authorizes retreat.",
                     "Retreat requires a positive selected identity/button and a verified tile anchor; no production tile-anchor adapter is available yet.",
-                    "TL/act55side dynamic terrain and grenade disappearance/explosion remain unsupported; deployment is refused rather than using stale static terrain.",
+                    "TL/act55side uses per-tile deployment invariants: supported fixed ground and ranged operators on trenches; other dynamic interactions are refused. Live tile pixel changes are not board/snow/occupancy recognition.",
                     "Mutations are not automatically confirmed; inspect evidence after each action.",
                     "battle_step bounds one action or host-time wait; pause and terminal evidence are returned separately.",
                     "Terminal OCR currently recognizes configured CN/English titles only; other screens remain unknown.",
@@ -217,8 +217,14 @@ def create_server(
 
     @server.tool(annotations=READ_ONLY)
     async def battle_get_map(session_id: Identifier) -> CallToolResult:
-        """Return MaaCore's static tile grid and normal/deployment screen projections."""
-        return tool_result(await service.read(session_id, "map"))
+        """Return current/baseline PNGs, static geometry and per-tile pixel changes from the first session frame. Changes are not terrain classification."""
+        result = await service.read(session_id, "map")
+        keys = (
+            ("image_path", "baseline_image_path")
+            if result.get("image_path") != result.get("baseline_image_path")
+            else ("image_path",)
+        )
+        return evidence_result(result, *keys)
 
     @server.tool(annotations=READ_ONLY)
     async def battle_capture_evidence(session_id: Identifier) -> CallToolResult:

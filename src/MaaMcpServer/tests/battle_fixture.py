@@ -120,6 +120,8 @@ def prepare(settings, known):
             4,
             "BattleOperRoleDrone"
             if known in summon_variants
+            else "BattleOperRoleSniper"
+            if isinstance(known, str) and known.startswith("tl_ranged")
             else "BattleOperRolePioneer",
             60,
             597,
@@ -269,6 +271,8 @@ def prepare(settings, known):
             if known == "grenade"
             else "token_10000_silent_healrb"
             if known in summon_variants
+            else "char_124_kroos"
+            if isinstance(known, str) and known.startswith("tl_ranged")
             else "char_123_fang"
         )
         (cache / f"{game_id}.png").write_bytes(png(60, 60, avatar))
