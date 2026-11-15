@@ -5,6 +5,7 @@ import threading
 import pytest
 from pydantic import ValidationError
 
+from maa_battle_mcp.media import MediaError
 from maa_battle_mcp.models import (
     BoundedStepRequest,
     DeployRequest,
@@ -78,6 +79,67 @@ async def test_duplicate_operation_does_not_repeat_input(connected):
     assert len([call for call in backend.calls if call[0] == "command"]) == 1
     with pytest.raises(BattleError, match="different parameters"):
         await service.command("retreat", request, {"unit_id": "unit"})
+
+
+@pytest.mark.parametrize("action", ["record", "step"])
+@pytest.mark.parametrize("error_type", [MediaError, sqlite3.DatabaseError])
+async def test_recording_storage_admission_failure_sends_no_input(
+    connected, monkeypatch, action, error_type
+):
+    service, backend = connected
+    before = list(backend.calls)
+
+    def fail(*args, **kwargs):
+        raise error_type("fixture reservation failure")
+
+    monkeypatch.setattr(service.media.store, "allocate", fail)
+    args = {"duration_ms": 400, "interval_ms": 200, "max_frames": 5}
+    if action == "step":
+        args = {
+            "action": "wait",
+            "duration_ms": 400,
+            "recording": {"interval_ms": 200, "max_frames": 5},
+        }
+    request = OperationRequest(
+        session_id=service.session_id, operation_id="recording-admission-failed"
+    )
+    result = await service.command(action, request, args)
+    assert backend.calls == before
+    assert result["status"] == "failed"
+    assert result["input_sent"] is False
+    assert result["error"]["code"] == "media_preflight_failed"
+    assert service.operation(request.session_id, request.operation_id) == result
+    assert service.storage_failed is (error_type is sqlite3.DatabaseError)
+
+
+async def test_close_rejects_new_commands_while_offline_cleanup_is_waiting(
+    connected, monkeypatch
+):
+    service, backend = connected
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    before = list(backend.calls)
+
+    async def cleanup():
+        entered.set()
+        await release.wait()
+
+    monkeypatch.setattr(service.media, "cancel_jobs", cleanup)
+    close = asyncio.create_task(service.close())
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        with pytest.raises(BattleError, match="closing"):
+            await service.command(
+                "step",
+                OperationRequest(
+                    session_id=service.session_id, operation_id="during-close"
+                ),
+                {"action": "wait", "duration_ms": 400},
+            )
+        assert backend.calls == before
+    finally:
+        release.set()
+        await close
 
 
 async def test_preparation_binding_requires_current_snapshot_and_confirmation(settings):
@@ -356,6 +418,10 @@ async def test_stale_close_does_not_release_reconnected_controller(
             await closing
         assert service.backend is replacement
         assert service.lease.is_locked
+        await service.attach("main_01-07")
+        assert (await service.read(service.session_id, "observe"))[
+            "status"
+        ] == "succeeded"
         with pytest.raises(BattleError, match="Another controller"):
             await second.connect()
     finally:

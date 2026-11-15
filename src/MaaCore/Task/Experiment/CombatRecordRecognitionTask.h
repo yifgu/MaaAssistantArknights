@@ -25,6 +25,12 @@ public:
 
     bool set_video_path(const std::filesystem::path& path);
 
+    void set_bounded_media(int timeout_ms)
+    {
+        m_bounded_media = true;
+        m_media_timeout_ms = timeout_ms;
+    }
+
 protected:
     virtual bool _run() override;
 
@@ -67,6 +73,10 @@ private:
     static std::string analyze_detail_page_oper_name(const cv::Mat& frame);
 
     std::filesystem::path m_video_path;
+    bool media_budget_ok() const;
+    bool m_bounded_media = false;
+    int m_media_timeout_ms = 120'000;
+    std::chrono::steady_clock::time_point m_media_deadline {};
     std::shared_ptr<cv::VideoCapture> m_video_ptr = nullptr;
     std::string m_stage_name;
     double m_video_fps = 0;

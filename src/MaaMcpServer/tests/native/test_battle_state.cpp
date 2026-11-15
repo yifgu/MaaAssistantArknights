@@ -101,6 +101,19 @@ int main()
     departure.ordinary = true;
     departure.substitution_excluded = false;
     expect(!battle::owned_instance_departure(departure), "substitute cannot prove departure");
+    battle::DepartureEvidence advisory { true, true, true, true, false, true, false, 1 };
+    expect(battle::suspected_defeat_hint(advisory, false, false), "unverified cooling may request host defeat review");
+    expect(!battle::owned_instance_departure(advisory), "advisory never verifies owned departure");
+    expect(!battle::suspected_defeat_hint(advisory, true, false), "session retreat input suppresses defeat hint");
+    expect(!battle::suspected_defeat_hint(advisory, false, true), "terminal cleanup is not individual defeat");
+    advisory.unique_owned_instance = false;
+    expect(!battle::suspected_defeat_hint(advisory, false, false), "duplicate owned kinds suppress hint");
+    advisory.unique_owned_instance = true;
+    advisory.substitution_excluded = false;
+    expect(!battle::suspected_defeat_hint(advisory, false, false), "substitute suppresses hint");
+    advisory.substitution_excluded = true;
+    advisory.ordinary = false;
+    expect(!battle::suspected_defeat_hint(advisory, false, false), "summon suppresses hint");
 
     // These are deliberately synthetic shape/appearance fixtures, not user-frame replays.
     cv::Mat image = cv::Mat::zeros(720, 1280, CV_8UC3);

@@ -9,6 +9,7 @@
 #include "Utils/Logger.hpp"
 #include "Vision/Miscellaneous/PipelineAnalyzer.h"
 #include "Vision/MultiMatcher.h"
+#include "Vision/Oper/OperNameAnalyzer.h"
 #include "Vision/RegionOCRer.h"
 #include "Vision/TemplDetOCRer.h"
 
@@ -36,19 +37,65 @@ BattleFormationAnalyzer::ResultsVecOpt BattleFormationAnalyzer::analyze_slots() 
         Result slot;
         slot.flag_rect = flag.rect;
         slot.flag_score = flag.score;
-        for (const auto& task : { "BattleFormationOperNames", "BattleFormationOperNamesOldVersion" }) {
-            RegionOCRer name(m_image);
-            name.set_task_info(task);
-            name.set_roi(flag.rect.move(Task.get(task)->roi));
-            const auto text = name.analyze();
+        auto consider = [&](const std::optional<TextRect>& text,
+                            const Rect& roi,
+                            const std::string& source,
+                            bool segmented = false) {
+            const bool prefix_ambiguous =
+                segmented && text && std::ranges::any_of(BattleData.get_all_oper_names(), [&](const auto& candidate) {
+                    return candidate != text->text && candidate.starts_with(text->text);
+                });
+            const bool accepted = text && std::isfinite(text->score) && text->score >= 0.9 &&
+                                  !BattleData.is_name_invalid(battle::Role::Unknown, text->text) && !prefix_ambiguous;
+            slot.name_candidates.emplace_back(
+                json::object {
+                    { "source", source },
+                    { "roi", json::array { roi.x, roi.y, roi.width, roi.height } },
+                    { "raw", text ? text->to_json() : json::value(nullptr) },
+                    { "accepted", accepted },
+                    { "reason",
+                      !text                                              ? json::value("no_text")
+                      : !std::isfinite(text->score) || text->score < 0.9 ? json::value("low_confidence")
+                      : prefix_ambiguous ? json::value("segmented_name_prefix_ambiguous")
+                      : !accepted        ? json::value("name_not_resolved_by_bundled_identity_mapping")
+                                         : json::value(nullptr) },
+                });
             if (text) {
                 slot.name_evidence = *text;
             }
-            if (text && std::isfinite(text->score) && text->score >= 0.9 &&
-                !BattleData.is_name_invalid(battle::Role::Unknown, text->text)) {
+            if (accepted) {
                 slot.name = text->text;
                 slot.rect = text->rect;
+                slot.name_source = source;
+            }
+            return accepted;
+        };
+        for (const auto& task : { "BattleFormationOperNames", "BattleFormationOperNamesOldVersion" }) {
+            const auto roi = flag.rect.move(Task.get(task)->roi);
+            RegionOCRer name(m_image);
+            name.set_task_info(task);
+            name.set_roi(roi);
+            const auto text = name.analyze();
+            if (consider(text, roi, std::string("formation_region_ocr:") + task)) {
                 break;
+            }
+        }
+        if (slot.name.empty()) {
+            for (const auto& task : { "BattleFormationOperNames", "BattleFormationOperNamesOldVersion" }) {
+                const auto roi = flag.rect.move(Task.get(task)->roi);
+                if (!Rect(0, 0, m_image.cols, m_image.rows).include(roi)) {
+                    continue;
+                }
+                OperNameAnalyzer name(m_image);
+                name.set_task_info(task);
+                name.set_roi(roi);
+                name.set_required({});
+                name.set_text_alignment(OperNameAnalyzer::TextAlignment::Left);
+                name.set_bin_expansion(2);
+                name.set_width_threshold(10);
+                if (consider(name.analyze(), roi, std::string("shared_OperNameAnalyzer:") + task, true)) {
+                    break;
+                }
             }
         }
         if (!slot.name.empty()) {

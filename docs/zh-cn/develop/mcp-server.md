@@ -19,6 +19,34 @@ order: 20
 - 战前等级从正向 LV 标志下方居中的区域读取，不再向右偏入精英图标。低分、残缺或越界数字保持未知；编队身份用空间一一匹配容忍同行 Y 抖动。选中技能证据单独记录指纹，姓名编队不变不证明技能不变。`effective_configuration` 保留战前／用户证据及未解决冲突，不取静态最大配置。
 - 干员知识仍走既有 `battle_get_unit_info` 或已配置的 `intel_query`；`knowledge_refs` 只给稳定游戏／技能 ID，不隐式查询资料或外部服务，不用静态公式替代运行时观测。合成 Debug 测试不代表原截图、Windows 设备或完整战斗验收。
 
+## 战前兜底与提示复核
+
+编队姓名保留已有效的主识别路径，仅失败时在编队专用姓名 ROI 中复用 OperBox 底层 `OperNameAnalyzer` 的分割能力，并保留原始候选、分数和身份映射依据。不运行 OperBox 导航，不套用 14／16 卡布局，不将默认等级 1、精英 0 或潜能 1 当作观测值。
+
+战前结果的 `host_fallback.required` 和逐槽位／字段 `items` 提供原因、可用原始候选、ROI、证据及 `retrieval` 引用。技能／等级／身份缺失仍未知，仅请求多模态宿主复核；宿主解释不会自动成为原生事实、改变安全锁或触发额外导航。
+
+`battle_get_evidence_frame(session_id, operation_id, observation_id)` 以 ImageContent 返回操作已保留的一张原始 PNG，包括历史战前详情，而不只返回编队页。ID 必须属于已记录操作；未知／歧义帧、跨会话路径、符号链接逃逸及超过 16 MiB 的图片被拒绝。关闭后只要日志和文件仍在也可回读；不会重新截图或控制设备，明确报告 `frame_is_live=false`。
+
+原生 `suspected_defeat` 是去重的**宿主复核提示**，不是引擎击倒事件。唯一普通非替身种类的已拥有部署记录出现冷却，且本会话没有撤退输入记录时，即使拥有关系／离场未验证，也可发出提示。保留 `departure_verified=false`、未知原因、null 置信度、`record_coverage="this_session_only"` 与替代原因。重复／召唤／替身歧义和终局清理不发此提示。提示不改变在场状态、不释放占格、不授权输入；外部／会话前操作及机制原因仍可能存在。
+
+## 本地媒体与实验性视频候选
+
+`battle_record_clip(request)` 接受战斗 `session_id`、持久 `operation_id`、`duration_ms`（100–8000，默认 2000）、`interval_ms`（200–2000，默认 500）、`max_frames`（2–24，默认 24）及普通 `timeout_ms`。不可能容纳的时长／间隔／帧数组合会预先拒绝。它**不发送输入**，不暂停／恢复；运行中的游戏继续推进，最终快照与 PNG 仍对应真实采集帧。
+
+只有已明确授权的 `battle_step(action="wait", duration_ms=2000, ...)` 可附带 `recording: {"interval_ms": 500, "max_frames": 8}`。它复用等待期间的采集，PNG／视频编码在暂停收尾后进行；媒体失败不跳过收尾或授权输入。取消／关闭明确返回部分／未知状态，必要时只终止自己的 worker。相同操作 ID 沿用原媒体意图／结果，部分或过期媒体也不重录。
+
+存储额度预留失败会在提交设备命令前以 `media_preflight_failed` 拒绝，不会丢掉录制选项后继续推进战斗。动作开始后的媒体存储失败仍先完成安全收尾，再明确报告 `media_unavailable`／`media_incomplete`，不称为完整成功；输入和暂停结果独立保留，禁止因此盲重放。
+
+`media` 返回 `artifact_id`、状态、原始 PNG 引用／哈希和 `video` 元数据。原生 OpenCV 只尝试 **AVI/MJPEG**，回读解码验证后才称为可播放视频；不要求 MP4 编码器、Python Pillow 或 Python OpenCV。稀疏采样不保证连续动画，`rendered_fps` 不是游戏速度／模拟时间。实时帧以 `captured_at_ms` 和采集起始的 `offset_monotonic_ms` 为依据；导入帧只给 `media_pts_ms`（解码器 PTS 或明确标记的帧号／FPS 推导），不伪造实时采集时间。
+
+`battle_get_media(artifact_id)` 查询当前保留／资源可读性；`battle_get_media_frames(artifact_id, frame_ids=[...])` 最多返回 4 张、合计 16 MiB 的 PNG ImageContent，不截图、不调知识源、不更新历史对应的现场状态或解除隔离。SDK 没有 VideoContent：小 AVI 走 `battle-media://<id>/video.avi` 二进制资源回读，资源响应携带实际视频 MIME，编码在清单中；导入视频使用对应的格式后缀。二进制回读上限 16 MiB；较大的原文件明确 `resource_retrievable=false` 且不提供可读 URI，关键帧和原生分析仍可用。持久操作结果记录当时的可用性，重用旧链接前须查 `battle_get_media`；过期明确失败，不重建媒体。
+
+录像原始帧缓冲上限 64 MiB，发布文件上限 32 MiB；最多保留 8 份媒体／256 MiB，跨进程读取和分析会锁定其媒体。日志／操作记录及普通／重要战斗截图仍遵循各自规则。`--media-import-dir /safe/local/imports` 默认 `<user-dir>/media-import`，文件须显式放入。`battle_import_video(request={"operation_id": "...", "import_name": "full.avi", "declared_context": "full_battle", "timeout_ms": 30000})` 仅接受文件名和 AVI／MP4／MOV／MKV 白名单签名，拒绝链接、路径逃逸、设备、播放列表和 URL，生成自有不可变副本／哈希。原生解码使用独立、无设备连接的 Core，不长期占用战斗控制锁；检查实际尺寸、帧数和期限，上限 128 MiB、10 分钟、1920×1080、18000 帧、报告 FPS 240。解码器不支持和 I/O 部分失败会明示，不假定所有包都支持同一编解码器。
+
+`battle_analyze_video(request={"operation_id": "...", "artifact_id": "...", "timeout_ms": 120000})` 的范围是 **experimental_video_to_copilot**，不是通用战场识别或执行。只有完整解码且调用者声明完整上下文的导入视频进入原有 `VideoRecognition`，声明不是识别事实，Core 仍须识别编队和关卡。短战斗片段仍可供宿主看视频／关键帧，不假装原有识别器支持缺失上下文。独立无设备 worker／句柄与隔离输出目录返回只读作业候选、输入身份／哈希、诊断和警告：身份可能猜测，消失可能写成 Retreat；候选不执行、不改现场状态。跨进程仅允许一个重型离线任务，关闭只终止自己的 worker。分析最多保留 10 个片段、每段 3 张方向样本并释放已处理样本，归一化图像缓冲限于 128 MiB（不含已加载模型），watchdog 最长 120 秒。
+
+原生协议仍为 1，增加 `BattleControl` 的只读 `record` 与等待 `recording`，媒体 ID 由服务分配为 32 位十六进制。生产 `BattleMedia` Core 任务只解码其隔离用户目录中生成的 `input.avi|mp4|mov|mkv`，发出 `BattleMediaResult`；不是仅 DebugTask 可用的入口。Debug 合成编解码／传输测试不等于 Windows、设备或原始视频验收。
+
 ## 编译与安装
 
 以下命令从仓库根目录执行。先按 [Linux 编译教程](./linux-tutorial.md) 或对应平台教程准备编译器和 CMake；Windows 在 Visual Studio 开发者终端运行。

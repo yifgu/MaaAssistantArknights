@@ -19,6 +19,34 @@ order: 20
 - 戦闘前レベルは正の LV マークの真下を中心に読み、右側の昇進アイコン領域へずらしません。低信頼・不完全・範囲外の数値は不明です。編成 ID は空間的な一対一対応で同一行の Y 揺れに耐えます。選択スキルには別の証拠 fingerprint を保持し、編成名不変をスキル不変とは扱いません。`effective_configuration` は戦闘前／ユーザー証拠と未解決の矛盾を保持し、静的最大育成値を選びません。
 - オペレーター知識は既存の `battle_get_unit_info`／設定済み `intel_query` に限定します。`knowledge_refs` はゲーム／スキル ID の参照のみで、自動照会や静的式による実行時観測の代用をしません。合成 Debug テストは原画像、Windows 実機、戦闘全体の検証ではありません。
 
+## 戦闘前認識の代替と提示の確認
+
+編成名は既存の正常な認識経路を維持し、失敗時だけ編成専用の名前 ROI 内で OperBox の下層 `OperNameAnalyzer` の分割を再利用します。生の候補、スコア、ID 対応根拠を保持します。OperBox の画面操作や 14／16 枚配置は使わず、既定のレベル 1・昇進 0・潜在 1 を観測値として取り込みません。
+
+戦闘前結果の `host_fallback.required` とスロット／フィールド別 `items` に理由、生候補、ROI、証拠、`retrieval` 参照を返します。未取得のスキル・レベル・ID は不明のままです。マルチモーダル宿主の確認用であり、解釈を自動的にネイティブ事実へ昇格せず、安全ロック変更や追加画面操作もしません。
+
+`battle_get_evidence_frame(session_id, operation_id, observation_id)` は操作に保存された元 PNG 1 枚を ImageContent で返します。編成復帰画像だけでなく過去の戦闘前詳細画像も対象です。記録済み操作の ID のみ許可し、不明／曖昧なフレーム、別セッションのパス、シンボリックリンクによる逸脱、16 MiB 超の画像を拒否します。終了後も記録とファイルが残れば取得できます。再撮影やデバイス操作はせず `frame_is_live=false` を返します。
+
+ネイティブの `suspected_defeat` は重複排除された**宿主確認用の提示**であり、エンジンの撃破イベントではありません。同一セッションの撤退入力記録がない、唯一の通常・非身代わり種別の配置記録が冷却状態なら、所有関係／離場未確認でも提示できます。`departure_verified=false`、原因不明、信頼度 null、`record_coverage="this_session_only"` と代替原因を明示します。重複・召喚・身代わりの曖昧さや終局の片付けでは提示しません。存在状態変更、マス解放、入力許可には使わず、外部／セッション前入力やギミックも候補のままです。
+
+## ローカルメディアと実験的な動画候補
+
+`battle_record_clip(request)` は戦闘 `session_id`、永続 `operation_id`、`duration_ms`（100–8000、既定 2000）、`interval_ms`（200–2000、既定 500）、`max_frames`（2–24、既定 24）、通常の `timeout_ms` を受け取ります。時間・間隔・枚数の不可能な組合せは事前拒否します。**入力を送らず**停止／再開もしません。実行中のゲームは進み続け、最終スナップショットと PNG は実取得フレームに対応します。
+
+明示的に許可した `battle_step(action="wait", duration_ms=2000, ...)` だけに `recording: {"interval_ms": 500, "max_frames": 8}` を指定できます。既存の待機中キャプチャを再利用し、PNG／動画のエンコードは停止処理後です。メディア失敗で停止処理を省略したり入力を許可したりしません。キャンセル／終了は部分・不明の結果を明示し、必要なら自身の worker のみ停止します。同じ操作 ID は元の artifact 意図／結果を再利用し、部分・期限切れでも再録画しません。
+
+保存容量の予約に失敗した場合、端末コマンドを送る前に `media_preflight_failed` で拒否し、録画設定を捨てて戦闘を進めることはありません。操作開始後のメディア保存失敗では安全な終了処理を維持し、完全成功ではなく `media_unavailable`／`media_incomplete` を返します。入力と一時停止の結果は別に保持し、操作を無条件に再実行しないでください。
+
+`media` に `artifact_id`、状態、元 PNG の参照／ハッシュ、`video` 情報を返します。ネイティブ OpenCV は **AVI/MJPEG** のみ試し、デコード回読検証後だけ再生可能とします。MP4 エンコーダー、Python Pillow／OpenCV は不要です。疎な取得で連続アニメーションは保証せず、`rendered_fps` は表示用でゲーム速度・シミュレーション時刻ではありません。ライブフレームは `captured_at_ms` と取得開始時の `offset_monotonic_ms` が根拠です。インポートは `media_pts_ms`（デコーダー PTS、または明記したフレーム番号／FPS 推定）のみでライブ取得時刻を作りません。
+
+`battle_get_media(artifact_id)` は現在の保持／資源可読性を返し、`battle_get_media_frames(artifact_id, frame_ids=[...])` は最大 4 枚・合計 16 MiB の PNG ImageContent を返します。再撮影、知識照会、過去画像によるライブ状態変更や隔離解除はしません。SDK に VideoContent はなく、小さい AVI は `battle-media://<id>/video.avi` のバイナリ資源として読み、資源応答に実際の動画 MIME、manifest に codec を記録します。インポート動画には対応する形式の拡張子を使います。バイナリ読出し上限は 16 MiB、大きい原本は `resource_retrievable=false` とし読めない URI を宣伝せず、キーフレームとネイティブ解析は維持します。永続操作結果は当時の可用性なので、旧リンク使用前に `battle_get_media` を確認してください。期限切れは明示的に失敗し再作成しません。
+
+録画の生フレームバッファ上限は 64 MiB、公開ファイルは 32 MiB、保持は 8 artifact／256 MiB で、プロセスをまたぐ読取／解析中は pin します。ログ・操作記録と通常／重要戦闘画像は従来の別規則です。`--media-import-dir /safe/local/imports`（既定 `<user-dir>/media-import`）へ明示的に置いたファイルを `battle_import_video(request={"operation_id": "...", "import_name": "full.avi", "declared_context": "full_battle", "timeout_ms": 30000})` で取り込みます。basename と AVI／MP4／MOV／MKV の署名のみ許可し、リンク、パス逸脱、デバイス、プレイリスト、URL は拒否し、所有する不変コピーとハッシュを作ります。独立した無接続 Core が戦闘ロックを長時間保持せず実寸・実フレーム数・期限を検証します。上限は 128 MiB、10 分、1920×1080、18000 フレーム、報告 FPS 240。未対応デコーダーや部分 I/O 失敗は明示し、全パッケージの codec 対応を仮定しません。
+
+`battle_analyze_video(request={"operation_id": "...", "artifact_id": "...", "timeout_ms": 120000})` は **experimental_video_to_copilot** であり、汎用戦場認識・実行ではありません。完全デコード済みで呼出側が完全文脈を申告したインポートだけを既存 `VideoRecognition` に渡し、申告を事実とせず Core が編成・ステージを確認します。短い戦闘クリップは動画／画像で宿主に渡せ、文脈不足を対応済みと偽りません。別の無接続 worker／handle と分離出力ディレクトリから、入力 ID／ハッシュ、診断、警告付きの読取専用 copilot 候補を返します。ID を推測したり消失を Retreat にしたりする近似で、候補の実行・ライブ状態変更はしません。高負荷のオフライン処理は全プロセスで 1 件だけ、自身の worker のみ終了します。最大 10 clip、各 3 方向サンプルと完了サンプルの解放で正規化画像バッファを 128 MiB 以内（ロード済みモデル除外）とし、watchdog は最大 120 秒です。
+
+ネイティブプロトコル 1 に `BattleControl` の読取専用 `record`、待機 `recording`、サーバー発行の 32 桁 hex artifact ID を追加します。通常ビルドの `BattleMedia` Core task は分離 user directory の生成済み `input.avi|mp4|mov|mkv` のみデコードし `BattleMediaResult` を返します。DebugTask 限定ではありません。Debug 合成 codec／通信テストは Windows・実機・元動画の検証ではありません。
+
 ## ビルドとインストール
 
 リポジトリのルートで実行します。[Linux ビルドガイド](./linux-tutorial.md) または対応するプラットフォームのガイドに従い、コンパイラーと CMake を準備してください。Windows では Visual Studio の開発者ターミナルを使用します。

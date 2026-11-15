@@ -30,6 +30,7 @@ bool asst::CombatRecordRecognitionTask::set_video_path(const std::filesystem::pa
 bool asst::CombatRecordRecognitionTask::_run()
 {
     LogTraceFunction;
+    m_media_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(m_media_timeout_ms);
 
     auto release_video = [](cv::VideoCapture* video) {
         if (video && video->isOpened()) {
@@ -44,7 +45,18 @@ bool asst::CombatRecordRecognitionTask::_run()
         return false;
     }
     m_video_fps = m_video_ptr->get(cv::CAP_PROP_FPS);
-    m_video_frame_count = static_cast<size_t>(m_video_ptr->get(cv::CAP_PROP_FRAME_COUNT));
+    const double reported_frame_count = m_video_ptr->get(cv::CAP_PROP_FRAME_COUNT);
+    if (m_bounded_media) {
+        const double width = m_video_ptr->get(cv::CAP_PROP_FRAME_WIDTH);
+        const double height = m_video_ptr->get(cv::CAP_PROP_FRAME_HEIGHT);
+        if (!std::isfinite(m_video_fps) || m_video_fps <= 0 || m_video_fps > 240 ||
+            !std::isfinite(reported_frame_count) || reported_frame_count < 1 || reported_frame_count > 18'000 ||
+            reported_frame_count / m_video_fps > 600 || !std::isfinite(width) || !std::isfinite(height) || width < 1 ||
+            height < 1 || width > 1920 || height > 1080 || width * 720 / height > 1920) {
+            return false;
+        }
+    }
+    m_video_frame_count = static_cast<size_t>(reported_frame_count);
     m_battle_start_frame = 0;
     m_scale = WindowHeightDefault / m_video_ptr->get(cv::CAP_PROP_FRAME_HEIGHT);
 
@@ -70,6 +82,9 @@ bool asst::CombatRecordRecognitionTask::_run()
 
     ClipInfo* pre_valid = nullptr;
     for (auto iter = m_clips.begin(); iter != m_clips.end(); ++iter) {
+        if (!media_budget_ok()) {
+            return false;
+        }
         auto& clip = *iter;
 
         if (!clip.deployment_changed && iter != m_clips.begin()) {
@@ -81,6 +96,9 @@ bool asst::CombatRecordRecognitionTask::_run()
             Log.error(__FUNCTION__, "failed to analyze clip");
             return false;
         }
+        // Classification no longer needs these full-size samples after this clip.
+        clip.random_frames.clear();
+        clip.random_frames.shrink_to_fit();
         pre_valid = &clip;
     }
 
@@ -99,6 +117,7 @@ bool asst::CombatRecordRecognitionTask::_run()
 
     auto cb_json = basic_info_with_what("Finished");
     cb_json["details"]["filename"] = utils::path_to_utf8_string(filepath);
+    cb_json["details"]["bounded_media"] = m_bounded_media;
     callback(AsstMsg::SubTaskExtraInfo, cb_json);
 
     return true;
@@ -114,6 +133,9 @@ bool asst::CombatRecordRecognitionTask::analyze_formation()
     BattleFormationAnalyzer formation_ananlyzer;
     int no_changes_count = 0;
     for (size_t i = 0; i < m_video_frame_count; i += skip_frames(skip_count) + 1) {
+        if (!media_budget_ok()) {
+            return false;
+        }
         cv::Mat frame;
         *m_video_ptr >> frame;
         if (frame.empty()) {
@@ -125,12 +147,15 @@ bool asst::CombatRecordRecognitionTask::analyze_formation()
         cv::resize(frame, frame, cv::Size(), m_scale, m_scale, cv::INTER_AREA);
 
         formation_ananlyzer.set_image(frame);
-        auto formation_opt = formation_ananlyzer.analyze();
+        auto formation_opt = m_bounded_media ? formation_ananlyzer.analyze_slots() : formation_ananlyzer.analyze();
+        if (m_bounded_media && formation_opt) {
+            std::erase_if(*formation_opt, [](const auto& oper) { return oper.name.empty() || oper.avatar.empty(); });
+        }
         // 有些视频会有个过渡或者动画啥的，只取一帧识别的可能不全。多识别几帧
         if (formation_opt) {
             if (formation_opt->size() > m_formation.size()) {
                 for (const auto& oper : *formation_opt) {
-                    m_formation.insert_or_assign(oper.name, oper.avatar);
+                    m_formation.insert_or_assign(oper.name, m_bounded_media ? oper.avatar.clone() : oper.avatar);
                 }
             }
             else if (++no_changes_count > 5) {
@@ -146,6 +171,12 @@ bool asst::CombatRecordRecognitionTask::analyze_formation()
 
     Log.info("Formation:", m_formation | std::views::keys);
     auto cb_info = basic_info_with_what("OcrFormation");
+    if (m_bounded_media) {
+        cb_info["details"]["reported_frames"] = m_video_frame_count;
+        cb_info["details"]["decoder_frame_position"] = m_video_ptr->get(cv::CAP_PROP_POS_FRAMES);
+        cb_info["details"]["formation_end_frame"] = m_formation_end_frame;
+        cb_info["details"]["bounded_media"] = true;
+    }
     auto& cb_formation = cb_info["details"]["formation"];
     for (const auto& [name, avatar] : m_formation) {
         std::vector<battle::OperUsage> opers;
@@ -158,6 +189,10 @@ bool asst::CombatRecordRecognitionTask::analyze_formation()
     }
     callback(AsstMsg::SubTaskCompleted, cb_info);
 
+    if (m_bounded_media && m_formation.empty()) {
+        callback(AsstMsg::SubTaskError, basic_info_with_what("OcrFormation"));
+        return false;
+    }
     return true;
 }
 
@@ -171,6 +206,9 @@ bool asst::CombatRecordRecognitionTask::analyze_stage()
     const int skip_count = m_video_fps > m_stage_ocr_fps ? static_cast<int>(m_video_fps / m_stage_ocr_fps) - 1 : 0;
 
     for (size_t i = m_formation_end_frame; i < m_video_frame_count; i += skip_frames(skip_count) + 1) {
+        if (!media_budget_ok()) {
+            return false;
+        }
         cv::Mat frame;
         *m_video_ptr >> frame;
         if (frame.empty()) {
@@ -184,6 +222,20 @@ bool asst::CombatRecordRecognitionTask::analyze_stage()
         RegionOCRer stage_analyzer(frame);
         stage_analyzer.set_task_info(stage_name_task_ptr);
         bool analyzed = stage_analyzer.analyze().has_value();
+        if (m_bounded_media) {
+            auto candidate = basic_info_with_what("VideoStageCandidate");
+            candidate["details"] = json::object {
+                { "raw", analyzed ? stage_analyzer.get_result().to_json() : json::value(nullptr) },
+                { "recognized_stage_mapping", analyzed && Tile.find(stage_analyzer.get_result().text).has_value() },
+                { "decoder_frame_index", m_video_ptr->get(cv::CAP_PROP_POS_FRAMES) - 1 },
+                { "roi",
+                  json::array { stage_name_task_ptr->roi.x,
+                                stage_name_task_ptr->roi.y,
+                                stage_name_task_ptr->roi.width,
+                                stage_name_task_ptr->roi.height } },
+            };
+            callback(AsstMsg::SubTaskExtraInfo, candidate);
+        }
 
         if (!analyzed) {
             // BattlefieldMatcher battle_analyzer(frame);
@@ -236,6 +288,9 @@ bool asst::CombatRecordRecognitionTask::analyze_deployment()
 
     std::vector<battle::DeploymentOper> deployment;
     for (size_t i = m_stage_ocr_end_frame; i < m_video_frame_count; i += skip_frames(skip_count) + 1) {
+        if (!media_budget_ok()) {
+            return false;
+        }
         cv::Mat frame;
         *m_video_ptr >> frame;
         if (frame.empty()) {
@@ -293,7 +348,8 @@ bool asst::CombatRecordRecognitionTask::analyze_deployment()
             Log.warn(m_battle_start_frame, "failed to match", name);
             continue;
         }
-        m_all_avatars.emplace(name, candidate.at(best_match_analyzer.get_result().templ_info.name));
+        const auto& avatar = candidate.at(best_match_analyzer.get_result().templ_info.name);
+        m_all_avatars.emplace(name, m_bounded_media ? avatar.clone() : avatar);
     }
     callback(AsstMsg::SubTaskCompleted, basic_info_with_what("MatchDeployment"));
 
@@ -335,6 +391,9 @@ bool asst::CombatRecordRecognitionTask::slice_video()
         in_segment = false;
     };
     for (; i < ends; i += skip_frames(skip_count) + 1, pre_frame = frame) {
+        if (!media_budget_ok()) {
+            return false;
+        }
         cv::Mat temp;
         // 这里如果不用temp，frame的所有权会出错
         *m_video_ptr >> temp;
@@ -356,6 +415,18 @@ bool asst::CombatRecordRecognitionTask::slice_video()
 
         analyzer.set_total_kills_prompt(total_kills);
         auto result_opt = analyzer.analyze();
+        if (m_bounded_media) {
+            auto candidate = basic_info_with_what("VideoSliceCandidate");
+            candidate["details"] = json::object {
+                { "decoder_frame_index", m_video_ptr->get(cv::CAP_PROP_POS_FRAMES) - 1 },
+                { "battle_hud_recognized", result_opt.has_value() },
+                { "pause_button", result_opt ? json::value(result_opt->pause_button) : json::value(nullptr) },
+                { "speed_button", result_opt ? json::value(result_opt->speed_button) : json::value(nullptr) },
+                { "kills_status",
+                  result_opt ? json::value(static_cast<int>(result_opt->kills.status)) : json::value(nullptr) },
+            };
+            callback(AsstMsg::SubTaskExtraInfo, candidate);
+        }
 
         if (!result_opt) {
             battle_over();
@@ -416,6 +487,17 @@ bool asst::CombatRecordRecognitionTask::slice_video()
             continue;
         }
         else if (!in_segment) {
+            if (m_bounded_media && m_clips.size() >= 10) {
+                LogWarn << __FUNCTION__ << "Bounded media clip/image-buffer limit exceeded";
+                auto limit = basic_info_with_what("VideoWorkingSetLimit");
+                limit["details"] = json::object {
+                    { "max_clips", 10 },
+                    { "max_retained_direction_frames_per_clip", 3 },
+                    { "image_buffer_budget_bytes", 128 * 1024 * 1024 },
+                };
+                callback(AsstMsg::SubTaskExtraInfo, limit);
+                return false;
+            }
             ClipInfo info;
             info.start_frame_index = i; // 后处理会加个 offset
             info.end_frame_index = i;
@@ -576,6 +658,9 @@ bool asst::CombatRecordRecognitionTask::detect_operators(ClipInfo& clip, [[maybe
     skip_frames(begin_skip);
 
     for (size_t i = det_begin; i <= det_end; i += skip_frames(skip_count) + 1) {
+        if (!media_budget_ok()) {
+            return false;
+        }
         cv::Mat frame;
         *m_video_ptr >> frame;
         if (frame.empty()) {
@@ -602,7 +687,9 @@ bool asst::CombatRecordRecognitionTask::detect_operators(ClipInfo& clip, [[maybe
         }
         oper_det_samping[std::move(cur_locations)] += 1;
 
-        clip.random_frames.emplace_back(frame); // for classify_direction
+        if (!m_bounded_media || clip.random_frames.size() < 3) {
+            clip.random_frames.emplace_back(frame);
+        }
     }
 
     /* 取众数 */
@@ -856,11 +943,26 @@ json::object asst::CombatRecordRecognitionTask::analyze_action_condition(ClipInf
 
 size_t asst::CombatRecordRecognitionTask::skip_frames(size_t count)
 {
+    if (m_bounded_media) {
+        count = std::min<size_t>(count, 18'000);
+    }
     for (size_t i = 0; i < count; ++i) {
+        if (!media_budget_ok()) {
+            return i;
+        }
         cv::Mat ignore;
         *m_video_ptr >> ignore;
+        if (ignore.empty()) {
+            return i;
+        }
     }
+
     return count;
+}
+
+bool asst::CombatRecordRecognitionTask::media_budget_ok() const
+{
+    return !need_exit() && (!m_bounded_media || std::chrono::steady_clock::now() < m_media_deadline);
 }
 
 std::string asst::CombatRecordRecognitionTask::analyze_detail_page_oper_name(const cv::Mat& frame)

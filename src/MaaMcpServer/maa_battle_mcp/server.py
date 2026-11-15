@@ -8,22 +8,32 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 from mcp.server.fastmcp import FastMCP
-from mcp.types import CallToolResult, ImageContent, TextContent, ToolAnnotations
+from mcp.types import (
+    CallToolResult,
+    ImageContent,
+    ResourceLink,
+    TextContent,
+    ToolAnnotations,
+)
 from pydantic import Field
 
 from .decision import CLIENT_REGIONS, DecisionContext
 from .intelligence import IntelligenceClient
+from .media import MIME
 from .models import (
+    AnalyzeVideoRequest,
     BattleMode,
     BoundedStepRequest,
     DeployRequest,
     Identifier,
     IdentifyRequest,
+    ImportVideoRequest,
     IntelligenceConfig,
     PauseRequest,
     Placement,
     PreparationRequest,
     RawIntelligenceConfig,
+    RecordClipRequest,
     Settings,
     SpeedRequest,
     TerminalRequest,
@@ -83,9 +93,11 @@ def create_server(
         try:
             yield {}
         finally:
+            service.media.stopping = True
             await service.close()
             async with service.lock:
                 service.journal.close()
+                service.media.store.db.close()
 
     server = FastMCP(
         "maa-battle",
@@ -93,6 +105,9 @@ def create_server(
             "Controls a real Arknights device. Attach only to a manually started, fixed-map battle. "
             "Verify the supplied stage against screenshot evidence; map binding is not recognized. "
             "Observe before acting. Unknown identities and enemy state are not empty state. "
+            "Preparation host_fallback lists unresolved fields for multimodal review; retrieve original "
+            "operation frames with battle_get_evidence_frame. Host interpretation does not become native fact. "
+            "suspected_defeat is a deduplicated advisory with unknown cause, not proof of death or tile release. "
             "Use battle_decision domains, provenance, missing prerequisites and deduplicated event IDs "
             "to consume structured native evidence. Full combat state is not available; readiness is not "
             "activation, phase, SP, HP, ammo or healing. Use paired PNGs for unknowns, anomalies and audit. "
@@ -128,8 +143,29 @@ def create_server(
                 "intelligence_configured": intelligence is not None,
                 "loadout_configured": service.decision.config is not None,
                 "mode": service.mode,
+                "media": {
+                    "requires_matching_core": True,
+                    "encoder": "native_OpenCV_MJPEG_AVI_checked_per_artifact",
+                    "mp4_encoding": False,
+                    "mcp_video_content": False,
+                    "binary_resource_limit_bytes": 16 * 1024 * 1024,
+                    "frame_response_limit": 4,
+                    "recording_limits": {
+                        "duration_ms": 8_000,
+                        "frames": 24,
+                        "raw_bytes": 64 * 1024 * 1024,
+                        "published_bytes": 32 * 1024 * 1024,
+                    },
+                    "retention": {"artifacts": 8, "artifact_bytes": 256 * 1024 * 1024},
+                    "offline_job_active": service.media.lock.locked(),
+                    "offline_scope": "experimental_video_to_copilot_not_combat_state_or_execution",
+                },
                 "battle_decision_schema_version": 1,
                 "runtime_capabilities": {
+                    "preparation_name_fallback": "shared_OperNameAnalyzer_in_formation_name_ROIs",
+                    "preparation_host_fallback": "field_scoped_multimodal_review_without_native_fact_promotion",
+                    "historical_evidence": "operation_bound_original_PNG_retrieval_without_capture",
+                    "defeat_hints": "derived_suspected_defeat_for_host_review_not_presence_authority",
                     "hud": "native_life_cost_kills_speed_scene",
                     "changes": "bounded_native_observation_events_with_stable_ids",
                     "hp": "unassociated_health_bar_rectangles_not_fill_measurement",
@@ -265,7 +301,13 @@ def create_server(
                 exclude={"session_id", "operation_id", "timeout_ms"}, exclude_none=True
             ),
         )
-        return evidence_result(result, "return_image_path", "capture_image_path")
+        response = evidence_result(result, "return_image_path", "capture_image_path")
+        response.content.extend(
+            item
+            for item in media_result(result).content
+            if item.type == "resource_link"
+        )
+        return response
 
     @server.tool(annotations=MUTATING)
     async def battle_deploy(request: DeployRequest) -> CallToolResult:
@@ -320,6 +362,101 @@ def create_server(
     ) -> CallToolResult:
         """Read a durable operation result, including after disconnection. Never replays input."""
         return tool_result(service.operation(session_id, operation_id))
+
+    @server.tool(annotations=READ_ONLY)
+    async def battle_get_evidence_frame(
+        session_id: Identifier, operation_id: Identifier, observation_id: Identifier
+    ) -> CallToolResult:
+        """Return one retained original PNG referenced by a recorded operation, including preparation detail frames. Never captures or sends device input."""
+        return evidence_result(
+            service.evidence_frame(session_id, operation_id, observation_id),
+            "image_path",
+        )
+
+    def media_result(value: dict) -> CallToolResult:
+        response = tool_result(value)
+        video = (value.get("media") or value).get("video") or {}
+        artifact_id = (value.get("media") or value).get("artifact_id")
+        if artifact_id:
+            try:
+                video = service.media.store.info(artifact_id).get("video") or {}
+            except RuntimeError:
+                video = {}
+        if video.get("resource_retrievable") and video.get("resource_uri"):
+            response.content.append(
+                ResourceLink(
+                    type="resource_link",
+                    uri=video["resource_uri"],
+                    name="local-video-artifact",
+                    mimeType=video.get("mime_type"),
+                    size=video.get("bytes"),
+                    description="Local video bytes, at most 16 MiB; the manifest distinguishes native acquisition times from imported media PTS",
+                )
+            )
+        return response
+
+    @server.tool(annotations=READ_ONLY)
+    async def battle_record_clip(request: RecordClipRequest) -> CallToolResult:
+        """Bounded native read-only sampled clip: never pauses/resumes. Running game keeps advancing. AVI/MJPEG when verified, plus PNG keyframes."""
+        value = await service.command(
+            "record",
+            request,
+            {
+                "duration_ms": request.duration_ms,
+                "interval_ms": request.interval_ms,
+                "max_frames": request.max_frames,
+            },
+        )
+        response = evidence_result(value, "image_path")
+        response.content.extend(
+            item for item in media_result(value).content if item.type == "resource_link"
+        )
+        return response
+
+    @server.tool(annotations=READ_ONLY)
+    async def battle_get_media(artifact_id: Identifier) -> CallToolResult:
+        """Read retained media manifest/current expiry and bounded video resource availability. No new capture, decoder or provider request."""
+        return media_result(service.media.store.info(artifact_id))
+
+    @server.tool(annotations=READ_ONLY)
+    async def battle_get_media_frames(
+        artifact_id: Identifier,
+        frame_ids: Annotated[list[Identifier], Field(min_length=1, max_length=4)],
+    ) -> CallToolResult:
+        """Read up to four original retained PNG keyframes (16 MiB total). Historical frames never update live state or quarantine."""
+        value, images = service.media.store.read_frames(artifact_id, frame_ids)
+        response = tool_result(value)
+        response.content.extend(
+            ImageContent(
+                type="image",
+                mimeType="image/png",
+                data=base64.b64encode(image).decode("ascii"),
+            )
+            for image in images
+        )
+        return response
+
+    def register_video_resource(extension: str, mime_type: str) -> None:
+        @server.resource(
+            f"battle-media://{{artifact_id}}/video{extension}",
+            mime_type=mime_type,
+            name=f"battle-video-{extension[1:]}",
+        )
+        async def media_video(artifact_id: str) -> bytes:
+            return service.media.store.read_video(artifact_id, mime_type)
+
+    for extension, mime_type in MIME.items():
+        register_video_resource(extension, mime_type)
+
+    @server.tool(annotations=READ_ONLY)
+    async def battle_import_video(request: ImportVideoRequest) -> CallToolResult:
+        """Import an allowlisted basename from media-import-dir into owned immutable media. Native bounded decoding runs in a separate no-device worker; no controller lock."""
+        return media_result(await service.media.import_video(request))
+
+    @server.tool(annotations=READ_ONLY)
+    async def battle_analyze_video(request: AnalyzeVideoRequest) -> CallToolResult:
+        """Experimental VIDEO-TO-COPILOT candidates from an imported full-context video, never execution or live combat/defeat truth. Separate bounded no-device Core worker."""
+        return tool_result(await service.media.analyze_video(request))
 
     @server.tool(annotations=MUTATING)
     async def battle_close() -> CallToolResult:
@@ -409,6 +546,7 @@ def main() -> None:
     )
     parser.add_argument("--intel-config", type=Path)
     parser.add_argument("--loadout-config", type=Path)
+    parser.add_argument("--media-import-dir", type=Path)
     parser.add_argument(
         "--allow-summon",
         action="append",
@@ -434,6 +572,9 @@ def main() -> None:
         touch_mode=args.touch_mode,
         client_type=args.client_type,
         allowed_summons=args.allow_summon,
+        media_import_dir=args.media_import_dir.resolve()
+        if args.media_import_dir
+        else None,
     )
     intelligence = None
     if args.intel_config:

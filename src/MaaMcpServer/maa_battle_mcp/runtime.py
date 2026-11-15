@@ -284,6 +284,7 @@ def enrich_battle_decision(snapshot: dict, map_info: dict | None = None) -> None
             "life_decreased",
             "observed_card_cooling",
             "owned_instance_departed_reason_unknown",
+            "suspected_defeat",
         )
     ]
     if snapshot.get("session_input_blocked") is True:

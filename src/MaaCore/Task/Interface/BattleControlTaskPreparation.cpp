@@ -181,6 +181,8 @@ json::value asst::BattleControlTask::inspect_preparation(const Command& command)
         fields["identity"]["mapping_source"] = "bundled_battle_data_roles";
         fields["identity"]["name_ocr"] = slot.name_evidence ? slot.name_evidence->to_json() : json::value(nullptr);
         fields["identity"]["required_score"] = 0.9;
+        fields["identity"]["name_source"] = slot.name_source;
+        fields["identity"]["raw_candidates"] = slot.name_candidates;
         if (!resolved_id.is_null()) {
             fields["identity"]["source"] = "preparation_vision_with_static_identity_mapping";
             fields["identity"]["verification"] = "derived_from_observed_name_and_ordinary_operator_class";

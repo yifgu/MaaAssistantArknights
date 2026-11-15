@@ -271,6 +271,51 @@ void asst::BattleControlTask::observe_runtime(const CapturedFrame& frame, json::
                     card.get("available", true),
                     instance.cooling_confirmations,
                 });
+            const bool hint = battle::suspected_defeat_hint(
+                {
+                    instance.tag.role != battle::Role::Drone,
+                    true,
+                    count == 1,
+                    ordinary_without_substitute,
+                    instance.owned_presence_verified,
+                    cooling,
+                    card.get("available", true),
+                    instance.cooling_confirmations,
+                },
+                instance.operation_state == OperationState::RetreatInputAttempted,
+                m_terminal_seen || snapshot.get("scene", "") == "terminal");
+            if (hint && !instance.suspected_defeat_reported && instance.presence != Presence::Gone) {
+                record_state_event(
+                    "suspected_defeat",
+                    snapshot,
+                    json::object {
+                        { "claim", "possible_uncommanded_departure_for_host_review" },
+                        { "source", "derived_cooling_advisory_for_multimodal_host" },
+                        { "instance_id", id },
+                        { "game_id", instance.game_id },
+                        { "card_evidence", instance.observed_card_cooling },
+                        { "departure_verified", departed },
+                        { "cause", "unknown" },
+                        { "confidence", nullptr },
+                        { "confidence_reason", "advisory_not_calibrated_defeat_probability" },
+                        { "retreat_input_recorded", false },
+                        { "record_coverage", "this_session_only" },
+                        { "alternative_causes",
+                          json::array {
+                              "external_or_pre_session_input",
+                              "mechanic_or_forced_retreat",
+                              "identity_or_ownership_uncertainty",
+                          } },
+                        { "requires_host_review", true },
+                        { "authorizes_input", false },
+                        { "changes_presence", false },
+                        { "releases_tile", false },
+                    });
+                instance.suspected_defeat_reported = true;
+            }
+            if (!cooling) {
+                instance.suspected_defeat_reported = false;
+            }
             if (departed && instance.presence != Presence::Gone) {
                 instance.departure_evidence = json::object {
                     { "source", "two_fresh_unique_ordinary_cooling_cards_and_selected_kind_history" },

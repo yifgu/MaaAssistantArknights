@@ -21,6 +21,8 @@ public:
         Rect avatar_rect;
         std::optional<TextRect> name_evidence;
         double flag_score = 0;
+        json::array name_candidates;
+        std::string name_source;
     };
 
     using ResultsVec = std::vector<Result>;

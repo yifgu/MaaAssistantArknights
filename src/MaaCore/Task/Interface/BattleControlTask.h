@@ -13,6 +13,7 @@
 
 #include "Task/BattleHelper.h"
 #include "Task/InterfaceTask.h"
+#include "Utils/BattleMedia.h"
 
 namespace asst
 {
@@ -56,6 +57,19 @@ private:
         std::vector<std::string> game_ids;
         cv::Mat avatar;
         json::value layout = json::array();
+    };
+
+    struct Recording
+    {
+        std::string id;
+        int interval_ms = 500;
+        size_t max_frames = 24;
+        size_t raw_bytes = 0;
+        size_t reserve_frames = 3;
+        std::vector<battle::MediaFrame> frames;
+        std::chrono::steady_clock::time_point first {};
+        std::chrono::steady_clock::time_point last {};
+        std::string partial_reason;
     };
 
     enum class Presence
@@ -114,6 +128,7 @@ private:
         std::chrono::steady_clock::time_point last_cooling_capture {};
         std::chrono::steady_clock::time_point last_cooling_break_capture {};
         json::array cooling_evidence;
+        bool suspected_defeat_reported = false;
     };
 
     bool tile_reserved(const Point& location) const;
@@ -136,6 +151,10 @@ private:
     json::value execute_step(const Command& command, json::value snapshot);
     json::value execute_wait(const Command& command, CapturedFrame frame, json::value snapshot);
     json::value execute_speed(const Command& command, CapturedFrame frame, json::value snapshot);
+    json::value execute_record(const Command& command, CapturedFrame frame, json::value snapshot);
+    Recording recording_options(const json::value& options) const;
+    void sample_recording(Recording& recording, const CapturedFrame& frame, bool final = false) const;
+    json::value finish_recording(const Command& command, Recording& recording) const;
     json::value preparation(const CapturedFrame& frame);
     json::value inspect_preparation(const Command& command);
     bool settle_pause(const Command& command, CapturedFrame& frame, json::value& snapshot);
