@@ -1,7 +1,6 @@
 """Static decision support; never promotes supplied configuration to live observation."""
 
 import hashlib
-import json
 import time
 from pathlib import Path
 
@@ -206,19 +205,8 @@ class DecisionContext:
                         }
         enrich_battle_decision(snapshot, map_info)
 
-    def evaluate(self, map_info: dict, placements: list[Placement]) -> dict:
-        path = self.settings.resource_dir / "resource/battle_data.json"
-        try:
-            raw = path.read_bytes()
-            data = json.loads(raw)
-        except (OSError, ValueError) as exc:
-            raise DecisionError(f"Cannot read bundled battle ranges: {exc}") from exc
-        ids = [item.operator_game_id for item in placements]
-        if len(ids) != len(set(ids)):
-            raise DecisionError(
-                "Duplicate operators require instance tracking, which is unsupported"
-            )
-        tiles = {tuple(tile["location"]): tile for tile in map_info["tiles"]}
+    def prepare_placements(self, placements: list[Placement]) -> list[dict]:
+        """Resolve caller assumptions without duplicating native battle geometry."""
         loadouts = (
             {}
             if self.config is None
@@ -226,62 +214,12 @@ class DecisionContext:
         )
         results = []
         for placement in placements:
-            props = data.get("chars", {}).get(placement.operator_game_id)
-            if props is None:
-                raise DecisionError(
-                    f"Unknown operator game ID: {placement.operator_game_id}"
-                )
-            if props.get("profession") not in {
-                "PIONEER",
-                "WARRIOR",
-                "TANK",
-                "SNIPER",
-                "CASTER",
-                "MEDIC",
-                "SUPPORT",
-                "SPECIAL",
-            }:
-                raise DecisionError(
-                    "Summon/device coverage requires instance semantics and is unsupported"
-                )
             elite = placement.assumed_elite
             source = "caller_assumption"
             if elite is None:
                 configured = loadouts.get(placement.operator_game_id)
                 elite = configured.actual_elite if configured else None
                 source = "user_supplied_loadout" if elite is not None else "unknown"
-            ranges = props.get("rangeId", [])
-            range_id = (
-                ranges[elite] if elite is not None and elite < len(ranges) else None
-            )
-            relative = data.get("ranges", {}).get(range_id)
-            cells = None
-            if relative is not None:
-                cells = set()
-                for dx, dy in relative:
-                    for _ in range(
-                        ("Right", "Up", "Left", "Down").index(placement.direction)
-                    ):
-                        dx, dy = dy, -dx
-                    absolute = (placement.location[0] + dx, placement.location[1] + dy)
-                    if absolute in tiles:
-                        cells.add(absolute)
-            tile = tiles.get(tuple(placement.location))
-            position = {"MELEE": 1, "RANGED": 2, "ALL": 3}.get(props.get("position"))
-            compatible = (
-                tile is not None
-                and position is not None
-                and (
-                    tile["buildable_type"] == 3
-                    or tile["buildable_type"] in (1, 2)
-                    and position in (tile["buildable_type"], 3)
-                )
-            )
-            conflicts = [
-                other.operator_game_id
-                for other in placements
-                if other is not placement and other.location == placement.location
-            ]
             results.append(
                 {
                     "operator_game_id": placement.operator_game_id,
@@ -289,42 +227,18 @@ class DecisionContext:
                     "direction": placement.direction,
                     "elite": elite,
                     "elite_source": source,
-                    "base_range_id": range_id,
-                    "base_range_cells": None
-                    if cells is None
-                    else [list(cell) for cell in sorted(cells)],
-                    "geometric_allied_coverage": None
-                    if cells is None
-                    else [
-                        other.operator_game_id
-                        for other in placements
-                        if tuple(other.location) in cells
-                    ],
-                    "static_buildability_compatible": compatible,
-                    "conflicting_operators": conflicts,
-                    "uncertainties": [
-                        "Base geometry only; no equipped-skill, talent, module, healing eligibility or terrain-effect inference.",
-                        *(
-                            []
-                            if cells is not None
-                            else [
-                                "Elite or range data is unknown; no fallback range was substituted."
-                            ]
-                        ),
-                    ],
                 }
             )
+        return results
+
+    def placement_source(self) -> dict:
+        path = self.settings.resource_dir / "resource/battle_data.json"
+        try:
+            raw = path.read_bytes()
+        except OSError as exc:
+            raise DecisionError(f"Cannot read bundled battle ranges: {exc}") from exc
         return {
-            "status": "succeeded",
-            "scope": "candidate_formation_not_live_occupancy",
-            "stage_id": map_info["stage_id"],
-            "coordinate_system": "maa_grid",
-            "range_source": {
-                "kind": "bundled_static",
-                "source_sha256": hashlib.sha256(raw).hexdigest(),
-            },
-            "placements": results,
-            "warnings": [
-                "Not a survival, healing, skill-effect or optimality proof. Existing battlefield occupancy must be checked separately."
-            ],
+            "kind": "bundled_static",
+            "source_sha256": hashlib.sha256(raw).hexdigest(),
+            "verification": "configured_resource_file_not_native_loaded_bytes",
         }

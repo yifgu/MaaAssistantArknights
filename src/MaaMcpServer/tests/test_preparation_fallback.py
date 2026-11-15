@@ -116,7 +116,7 @@ async def test_original_preparation_frame_retrieval_is_durable_readonly_and_allo
         await service.prepare("stage", "normal")
         await service.close()
         before = list(backend.calls)
-        server = create_server(service)
+        server = create_server(service, tool_profile="full")
         result = await server.call_tool(
             "battle_get_evidence_frame",
             {

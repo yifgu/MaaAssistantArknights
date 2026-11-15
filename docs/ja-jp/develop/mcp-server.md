@@ -7,7 +7,29 @@ order: 20
 
 `src/MaaMcpServer` は、MaaCore を独立した worker プロセスで実行するローカル stdio MCP サーバーです。Python 3.11+、uv、このブランチからビルドした Core が必要です。旧版には `BattleControl` タスクがありません。実験的な戦闘操作機能であり、危機契約の自動最適化ツールではありません。
 
+## ツールプロファイルと応答契約
+
+`--tool-profile minimal|full` の既定は `minimal` です。Python では `create_server(service, intelligence=None, tool_profile="minimal")` を使えます。既定の `tools/list` は次の 10 ツールのみです。
+
+- 接続とライフサイクル：`battle_status`、`battle_connect`、`battle_attach`、`battle_close`。
+- 読み取り専用の証拠と資料：`battle_observe`、`battle_get_unit_info`、`battle_get_operation`。
+- 明示的なデバイス入力：`battle_inspect_preparation`、`battle_identify`、`battle_step`。
+
+`intel_query` は `--intel-config` 設定時だけ登録し、どちらのプロファイルにも 1 ツール追加します。provider 未設定の空ツールは公開しません。`full` は従来の非情報ツール 27 個を公開し、旧操作、独立した停止／再開、戦闘前補助、メディア、幾何評価を含みます。情報設定時は 28 個です。既存の拡張を使うクライアントは `--tool-profile full` を追加し、`tools/list` を更新してください。読み取りとデバイス入力を万能 action ツールに混在させません。
+
+`battle_observe(session_id, include_image=false, include_map=false, duration_ms=0, operation_id=null, timeout_ms=10000)` が統一された受動的入口です。暗黙の識別、停止、再開、入力は行いません。通常観測は同一フレームの PNG を保存しますが既定では添付せず、`include_image=true` で同じ原画像を添付します。`include_map=true` は追加撮影なしで構造化された静的マップを返し、既定は構造化参照です。`duration_ms=100..8000` は読み取り専用 `finalize` を再利用し、**セッションの入力がブロックされた場合のみ**使えます。`timeout_ms`（1..30000）を超えられず、実行中のゲームを停止しません。操作 ID を省略すると生成した ID を `command_id` で返し、指定した ID は永続的な再送規則に従います。
+
+minimal 応答は**トップレベル**に canonical `battle_decision` を 1 個返し、返却時、通常観測、操作境界の順でスナップショットを優先します。ネストしたスナップショットのメタデータ、安全、操作結果、証拠参照は維持し、`battle_decision`、`deployment`、`battlefield` の重複展開を省きます。未知の値や理由は省略しません。応答の投影であり、`operations.sqlite3` の監査原本は削除しません。full は従来のネスト／生データ形状と旧入口の画像添付を維持し、minimal は既定で PNG を添付しません。
+
+構造化された操作境界の証拠が必要なら、どちらのプロファイルでも `battle_get_operation(session_id, operation_id, detail="full")` を使えます。保存済み結果を変更せず、完全な `capture_time_snapshot`／`return_time_snapshot` とそれぞれの構造化判断、および証拠参照を返します。再観測、入力、記録の書き換えはしません。既定の `detail="summary"` はプロファイルに従い、minimal では簡潔な要約、full では互換性のため引き続き完全な結果です。full 操作詳細は PNG を添付せず、プロファイル変更も不要です。full の pause／speed step もネイティブ `image_path` PNG を添付し、同じ画像パスは 1 回だけ添付します。
+
+保存した操作フレームは `image/png` MCP resource `battle-evidence://{session_id}/{operation_id}/{observation_id}` で取得できます。応答は `evidence[].resource_uri` とリンクを公開します。記録済み原 PNG を返し、再撮影せず、終了後も保存期間内なら読めます。操作に紐付く ID のみ許可し、任意パスは受け付けません。full の `battle_get_evidence_frame` も維持します。期限切れはエラーとし、合成や再撮影で補いません。
+
+`battle_step.request` は action 判別の `oneOf` Schema で、各分岐の必須フィールドと `additionalProperties=false` を公開します。`deploy` は `unit_id`、`location`、`direction`、`retreat`／`skill` は `unit_id`、`wait` は `duration_ms` が必須です。`pause` は個体、位置、向き、時間を受け取らず、停止して確認するだけで戦闘を進めません。`speed` は整数 `multiplier=1|2` が必須で、確認済み停止時のみ使えます。`recording` は wait 専用で、時間／期限／枚数の関係も入力前に検証します。手動停止の引き継ぎは引き続き明示的な `adopt_manual_pause=true` が必要です。独立した `battle_set_paused(paused=false)` は full 専用で、有界 step ではありません。
+
 ## 構造化された戦闘判断ビュー
+
+通常のネイティブ観測も同一フレームの PNG を保存します。HP バーの `field_units` は全候補マス（`candidate_locations`）、競合／投影状態、向きの証拠、`requested_instance_candidates` を返し、最初の一致で位置を決めません。`instance_association`、個体の `spatial_evidence` と `action_verification` は不足条件を保持します。候補は確認済み ID／マスの対応ではなく、`instance_id`、`game_id`、`location` は不明、`authorizes_input=false` です。選択 ID をマスへ結び付ける正の規則と撤退ボタン enabled 状態の規則がないため `VerifiedTileAnchor` は未確立です。スキル／撤退は引き続き拒否し、自律スキル実行や配置／撤退ループ完成は主張しません。
 
 スナップショットに `battle_decision.schema_version=1` を追加し、ネイティブプロトコルは 1 のままです。領域は `safety`、`progress`、`deployment`、`allies`、`terrain`、`enemies`、`mechanics`、`events`、`coverage`、`inspection`、`alerts` です。各値に出典、確認状態、理由、観測 ID、取得時刻、新鮮度を保持します。未取得は空の戦場を意味せず、`allies.action_history` は現在の存在状態と独立です。
 
@@ -25,11 +47,15 @@ order: 20
 
 戦闘前結果の `host_fallback.required` とスロット／フィールド別 `items` に理由、生候補、ROI、証拠、`retrieval` 参照を返します。未取得のスキル・レベル・ID は不明のままです。マルチモーダル宿主の確認用であり、解釈を自動的にネイティブ事実へ昇格せず、安全ロック変更や追加画面操作もしません。
 
-`battle_get_evidence_frame(session_id, operation_id, observation_id)` は操作に保存された元 PNG 1 枚を ImageContent で返します。編成復帰画像だけでなく過去の戦闘前詳細画像も対象です。記録済み操作の ID のみ許可し、不明／曖昧なフレーム、別セッションのパス、シンボリックリンクによる逸脱、16 MiB 超の画像を拒否します。終了後も記録とファイルが残れば取得できます。再撮影やデバイス操作はせず `frame_is_live=false` を返します。
+フィールド別 `items[].retrieval.resource_uri` は記録済み原 PNG の資源参照を再利用します。minimal は未登録の full 専用ツールを案内せず、full は互換ツールと資源を併記します。記録済み参照がなければ minimal は `available=false` と null の資源 URI を返します。過去操作の `detail="full"` を含む読み取りにも同じ投影を適用し、取得案内だけを変更して永続的な事実や記録原本は変えません。
+
+原画像 resource、または full の `battle_get_evidence_frame(session_id, operation_id, observation_id)`（ImageContent）は操作に保存された元 PNG 1 枚を返します。編成復帰画像だけでなく過去の戦闘前詳細画像も対象です。記録済み操作の ID のみ許可し、不明／曖昧なフレーム、別セッションのパス、シンボリックリンクによる逸脱、16 MiB 超の画像を拒否します。終了後も記録とファイルが残れば取得できます。再撮影やデバイス操作はせず `frame_is_live=false` を返します。
 
 ネイティブの `suspected_defeat` は重複排除された**宿主確認用の提示**であり、エンジンの撃破イベントではありません。同一セッションの撤退入力記録がない、唯一の通常・非身代わり種別の配置記録が冷却状態なら、所有関係／離場未確認でも提示できます。`departure_verified=false`、原因不明、信頼度 null、`record_coverage="this_session_only"` と代替原因を明示します。重複・召喚・身代わりの曖昧さや終局の片付けでは提示しません。存在状態変更、マス解放、入力許可には使わず、外部／セッション前入力やギミックも候補のままです。
 
 ## ローカルメディアと実験的な動画候補
+
+以下の独立メディアツールは full 専用です。明示的に許可した wait recording とその資源リンクは minimal でも使えます。
 
 `battle_record_clip(request)` は戦闘 `session_id`、永続 `operation_id`、`duration_ms`（100–8000、既定 2000）、`interval_ms`（200–2000、既定 500）、`max_frames`（2–24、既定 24）、通常の `timeout_ms` を受け取ります。時間・間隔・枚数の不可能な組合せは事前拒否します。**入力を送らず**停止／再開もしません。実行中のゲームは進み続け、最終スナップショットと PNG は実取得フレームに対応します。
 
@@ -174,13 +200,13 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 }
 ```
 
-`battle_connect`、`battle_attach(stage_name="main_01-07")`、`battle_capture_evidence`、`battle_observe` の順で呼び出します。ステージ ID は画面と一致している必要があります。マップの指定は呼び出し側の責任で、自動認識ではありません。`battle_get_map` は静的なマス、2 種類の画面投影、最新の画素変化を返します。不明な名前は null です。`battle_identify` は詳細画面を開いて認識し、一時停止を要求します。実行後に画像を確認してから `battle_set_paused(paused=false)` で明示的に再開してください。
+`battle_connect`、`battle_attach(stage_name="main_01-07")`、`battle_observe(session_id=..., include_image=true, include_map=true)` の順に呼びます。ステージ ID は実画面と一致させてください。指定は呼び出し側の責任で、自動認識ではありません。不明な名前は null です。`battle_identify` は詳細を開いて停止を要求するため、証拠を確認してから有界 `battle_step` を使います。full の `battle_get_map` は静的マス、2 種類の画面投影、最新の画素変化を返します。
 
 `battle_get_map` の MCP 画像は現在 PNG（`image_path`）、基準 PNG（`baseline_image_path`）の順です。同じパスなら 1 枚のみ添付し、有効な基準がなければ基準画像を添付しません。ホストは Core のファイルシステムに直接アクセスせず二次認識できます。差分フィールドと制限は後述します。
 
 手動一時停止の引き継ぎには、`battle_identify` の厳密な boolean 引数 `request.adopt_manual_pause=true` が必要です。既定値は false で、再開を許可しません。Core は明確な停止証拠を要求します。実行ボタンの不在だけでは不十分で、入場タイトルの遷移は引き継げません。停止中にカードを確認し、部分 OCR でも `pause_verified`、`safe_state`、同一フレームの `snapshot` / `image_path` と PNG を返します。保存失敗は `evidence_error` に記録され、キャンセルや worker 障害では最終証拠が得られない場合がありますが、自動再開しません。
 
-配置リクエストの例です。セッション ID と観測されたユニット ID を置き換えます。ツール引数には `request` オブジェクトが必要です。
+full の旧入口 `battle_deploy` の例です。セッション ID と観測されたユニット ID を置き換えます。ツール引数には `request` オブジェクトが必要です。
 
 ```json
 {
@@ -212,9 +238,9 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 }
 ```
 
-`action` は `deploy`、`retreat`、`skill`、`wait` です。配置には `location` と `direction` も必要です。手動停止の再開には `adopt_manual_pause=true` と新しい停止証拠が必要です。操作は最大 1 回で、操作境界を解析してから停止を要求し、新しい画像と `pause_verified` を返します。キャンセル時は Core の後処理を待ちますが、worker 障害時は停止が不明になる場合があります。`battle_step.timeout_ms` は既定 10000、上限 30000 で、呼び出し側の予算を勝手に延長しません。
+`action` は `deploy`、`retreat`、`skill`、`wait`、`pause`、`speed` で、分岐ごとの引数は前述の Schema に従います。手動停止の再開には `adopt_manual_pause=true` と新しい停止証拠が必要です。操作は最大 1 回で、境界を解析して停止を要求し、新しい証拠と `pause_verified` を返します。pause／speed は再開しません。キャンセル時は Core の後処理を待ちますが、worker 障害時は停止が不明になる場合があります。`battle_step.timeout_ms` は既定 10000、上限 30000 で、予算を勝手に延長しません。
 
-`captured_at_ms` は画像取得直後、解析前に記録したホストの Unix ミリ秒時刻で、端末の描画時刻ではありません。`capture_time_snapshot` は `capture_image_path`（操作境界）、`return_time_snapshot` は `return_image_path`（その後の停止確認）に対応します。MCP 画像は従来どおり返却時の画像、操作境界の画像の順です。`observation_id` は取得順ではなく解析順に増加するため、操作境界の ID が大きくても時刻は早い場合があります。システム時計の調整は時間差に影響し、これらの時刻は実行時間の厳密な上限ではありません。同一操作の再送は元の時刻とパスを保持し、新しい撮影にはその取得時刻を記録します。
+`captured_at_ms` は画像取得直後、解析前に記録したホストの Unix ミリ秒時刻で、端末の描画時刻ではありません。`capture_time_snapshot` は `capture_image_path`（操作境界）、`return_time_snapshot` は `return_image_path`（その後の停止確認）に対応します。full の MCP 画像は返却時、操作境界の順で、minimal は原画像 resource を公開します。`observation_id` は取得順ではなく解析順に増加するため、操作境界の ID が大きくても時刻は早い場合があります。システム時計の調整は時間差に影響し、これらの時刻は実行時間の厳密な上限ではありません。同一操作の再送は元の時刻とパスを保持し、新しい撮影にはその取得時刻を記録します。
 
 `battle_identify` は `identified_count`、`unresolved_count`、`ambiguous_count` とカードごとの `identity_reason` を返します。空の名前を持つキャッシュ項目が詳細 OCR を抑制することはなくなりました。その他の操作が `outcome_unknown` を返すと MCP の `isError=true` になります。`helper_returned=true` や `action_returned=true` でもゲーム内の成功は保証されません。再撮影して確認し、無条件に再試行しないでください。配置位置の情報源は `action_history_unverified`、敵の状態は null です。モデルによる状態の直接上書きには対応しません。単独の一時停止要求は停止確認と同じではなく、再開は本サーバーが要求または明示的に引き継いだ停止に限定されます。
 
@@ -280,9 +306,11 @@ PRTS の対応は `stage → get_stage_enemies(stage_id)`、`operator → get_op
 
 リージョン、ステージ、明示モードは一致する必要があります。`actual_level`、`potential`、`module_id`、`module_level`、`skill_level`、`mastery` も指定でき、省略は unknown です。スナップショットの `decision_context` は項目ごとの情報源、ユーザー確認、設定ハッシュを別途保持し、ネイティブ観測を上書きせず、ユーザー確認を視覚的確認と呼びません。SP、スキル段階、持続時間、素質は不明のままです。曖昧な game ID 候補の先頭を勝手に選びません。
 
-`battle_evaluate_placement(session_id, placements)` は候補編成全体を読み取り専用で確認します。各項目に `operator_game_id`、`location`、`direction` を指定し、昇進段階は設定から取得するか `assumed_elite` で仮定を明示します。基本範囲、幾何学的な味方カバー、静的配置適合性、マス競合を返します。不明な段階／範囲に職業の既定テンプレートは使いません。現場の占有、回復対象条件、生存や最適性は検証せず、スキル・モジュール・素質・特殊地形効果も含みません。敵のリアルタイム追跡は未対応です。
+full の `battle_evaluate_placement(session_id, placements)` は Core の共通幾何実装を使い、Python に別の投影アルゴリズムを置かず候補編成全体を読み取り専用で確認します。各項目に `operator_game_id`、`location`、`direction` を指定し、昇進段階は設定から取得するか `assumed_elite` で仮定を明示します。基本範囲、幾何学的な味方カバー、静的配置適合性、マス競合を返します。不明な段階／範囲に職業の既定テンプレートは使いません。現場の占有、回復対象条件、生存や最適性は検証せず、スキル・モジュール・素質・特殊地形効果も含みません。敵のリアルタイム追跡は未対応です。
 
 ## 場面の証拠、準備観測と制限付き操作
+
+minimal では `battle_observe(duration_ms=..., ...)` で有界・読み取り専用の復旧証拠を取得します。以下の独立撮影／終局／戦闘前補助ツールは full 専用です。
 
 `scene` は `running / paused / transition / terminal / unknown` を区別します。全サンプルで終局を確認し、明確な終局証拠は残存する戦闘 UI より優先します。戦闘確認後、戦闘内の `transition` は `input_block_reason=pause_verification_pending` として入力を禁止し、直ちに恒久的な終局隔離とは扱いません。復旧には明確な一時停止証拠を持つ新しい画像を連続 2 回取得する必要があり、実行中または遷移画像で回数をリセットします。実行ボタンの不在だけでは一時停止と判断しません。一時停止処理の最後に行う読み取り専用確認の時間枠は、3000 ms と ｢観測済みの最大フレーム取得・解析時間の 2 倍 + 1000 ms｣ の大きい方とし、2 フレームの確認とポーリングの時間を確保します。ただし常に命令の残り時間を上限とし、キャンセルで確認を停止します。不明のままなら入力禁止を維持します。
 
@@ -377,4 +405,4 @@ python tools/ResourceUpdater/generate_unit_info.py \
 
 `identify` は省略可能な厳密な boolean 引数 `args.adopt_manual_pause`（既定値 false）を受け付けます。明示的な引き継ぎは認識済みの停止を管理下に置くだけで、停止を切り替えたり、この認識操作による再開を許可したりするものではありません。
 
-`step` はユニット引数なしの `args.action="wait"` と `args.duration_ms` にも対応します。実行中は `AsstSetTaskParams` に `{"session_id":"…","cancel_command_id":"…"}` を送信できます。対応するコマンドに取消信号を設定するだけで、端末操作や 2 件目の結果は生成しません。遅延した取消は次のコマンドに影響せず、元のコールバックが後処理結果を返します。MCP は元の `operation_id` で保存と重複排除を行います。
+`step` はユニットなしの `args.action="wait"` と `args.duration_ms`、操作引数なしの `args.action="pause"`、確認済み停止時限定の `args.action="speed"` と `args.multiplier=1|2` にも対応します。読み取り専用 `evaluate_placement` は `placements` 配列を受けて Core 幾何を再利用します。実行中は `AsstSetTaskParams` に `{"session_id":"…","cancel_command_id":"…"}` を送信できます。対応するコマンドに取消信号を設定するだけで、端末操作や 2 件目の結果は生成しません。遅延した取消は次のコマンドに影響せず、元のコールバックが後処理結果を返します。MCP は元の `operation_id` で保存と重複排除を行います。

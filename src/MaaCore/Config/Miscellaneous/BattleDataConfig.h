@@ -1,6 +1,7 @@
 #pragma once
 #include "Config/AbstractConfig.h"
 
+#include <functional>
 #include <optional>
 #include <ranges>
 #include <unordered_map>
@@ -26,7 +27,9 @@ public:
 
     bool load_unit_info(const std::filesystem::path& path);
     json::value get_unit_info(const std::string& game_id) const;
+    json::value get_unit_summary(const std::string& game_id) const;
     UnitCapabilities get_unit_capabilities(const std::string& game_id) const;
+    std::optional<std::reference_wrapper<const battle::AttackRange>> find_range_by_id(const std::string& id) const;
 
     // 按名取第一个命中条目的 id，找不到返回 nullopt。
     // role 为 Unknown 时全表按名找，指定 role 时只在对应职业桶内找；同名多条时命中哪条取决于哈希序，

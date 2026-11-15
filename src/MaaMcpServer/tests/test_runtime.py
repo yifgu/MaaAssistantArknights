@@ -11,6 +11,11 @@ def test_whole_decision_contract_preserves_unknown_domains_and_native_evidence(
         "captured_at_ms": 200,
         "scene": "paused",
         "session_input_blocked": False,
+        "instance_association": {
+            "status": "candidate_only",
+            "selected_tile_anchor": "unavailable",
+            "retreat_button_enabled_state": "unavailable",
+        },
         "life": 2,
         "life_delta": -1,
         "life_evidence": {
@@ -31,6 +36,15 @@ def test_whole_decision_contract_preserves_unknown_domains_and_native_evidence(
                 "presence_source": "input_is_not_placement_evidence",
                 "location": [1, 2],
                 "location_verified": False,
+                "spatial_evidence": {
+                    "verification": "unknown",
+                    "reason": "selected_tile_anchor_unavailable",
+                    "authorizes_input": False,
+                },
+                "action_verification": {
+                    "verified": False,
+                    "reason": "input_is_not_placement_evidence",
+                },
                 "operation_state": "deployment_input_attempted",
                 "runtime": {
                     "skill_ready": {
@@ -46,7 +60,16 @@ def test_whole_decision_contract_preserves_unknown_domains_and_native_evidence(
                 },
             }
         ],
-        "field_units": [{"score": 0.99, "instance_id": None}],
+        "field_units": [
+            {
+                "score": 0.99,
+                "instance_id": None,
+                "candidate_locations": [[1, 2], [2, 2]],
+                "projection_status": "ambiguous",
+                "direction_evidence": {"verification": "candidate_only"},
+                "authorizes_input": False,
+            }
+        ],
     }
     DecisionContext(settings).enrich_snapshot(snapshot)
     view = snapshot["battle_decision"]
@@ -63,8 +86,13 @@ def test_whole_decision_contract_preserves_unknown_domains_and_native_evidence(
     assert ally["runtime"]["skill_active"]["value"] is None
     assert ally["runtime"]["healing_enabled"]["value"] is None
     assert ally["configuration"]["actual_level"]["value"] is None
+    assert ally["spatial_evidence"] == snapshot["battlefield"][0]["spatial_evidence"]
+    assert ally["action_verification"]["verified"] is False
     assert ally["action_availability"]["skill"]["status"] == "blocked"
     assert view["allies"]["field_units"][0]["instance_id"] is None
+    assert view["allies"]["instance_association"] == snapshot["instance_association"]
+    assert view["allies"]["field_units"][0]["candidate_locations"] == [[1, 2], [2, 2]]
+    assert view["allies"]["field_units"][0]["authorizes_input"] is False
     assert len(view["allies"]["action_history"]) == 1
 
 

@@ -86,19 +86,57 @@ json::value asst::BattleDataConfig::get_unit_info(const std::string& game_id) co
     return unit;
 }
 
+json::value asst::BattleDataConfig::get_unit_summary(const std::string& game_id) const
+{
+    const auto* chars = m_unit_info.find_value("chars");
+    const auto* unit = chars ? chars->find_value(game_id) : nullptr;
+    if (!unit) {
+        return json::object {
+            { "game_id", game_id },
+            { "entity_kind", "unknown" },
+            { "metadata_status", "unavailable" },
+        };
+    }
+    json::value summary = json::object {
+        { "game_id", game_id },
+        { "entity_kind", unit->at("entity_kind") },
+        { "metadata_status", "available" },
+        { "capabilities", unit->at("capabilities") },
+        { "source", m_unit_info.at("source") },
+    };
+    if (const auto* support = unit->find_value("execution_support")) {
+        summary["execution_support"] = *support;
+    }
+    return summary;
+}
+
 asst::BattleDataConfig::UnitCapabilities asst::BattleDataConfig::get_unit_capabilities(const std::string& game_id) const
 {
-    const auto info = get_unit_info(game_id);
     UnitCapabilities result;
-    if (const auto capabilities = info.find<json::object>("capabilities")) {
-        auto read = [&](const std::string& key) -> std::optional<bool> {
-            return capabilities->contains(key) ? capabilities->at(key).find<bool>("value") : std::nullopt;
-        };
-        result.standard_drag = read("standard_drag");
-        result.direction = read("direction");
-        result.manual_retreat = read("manual_retreat");
+    const auto* chars = m_unit_info.find_value("chars");
+    const auto* unit = chars ? chars->find_value(game_id) : nullptr;
+    if (!unit) {
+        return result;
     }
+    const auto& capabilities = unit->at("capabilities");
+    const auto read = [&](const std::string& key) -> std::optional<bool> {
+        const auto* capability = capabilities.find_value(key);
+        return capability ? capability->find<bool>("value") : std::nullopt;
+    };
+    result.standard_drag = read("standard_drag");
+    result.direction = read("direction");
+    result.manual_retreat = read("manual_retreat");
     return result;
+}
+
+std::optional<std::reference_wrapper<const asst::battle::AttackRange>>
+    asst::BattleDataConfig::find_range_by_id(const std::string& id) const
+{
+    const auto range = m_ranges.find(id);
+    if (range == m_ranges.end()) {
+        return std::nullopt;
+    }
+    return std::cref(range->second);
 }
 
 bool asst::BattleDataConfig::parse(const json::value& json)

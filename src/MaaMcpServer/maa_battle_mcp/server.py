@@ -3,9 +3,11 @@ import base64
 import json
 import logging
 import shutil
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Literal
+from urllib.parse import quote, unquote
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import (
@@ -29,6 +31,7 @@ from .models import (
     IdentifyRequest,
     ImportVideoRequest,
     IntelligenceConfig,
+    OperationRequest,
     PauseRequest,
     Placement,
     PreparationRequest,
@@ -59,16 +62,192 @@ def tool_result(value: dict) -> CallToolResult:
 
 
 def create_server(
-    service: BattleService, intelligence: IntelligenceClient | None = None
+    service: BattleService,
+    intelligence: IntelligenceClient | None = None,
+    *,
+    tool_profile: Literal["minimal", "full"] = "minimal",
 ) -> FastMCP:
-    def evidence_result(value: dict, *keys: str) -> CallToolResult:
+    if tool_profile not in ("minimal", "full"):
+        raise ValueError("tool_profile must be minimal or full")
+
+    def evidence_references(value: dict) -> list[dict]:
+        session_id = value.get("session_id")
+        operation_id = value.get("operation_id") or value.get("command_id")
+        if operation_id is None and isinstance(value.get("host_fallback"), dict):
+            operation_id = value.get("preparation_id")
+        if not session_id or not operation_id:
+            return []
+        frames = [
+            frame
+            for frame in value.get("evidence_frames", [])
+            if isinstance(frame, dict)
+        ]
+        if value.get("observation_id") and value.get("image_path"):
+            frames.append(value)
+        for snapshot_key, image_key in (
+            ("snapshot", "image_path"),
+            ("capture_time_snapshot", "capture_image_path"),
+            ("return_time_snapshot", "return_image_path"),
+            ("terminal", "terminal_evidence_path"),
+        ):
+            snapshot = value.get(snapshot_key) or {}
+            if isinstance(snapshot, dict):
+                path = value.get(image_key) or snapshot.get("image_path")
+                if path:
+                    frames.append({**snapshot, "image_path": path})
+        references = {}
+        for frame in frames:
+            observation_id = frame.get("observation_id")
+            if not observation_id or not frame.get("image_path"):
+                continue
+            uri = "battle-evidence://" + "/".join(
+                quote(str(part), safe="")
+                for part in (session_id, operation_id, observation_id)
+            )
+            references[uri] = {
+                "resource_uri": uri,
+                "mime_type": "image/png",
+                "session_id": session_id,
+                "operation_id": operation_id,
+                "observation_id": observation_id,
+                "captured_at_ms": frame.get("captured_at_ms"),
+                "image_path": frame["image_path"],
+                "frame_is_live": False,
+            }
+        return list(references.values())
+
+    def response_value(value: dict, *, compact: bool = True) -> dict:
+        references = evidence_references(value)
+        value = {**value, **({"evidence": references} if references else {})}
+        fallback = value.get("host_fallback")
+        if isinstance(fallback, dict):
+            indexed = {
+                (
+                    frame["session_id"],
+                    frame["operation_id"],
+                    frame["observation_id"],
+                ): frame
+                for frame in references
+            }
+            items = []
+            for item in fallback.get("items", []):
+                retrieval = item.get("retrieval")
+                if not isinstance(retrieval, dict):
+                    items.append(item)
+                    continue
+                frame = indexed.get(
+                    (
+                        retrieval.get("session_id"),
+                        retrieval.get("operation_id"),
+                        retrieval.get("observation_id"),
+                    )
+                )
+                frame = frame if retrieval.get("available") else None
+                retrieval = {
+                    **retrieval,
+                    "resource_uri": frame["resource_uri"] if frame else None,
+                    "mime_type": "image/png" if frame else None,
+                }
+                if tool_profile == "minimal":
+                    retrieval.pop("tool", None)
+                    retrieval["available"] = frame is not None
+                items.append({**item, "retrieval": retrieval})
+            value["host_fallback"] = {**fallback, "items": items}
+        if tool_profile == "full" or not compact:
+            return value
+        canonical = None
+        for key in ("return_time_snapshot", "snapshot", "capture_time_snapshot"):
+            snapshot = value.get(key)
+            if isinstance(snapshot, dict) and isinstance(
+                snapshot.get("battle_decision"), dict
+            ):
+                canonical = snapshot["battle_decision"]
+                break
+        canonical = canonical or value.get("battle_decision")
+        if canonical is None:
+            return value
+        terrain = canonical.get("terrain") or {}
+        geometry = terrain.get("static_geometry")
+        if isinstance(geometry, dict):
+            canonical = {
+                **canonical,
+                "terrain": {
+                    **terrain,
+                    "static_geometry": {
+                        key: geometry[key]
+                        for key in ("stage_id", "level_id", "width", "height")
+                        if key in geometry
+                    },
+                    "geometry_retrieval": {
+                        "tool": "battle_observe",
+                        "include_map": True,
+                        "source": "caller_bound_static_map_not_live_visual_terrain",
+                    },
+                },
+            }
+        projected = {
+            "deployment",
+            "battlefield",
+            "field_units",
+            "field_unit_detection",
+            "dynamic_overlay",
+            "state_events",
+            "event_cursor",
+            "events_retained_from",
+            "cost",
+            "kills",
+            "total_kills",
+            "life",
+            "life_evidence",
+            "life_delta",
+            "life_delta_evidence",
+            "speed",
+            "battle_decision",
+        }
+        value = {key: item for key, item in value.items() if key not in projected}
+        value["battle_decision"] = canonical
+        for key in ("snapshot", "capture_time_snapshot", "return_time_snapshot"):
+            snapshot = value.get(key)
+            if not isinstance(snapshot, dict):
+                continue
+            value[key] = {
+                name: item for name, item in snapshot.items() if name not in projected
+            }
+        return value
+
+    def result(value: dict, *, compact: bool = True) -> CallToolResult:
+        response = tool_result(response_value(value, compact=compact))
+        for evidence in response.structuredContent.get("evidence", []):
+            response.content.append(
+                ResourceLink(
+                    type="resource_link",
+                    uri=evidence["resource_uri"],
+                    name=f"battle-evidence-{evidence['observation_id']}",
+                    mimeType="image/png",
+                    description="Retained original PNG; historical read, no new capture or device input",
+                )
+            )
+        return response
+
+    def evidence_result(
+        value: dict, *keys: str, include_image: bool | None = None
+    ) -> CallToolResult:
+        if include_image is None:
+            include_image = tool_profile == "full"
+        if not include_image:
+            return result(value)
         images = []
+        seen_paths = set()
         for key in keys:
             relative = value.get(key)
             if not relative:
                 continue
             try:
-                image = service.evidence_path({"image_path": relative}).read_bytes()
+                path = service.evidence_path({"image_path": relative})
+                if path in seen_paths:
+                    continue
+                image = path.read_bytes()
+                seen_paths.add(path)
             except (OSError, BattleError) as exc:
                 logging.getLogger(__name__).exception("Could not read command evidence")
                 value = {
@@ -84,7 +263,7 @@ def create_server(
                     data=base64.b64encode(image).decode("ascii"),
                 )
             )
-        response = tool_result(value)
+        response = result(value)
         response.content.extend(images)
         return response
 
@@ -106,7 +285,7 @@ def create_server(
             "Verify the supplied stage against screenshot evidence; map binding is not recognized. "
             "Observe before acting. Unknown identities and enemy state are not empty state. "
             "Preparation host_fallback lists unresolved fields for multimodal review; retrieve original "
-            "operation frames with battle_get_evidence_frame. Host interpretation does not become native fact. "
+            "operation frames through their battle-evidence resources. Host interpretation does not become native fact. "
             "suspected_defeat is a deduplicated advisory with unknown cause, not proof of death or tile release. "
             "Use battle_decision domains, provenance, missing prerequisites and deduplicated event IDs "
             "to consume structured native evidence. Full combat state is not available; readiness is not "
@@ -125,22 +304,48 @@ def create_server(
         lifespan=lifespan,
     )
     catalog = UnitCatalog(service.settings.resource_dir)
+    minimal = {
+        "battle_status",
+        "battle_connect",
+        "battle_attach",
+        "battle_observe",
+        "battle_inspect_preparation",
+        "battle_identify",
+        "battle_step",
+        "battle_get_unit_info",
+        "battle_get_operation",
+        "battle_close",
+    }
 
-    @server.tool(annotations=READ_ONLY)
+    def expose(*, annotations: ToolAnnotations):
+        def register(function):
+            if function.__name__ == "intel_query":
+                enabled = intelligence is not None
+            else:
+                enabled = tool_profile == "full" or function.__name__ in minimal
+            if enabled:
+                server.tool(annotations=annotations)(function)
+            return function
+
+        return register
+
+    @expose(annotations=READ_ONLY)
     async def battle_get_unit_info(game_id: Identifier) -> CallToolResult:
         """Query bundled unit kinds, effects, base key frames, skills/talents, token ID relations and adapter capabilities. No connection, input or intelligence provider required."""
-        return tool_result(catalog.get(game_id))
+        return result(catalog.get(game_id))
 
-    @server.tool(annotations=READ_ONLY)
+    @expose(annotations=READ_ONLY)
     async def battle_status() -> CallToolResult:
         """Report connection/session state and first-version capability limits."""
-        return tool_result(
+        return result(
             {
                 "connected": service.backend is not None,
                 "session_id": service.session_id,
                 "preparation_session_id": service.preparation_session_id,
                 **service.diagnostics(),
                 "intelligence_configured": intelligence is not None,
+                "tool_profile": tool_profile,
+                "tool_count": len(await server.list_tools()),
                 "loadout_configured": service.decision.config is not None,
                 "mode": service.mode,
                 "media": {
@@ -193,12 +398,12 @@ def create_server(
             }
         )
 
-    @server.tool(annotations=MUTATING)
+    @expose(annotations=MUTATING)
     async def battle_connect() -> CallToolResult:
         """Connect to the server's preconfigured device. Does not launch or enter a stage."""
-        return tool_result(await service.connect())
+        return result(await service.connect())
 
-    @server.tool(annotations=MUTATING)
+    @expose(annotations=MUTATING)
     async def battle_attach(
         stage_name: Identifier,
         mode: BattleMode | None = None,
@@ -206,30 +411,30 @@ def create_server(
         confirm_preparation_unchanged: bool = False,
     ) -> CallToolResult:
         """Bind a unique MaaCore stage/level ID to an already-started battle. Verify the returned map."""
-        return tool_result(
+        return result(
             await service.attach(
                 stage_name, mode, preparation_id, confirm_preparation_unchanged
             )
         )
 
-    @server.tool(annotations=READ_ONLY)
+    @expose(annotations=READ_ONLY)
     async def battle_observe_preparation(
         stage_name: Identifier, mode: BattleMode
     ) -> CallToolResult:
         """Before attach, read the manually opened formation page without input. Only names are recognized; skills/configuration remain unknown."""
         return evidence_result(await service.prepare(stage_name, mode), "image_path")
 
-    @server.tool(annotations=MUTATING)
+    @expose(annotations=MUTATING)
     async def battle_inspect_preparation(request: PreparationRequest) -> CallToolResult:
         """Before attach, inspect the current roster in one bounded native transaction. Opens details and scrolls, never selects operators/skills or starts battle. Unknown/ambiguous fields stay null; inspect scan_status, evidence_frames and formation_restored."""
         return evidence_result(await service.inspect_preparation(request), "image_path")
 
-    @server.tool(annotations=MUTATING)
+    @expose(annotations=MUTATING)
     async def battle_invalidate_preparation() -> CallToolResult:
         """Invalidate preparation binding after roster, skill, account or stage changes. Sends no device input."""
-        return tool_result(await service.invalidate_preparation())
+        return result(await service.invalidate_preparation())
 
-    @server.tool(annotations=MUTATING)
+    @expose(annotations=MUTATING)
     async def battle_set_speed(request: SpeedRequest) -> CallToolResult:
         """Set observed 1x/2x idempotently while verified paused. Never resumes. The host chooses the speed."""
         return evidence_result(
@@ -240,7 +445,7 @@ def create_server(
             "before_image_path",
         )
 
-    @server.tool(annotations=READ_ONLY)
+    @expose(annotations=READ_ONLY)
     async def battle_collect_terminal(request: TerminalRequest) -> CallToolResult:
         """Collect terminal/pause evidence without input. Two fresh paused frames can clear pause uncertainty, never terminal/safety quarantine."""
         return evidence_result(
@@ -250,23 +455,52 @@ def create_server(
             "image_path",
         )
 
-    @server.tool(annotations=READ_ONLY)
+    @expose(annotations=READ_ONLY)
     async def battle_evaluate_placement(
         session_id: Identifier,
         placements: Annotated[list[Placement], Field(min_length=1, max_length=32)],
     ) -> CallToolResult:
         """Check candidate formation base geometry and static tile conflicts. Does not verify live occupancy or optimize a strategy."""
-        service._check_session(session_id)
-        if service.map_info is None:
-            raise BattleError("Attach a map before evaluating placements")
-        return tool_result(service.decision.evaluate(service.map_info, placements))
+        return result(await service.evaluate_placement(session_id, placements))
 
-    @server.tool(annotations=READ_ONLY)
-    async def battle_observe(session_id: Identifier) -> CallToolResult:
-        """Take a fresh passive observation. Never clicks to identify unknown operators."""
-        return tool_result(await service.read(session_id, "observe"))
+    @expose(annotations=READ_ONLY)
+    async def battle_observe(
+        session_id: Identifier,
+        include_image: bool = False,
+        include_map: bool = False,
+        duration_ms: Annotated[
+            int,
+            Field(
+                ge=0,
+                le=8_000,
+                json_schema_extra={
+                    "anyOf": [{"const": 0}, {"minimum": 100, "maximum": 8_000}]
+                },
+            ),
+        ] = 0,
+        operation_id: Identifier | None = None,
+        timeout_ms: Annotated[int, Field(ge=1, le=30_000)] = 10_000,
+    ) -> CallToolResult:
+        """Read a fresh frame, never identify, pause, resume or send input. Images/maps are opt-in. duration_ms=100..8000 collects read-only terminal/pause evidence only in an input-blocked state, within timeout_ms; a running game still advances."""
+        request = OperationRequest(
+            session_id=session_id,
+            operation_id=operation_id or str(uuid.uuid4()),
+            timeout_ms=timeout_ms,
+        )
+        if duration_ms:
+            request = TerminalRequest(**request.model_dump(), duration_ms=duration_ms)
+            value = await service.command(
+                "finalize", request, {"duration_ms": duration_ms}
+            )
+        elif operation_id is None and timeout_ms == 10_000:
+            value = await service.read(session_id, "observe")
+        else:
+            value = await service.command("observe", request)
+        if include_map:
+            value = {**value, "map": service.map_info}
+        return evidence_result(value, "image_path", include_image=include_image)
 
-    @server.tool(annotations=READ_ONLY)
+    @expose(annotations=READ_ONLY)
     async def battle_get_map(session_id: Identifier) -> CallToolResult:
         """Return current/baseline PNGs, static geometry and per-tile pixel changes from the first session frame. Changes are not terrain classification."""
         result = await service.read(session_id, "map")
@@ -277,13 +511,13 @@ def create_server(
         )
         return evidence_result(result, *keys)
 
-    @server.tool(annotations=READ_ONLY)
+    @expose(annotations=READ_ONLY)
     async def battle_capture_evidence(session_id: Identifier) -> CallToolResult:
         """Return a PNG and observation from the SAME frame for multimodal analysis. Keeps 128 captures/session."""
         result = await service.read(session_id, "capture")
         return evidence_result(result, "image_path")
 
-    @server.tool(annotations=MUTATING)
+    @expose(annotations=MUTATING)
     async def battle_identify(request: IdentifyRequest) -> CallToolResult:
         """Inspect cards without resuming; explicitly authorize manual-pause adoption. Returns final PNG and pause verification."""
         result = await service.command(
@@ -291,9 +525,9 @@ def create_server(
         )
         return evidence_result(result, "image_path")
 
-    @server.tool(annotations=MUTATING)
+    @expose(annotations=MUTATING)
     async def battle_step(request: BoundedStepRequest) -> CallToolResult:
-        """Run one action or bounded wait; capture, then verify pause or terminal evidence. Wait uses host time, not simulation time."""
+        """One deploy/retreat/skill, bounded wait, pause-only, or verified-paused 1x/2x speed change; capture and verify pause/terminal evidence. Manual-pause adoption must be explicit. Wait uses host time, not simulation time."""
         result = await service.command(
             "step",
             request,
@@ -301,15 +535,17 @@ def create_server(
                 exclude={"session_id", "operation_id", "timeout_ms"}, exclude_none=True
             ),
         )
-        response = evidence_result(result, "return_image_path", "capture_image_path")
+        response = evidence_result(
+            result, "return_image_path", "capture_image_path", "image_path"
+        )
         response.content.extend(
             item
             for item in media_result(result).content
-            if item.type == "resource_link"
+            if item.type == "resource_link" and item.name == "local-video-artifact"
         )
         return response
 
-    @server.tool(annotations=MUTATING)
+    @expose(annotations=MUTATING)
     async def battle_deploy(request: DeployRequest) -> CallToolResult:
         """Legacy deployment entry; same bounded preflight and pause cleanup as battle_step. Resume first; summons require card_id."""
         return evidence_result(
@@ -331,7 +567,7 @@ def create_server(
             "capture_image_path",
         )
 
-    @server.tool(annotations=MUTATING)
+    @expose(annotations=MUTATING)
     async def battle_retreat(request: UnitRequest) -> CallToolResult:
         """Legacy entry with the same instance capability, selection and tile-anchor guards as battle_step. Resume first."""
         return evidence_result(
@@ -340,7 +576,7 @@ def create_server(
             "capture_image_path",
         )
 
-    @server.tool(annotations=MUTATING)
+    @expose(annotations=MUTATING)
     async def battle_use_skill(request: UnitRequest) -> CallToolResult:
         """Attempt the equipped skill once at a tracked position; never waits indefinitely for readiness."""
         return evidence_result(
@@ -349,21 +585,25 @@ def create_server(
             "capture_image_path",
         )
 
-    @server.tool(annotations=MUTATING)
+    @expose(annotations=MUTATING)
     async def battle_set_paused(request: PauseRequest) -> CallToolResult:
         """Request pause/resume with state guards. Resume only a server-requested or explicitly adopted pause."""
-        return tool_result(
+        return result(
             await service.command("set_paused", request, {"paused": request.paused})
         )
 
-    @server.tool(annotations=READ_ONLY)
+    @expose(annotations=READ_ONLY)
     async def battle_get_operation(
-        session_id: Identifier, operation_id: Identifier
+        session_id: Identifier,
+        operation_id: Identifier,
+        detail: Literal["summary", "full"] = "summary",
     ) -> CallToolResult:
-        """Read a durable operation result, including after disconnection. Never replays input."""
-        return tool_result(service.operation(session_id, operation_id))
+        """Read a durable result, even after disconnection. detail=full returns unchanged recorded boundary/return snapshots and raw evidence without new observation or input; summary uses the profile's usual shape. Full profile stays unabridged."""
+        return result(
+            service.operation(session_id, operation_id), compact=detail != "full"
+        )
 
-    @server.tool(annotations=READ_ONLY)
+    @expose(annotations=READ_ONLY)
     async def battle_get_evidence_frame(
         session_id: Identifier, operation_id: Identifier, observation_id: Identifier
     ) -> CallToolResult:
@@ -374,7 +614,7 @@ def create_server(
         )
 
     def media_result(value: dict) -> CallToolResult:
-        response = tool_result(value)
+        response = result(value)
         video = (value.get("media") or value).get("video") or {}
         artifact_id = (value.get("media") or value).get("artifact_id")
         if artifact_id:
@@ -395,7 +635,7 @@ def create_server(
             )
         return response
 
-    @server.tool(annotations=READ_ONLY)
+    @expose(annotations=READ_ONLY)
     async def battle_record_clip(request: RecordClipRequest) -> CallToolResult:
         """Bounded native read-only sampled clip: never pauses/resumes. Running game keeps advancing. AVI/MJPEG when verified, plus PNG keyframes."""
         value = await service.command(
@@ -409,16 +649,18 @@ def create_server(
         )
         response = evidence_result(value, "image_path")
         response.content.extend(
-            item for item in media_result(value).content if item.type == "resource_link"
+            item
+            for item in media_result(value).content
+            if item.type == "resource_link" and item.name == "local-video-artifact"
         )
         return response
 
-    @server.tool(annotations=READ_ONLY)
+    @expose(annotations=READ_ONLY)
     async def battle_get_media(artifact_id: Identifier) -> CallToolResult:
         """Read retained media manifest/current expiry and bounded video resource availability. No new capture, decoder or provider request."""
         return media_result(service.media.store.info(artifact_id))
 
-    @server.tool(annotations=READ_ONLY)
+    @expose(annotations=READ_ONLY)
     async def battle_get_media_frames(
         artifact_id: Identifier,
         frame_ids: Annotated[list[Identifier], Field(min_length=1, max_length=4)],
@@ -448,22 +690,22 @@ def create_server(
     for extension, mime_type in MIME.items():
         register_video_resource(extension, mime_type)
 
-    @server.tool(annotations=READ_ONLY)
+    @expose(annotations=READ_ONLY)
     async def battle_import_video(request: ImportVideoRequest) -> CallToolResult:
         """Import an allowlisted basename from media-import-dir into owned immutable media. Native bounded decoding runs in a separate no-device worker; no controller lock."""
         return media_result(await service.media.import_video(request))
 
-    @server.tool(annotations=READ_ONLY)
+    @expose(annotations=READ_ONLY)
     async def battle_analyze_video(request: AnalyzeVideoRequest) -> CallToolResult:
         """Experimental VIDEO-TO-COPILOT candidates from an imported full-context video, never execution or live combat/defeat truth. Separate bounded no-device Core worker."""
-        return tool_result(await service.media.analyze_video(request))
+        return result(await service.media.analyze_video(request))
 
-    @server.tool(annotations=MUTATING)
+    @expose(annotations=MUTATING)
     async def battle_close() -> CallToolResult:
         """Close the session; waits for an active bounded step to finish its pause cleanup."""
-        return tool_result(await service.close())
+        return result(await service.close())
 
-    @server.tool(
+    @expose(
         annotations=ToolAnnotations(
             readOnlyHint=True,
             destructiveHint=False,
@@ -510,16 +752,29 @@ def create_server(
                 raise BattleError(
                     "Provider region does not match the device client; no cross-region fallback"
                 )
-            return tool_result(
+            return result(
                 await intelligence.query_complete_stage(
                     identifier, service.mode, service.map_info["height"]
                 )
             )
         if session_id is not None:
             raise BattleError("session_id is only valid for a complete stage query")
-        return tool_result(
+        return result(
             await intelligence.query(kind, identifier, routes_page, spawns_page)
         )
+
+    @server.resource(
+        "battle-evidence://{session_id}/{operation_id}/{observation_id}",
+        mime_type="image/png",
+        name="battle-evidence",
+    )
+    async def battle_evidence(
+        session_id: str, operation_id: str, observation_id: str
+    ) -> bytes:
+        frame = service.evidence_frame(
+            unquote(session_id), unquote(operation_id), unquote(observation_id)
+        )
+        return service.evidence_path(frame).read_bytes()
 
     return server
 
@@ -547,6 +802,12 @@ def main() -> None:
     parser.add_argument("--intel-config", type=Path)
     parser.add_argument("--loadout-config", type=Path)
     parser.add_argument("--media-import-dir", type=Path)
+    parser.add_argument(
+        "--tool-profile",
+        choices=["minimal", "full"],
+        default="minimal",
+        help="minimal: ten primary tools; full: legacy, media and geometry extensions",
+    )
     parser.add_argument(
         "--allow-summon",
         action="append",
@@ -586,9 +847,11 @@ def main() -> None:
         ).model_validate_json(json.dumps(data))
         intelligence = IntelligenceClient(config)
     decision = DecisionContext(settings, args.loadout_config)
-    create_server(BattleService(settings, decision=decision), intelligence).run(
-        transport="stdio"
-    )
+    create_server(
+        BattleService(settings, decision=decision),
+        intelligence,
+        tool_profile=args.tool_profile,
+    ).run(transport="stdio")
 
 
 if __name__ == "__main__":

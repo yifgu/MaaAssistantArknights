@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,35 @@ logger = logging.getLogger(__name__)
 
 class NativeError(RuntimeError):
     pass
+
+
+@dataclass(frozen=True)
+class CommandExecution:
+    payload: dict
+    cleanup_grace_seconds: int = 0
+
+    @property
+    def bounded_cleanup(self) -> bool:
+        return self.cleanup_grace_seconds > 0
+
+
+def command_execution(payload: dict) -> CommandExecution:
+    action = payload.get("action")
+    if action in ("deploy", "retreat", "skill"):
+        payload = {
+            **payload,
+            "action": "step",
+            "args": {
+                **payload.get("args", {}),
+                "action": action,
+                "adopt_manual_pause": False,
+                "require_running": True,
+            },
+        }
+        action = "step"
+    return CommandExecution(
+        payload, 10 if action in ("step", "inspect_preparation", "record") else 0
+    )
 
 
 def _log_phase(phase: str) -> None:
@@ -389,15 +419,17 @@ class NativeCore:
         if operation == "command":
             if self.task_id is None:
                 raise NativeError("No battle task is attached")
+            execution = command_execution(payload)
+            payload = execution.payload
             self._require(
                 self.lib.AsstSetTaskParams(
                     self.handle, self.task_id, json.dumps(payload).encode("utf-8")
                 ),
                 "BattleControl command submission",
             )
-            callback_timeout = payload["timeout_ms"] / 1000
-            if payload["action"] in ("step", "inspect_preparation", "record"):
-                callback_timeout += 10
+            callback_timeout = (
+                payload["timeout_ms"] / 1000 + execution.cleanup_grace_seconds
+            )
             return self._wait(
                 "BattleControlResult",
                 callback_timeout,
@@ -438,6 +470,7 @@ def _worker() -> None:
         active: threading.Thread | None = None
         cancellation = threading.Event()
         active_payload: dict = {}
+        active_execution: CommandExecution | None = None
 
         def dispatch(operation: str, payload: dict) -> None:
             try:
@@ -459,8 +492,8 @@ def _worker() -> None:
                         payload.get("session_id") == active_payload.get("session_id")
                         and payload.get("command_id")
                         == active_payload.get("command_id")
-                        and active_payload.get("action")
-                        in ("step", "inspect_preparation", "record")
+                        and active_execution is not None
+                        and active_execution.bounded_cleanup
                     ):
                         cancellation.set()
                     else:
@@ -477,6 +510,13 @@ def _worker() -> None:
                     core = None
                     send({"ok": True, "result": {}})
                     return
+                active_execution = (
+                    command_execution(payload)
+                    if operation in ("command", "preparation")
+                    else None
+                )
+                if active_execution is not None:
+                    payload = active_execution.payload
                 active_payload = payload
                 cancellation.clear()
                 active = threading.Thread(

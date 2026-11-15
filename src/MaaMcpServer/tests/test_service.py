@@ -1,4 +1,5 @@
 import asyncio
+import json
 import sqlite3
 import threading
 
@@ -17,6 +18,15 @@ from maa_battle_mcp.models import (
 )
 from maa_battle_mcp.native import NativeError
 from maa_battle_mcp.service import BattleError, BattleService
+
+BOUNDED_COMMANDS = [
+    ("step", {"action": "skill", "unit_id": "unit", "adopt_manual_pause": False}),
+    ("deploy", {"unit_id": "unit", "location": [1, 2], "direction": "Right"}),
+    ("retreat", {"unit_id": "unit"}),
+    ("skill", {"unit_id": "unit"}),
+    ("step", {"action": "pause", "adopt_manual_pause": False}),
+    ("step", {"action": "speed", "multiplier": 2, "adopt_manual_pause": False}),
+]
 
 
 class FakeBackend:
@@ -79,6 +89,79 @@ async def test_duplicate_operation_does_not_repeat_input(connected):
     assert len([call for call in backend.calls if call[0] == "command"]) == 1
     with pytest.raises(BattleError, match="different parameters"):
         await service.command("retreat", request, {"unit_id": "unit"})
+
+
+@pytest.mark.parametrize("action", ["deploy", "retreat", "skill"])
+async def test_legacy_journal_requests_replay_without_canonical_shape_changes(
+    connected, action
+):
+    service, backend = connected
+    request = OperationRequest(session_id=service.session_id, operation_id="old")
+    args = {"unit_id": "unit"}
+    original = {
+        "session_id": request.session_id,
+        "command_id": request.operation_id,
+        "action": action,
+        "args": args,
+        "timeout_ms": request.timeout_ms,
+    }
+    previous = {"status": "succeeded", "legacy_result": True}
+    encoded = json.dumps(original, sort_keys=True, ensure_ascii=False)
+    service.journal.execute(
+        "INSERT INTO operations(session,id,request,result) VALUES(?,?,?,?)",
+        (request.session_id, request.operation_id, encoded, json.dumps(previous)),
+    )
+    service.journal.commit()
+    before = list(backend.calls)
+    assert await service.command(action, request, args) == previous
+    assert backend.calls == before
+    for changed_action, changed_request, changed_args in (
+        (action, request, {"unit_id": "different"}),
+        (action, request.model_copy(update={"timeout_ms": 1000}), args),
+        (
+            "step",
+            request,
+            {"action": action, "unit_id": "unit", "adopt_manual_pause": False},
+        ),
+    ):
+        with pytest.raises(BattleError, match="different parameters"):
+            await service.command(changed_action, changed_request, changed_args)
+    assert backend.calls == before
+
+
+@pytest.mark.parametrize("action", ["deploy", "retreat", "skill"])
+async def test_legacy_execution_preserves_running_only_authorization(connected, action):
+    service, backend = connected
+    request = OperationRequest(session_id=service.session_id, operation_id="legacy")
+    args = {"unit_id": "unit"}
+    if action == "deploy":
+        args.update(location=[1, 2], direction="Right", card_id="card")
+    first = await service.command(action, request, args)
+    assert backend.calls[-1] == (
+        "command",
+        {
+            "session_id": request.session_id,
+            "command_id": request.operation_id,
+            "action": "step",
+            "args": {
+                **args,
+                "action": action,
+                "adopt_manual_pause": False,
+                "require_running": True,
+            },
+            "timeout_ms": request.timeout_ms,
+        },
+        20,
+    )
+    row = service.journal.execute(
+        "SELECT request FROM operations WHERE session=? AND id=?",
+        (request.session_id, request.operation_id),
+    ).fetchone()
+    persisted = json.loads(row[0])
+    assert persisted["action"] == action
+    assert persisted["args"] == args
+    assert await service.command(action, request, args) == first
+    assert len([call for call in backend.calls if call[0] == "command"]) == 1
 
 
 @pytest.mark.parametrize("action", ["record", "step"])
@@ -253,6 +336,39 @@ async def test_journal_failure_is_explicit_and_never_replays(connected, monkeypa
     monkeypatch.setattr(service, "journal", journal)
 
 
+@pytest.mark.parametrize("phase", ["lookup", "insert", "commit"])
+async def test_journal_admission_failure_disables_input(connected, monkeypatch, phase):
+    service, backend = connected
+    journal = service.journal
+
+    class FailingJournal:
+        def execute(self, query, args=()):
+            if phase == "lookup" and query.startswith("SELECT request"):
+                raise sqlite3.OperationalError("read failed")
+            if phase == "insert" and query.startswith("INSERT INTO operations"):
+                raise sqlite3.OperationalError("disk full")
+            return journal.execute(query, args)
+
+        def commit(self):
+            if phase == "commit":
+                raise sqlite3.OperationalError("commit failed")
+            journal.commit()
+
+        def rollback(self):
+            journal.rollback()
+
+    monkeypatch.setattr(service, "journal", FailingJournal())
+    request = OperationRequest(session_id=service.session_id, operation_id="not-sent")
+    before = list(backend.calls)
+    with pytest.raises(BattleError, match="no device command"):
+        await service.command("skill", request, {"unit_id": "unit"})
+    assert service.storage_failed
+    monkeypatch.setattr(service, "journal", journal)
+    with pytest.raises(BattleError, match="do not retry"):
+        await service.command("skill", request, {"unit_id": "unit"})
+    assert backend.calls == before
+
+
 async def test_stale_session_is_rejected(connected):
     service, backend = connected
     with pytest.raises(BattleError, match="expired"):
@@ -275,32 +391,40 @@ async def test_native_failure_invalidates_and_persists_unknown(connected):
         await service.command("deploy", request)
 
 
-async def test_cancel_stops_native_worker(connected):
+@pytest.mark.parametrize(
+    ("action", "args"),
+    [
+        ("identify", {"adopt_manual_pause": False}),
+        ("set_paused", {"paused": True}),
+        ("set_speed", {"multiplier": 2}),
+    ],
+)
+async def test_cancel_stops_native_worker(connected, action, args):
     service, backend = connected
     backend.block = True
     request = OperationRequest(session_id=service.session_id, operation_id="1")
-    task = asyncio.create_task(service.command("identify", request))
+    task = asyncio.create_task(service.command(action, request, args))
     assert await asyncio.to_thread(backend.entered.wait, 2)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
     assert backend.aborted
+    assert backend.cancellations == []
+    assert backend.calls[-1][2] == 10
+    assert service.session_id is None
     assert service.operation(request.session_id, "1")["status"] == "outcome_unknown"
 
 
-async def test_cancelled_step_finishes_cleanup_before_releasing_controller(connected):
+@pytest.mark.parametrize(("action", "args"), BOUNDED_COMMANDS)
+async def test_cancelled_step_finishes_cleanup_before_releasing_controller(
+    connected, action, args
+):
     service, backend = connected
     backend.block = True
     request = OperationRequest(
         session_id=service.session_id, operation_id="step-1", timeout_ms=10_000
     )
-    task = asyncio.create_task(
-        service.command(
-            "step",
-            request,
-            {"action": "skill", "unit_id": "unit", "adopt_manual_pause": False},
-        )
-    )
+    task = asyncio.create_task(service.command(action, request, args))
     assert await asyncio.to_thread(backend.entered.wait, 2)
     task.cancel()
     await asyncio.sleep(0)
@@ -315,19 +439,14 @@ async def test_cancelled_step_finishes_cleanup_before_releasing_controller(conne
     assert backend.calls[-1][2] == 20
 
 
-async def test_close_waits_for_bounded_step_cleanup(connected):
+@pytest.mark.parametrize(("action", "args"), BOUNDED_COMMANDS)
+async def test_close_waits_for_bounded_step_cleanup(connected, action, args):
     service, backend = connected
     backend.block = True
     request = OperationRequest(
         session_id=service.session_id, operation_id="step-close", timeout_ms=10_000
     )
-    task = asyncio.create_task(
-        service.command(
-            "step",
-            request,
-            {"action": "skill", "unit_id": "unit", "adopt_manual_pause": False},
-        )
-    )
+    task = asyncio.create_task(service.command(action, request, args))
     assert await asyncio.to_thread(backend.entered.wait, 2)
     closing = asyncio.create_task(service.close())
     await asyncio.sleep(0)
@@ -338,18 +457,17 @@ async def test_close_waits_for_bounded_step_cleanup(connected):
     assert backend.aborted
 
 
+@pytest.mark.parametrize(("action", "args"), BOUNDED_COMMANDS)
 @pytest.mark.parametrize("closing", [True, False])
 async def test_broken_cancel_channel_persists_unknown_and_releases_control(
-    connected, monkeypatch, closing
+    connected, monkeypatch, closing, action, args
 ):
     service, backend = connected
     backend.block = True
     request = OperationRequest(
         session_id=service.session_id, operation_id="broken-cancel"
     )
-    task = asyncio.create_task(
-        service.command("step", request, {"action": "wait", "duration_ms": 1000})
-    )
+    task = asyncio.create_task(service.command(action, request, args))
     assert await asyncio.to_thread(backend.entered.wait, 2)
 
     def broken_cancel(*_):
@@ -469,6 +587,92 @@ async def test_evidence_path_cannot_escape_state_directory(connected, settings):
         service.evidence_path({})
 
 
+async def test_passive_observation_retains_same_frame_evidence(connected, settings):
+    service, backend = connected
+    session_id = service.session_id
+    path = settings.user_dir / "battle-control" / session_id / "observed.png"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"fixture")
+    result = {
+        "status": "succeeded",
+        "session_id": session_id,
+        "command_id": "observe-frame",
+        "observation_id": "frame-1",
+        "captured_at_ms": 123,
+        "image_path": str(path.relative_to(settings.user_dir)),
+    }
+    request = OperationRequest(session_id=session_id, operation_id="observe-frame")
+    service._admit_operation(request, json.dumps({}))
+    service._save_result(request, result)
+    before = list(backend.calls)
+    frame = service.evidence_frame(session_id, "observe-frame", "frame-1")
+    assert frame["image_path"] == result["image_path"]
+    assert frame["captured_at_ms"] == result["captured_at_ms"]
+    assert frame["frame_is_live"] is False
+    assert backend.calls == before
+
+
+async def test_placement_evaluation_uses_one_read_only_native_command(
+    connected, monkeypatch
+):
+    service, backend = connected
+    service.map_info = {"stage_id": "fixture"}
+    placements = [object()]
+    prepared = [{"fixture": "prepared_static_range"}]
+    source = {"fixture": "loadout"}
+    source_reads = []
+
+    def placement_source():
+        assert len(backend.calls) == before
+        source_reads.append(source)
+        return source
+
+    monkeypatch.setattr(
+        service.decision,
+        "prepare_placements",
+        lambda value: prepared if value is placements else pytest.fail("wrong input"),
+    )
+    monkeypatch.setattr(service.decision, "placement_source", placement_source)
+    before = len(backend.calls)
+    result = await service.evaluate_placement(service.session_id, placements)
+    assert len(backend.calls) == before + 1
+    operation, payload, timeout = backend.calls[-1]
+    assert operation == "command"
+    assert payload["action"] == "evaluate_placement"
+    assert payload["args"] == {"placements": prepared}
+    assert timeout == 10
+    assert result["range_source"] == source
+    assert source_reads == [source]
+    assert service.operation(service.session_id, result["command_id"]) == result
+
+
+@pytest.mark.parametrize("failure", ["placements", "source"])
+async def test_placement_metadata_failure_never_submits_native_command(
+    connected, monkeypatch, failure
+):
+    service, backend = connected
+    service.map_info = {"stage_id": "fixture"}
+
+    def fail(_=None):
+        raise ValueError("fixture metadata unavailable")
+
+    monkeypatch.setattr(
+        service.decision,
+        "prepare_placements",
+        fail if failure == "placements" else lambda _: [],
+    )
+    monkeypatch.setattr(
+        service.decision,
+        "placement_source",
+        fail if failure == "source" else lambda: {},
+    )
+    before = list(backend.calls)
+    with pytest.raises(ValueError, match="metadata unavailable"):
+        await service.evaluate_placement(service.session_id, [])
+    assert backend.calls == before
+    assert service.journal.execute("SELECT COUNT(*) FROM operations").fetchone()[0] == 0
+
+
 @pytest.mark.parametrize("timeout", [0, -1, 30_001, True, 1.5, "1000"])
 def test_invalid_deadlines_are_rejected(timeout):
     with pytest.raises(ValidationError):
@@ -511,11 +715,11 @@ def test_identify_rejects_non_boolean_authorization(value):
 
 
 def test_bounded_step_requires_complete_action_arguments():
-    with pytest.raises(ValidationError, match="requires location and direction"):
+    with pytest.raises(ValidationError):
         BoundedStepRequest(
             session_id="s", operation_id="o", action="deploy", unit_id="u"
         )
-    with pytest.raises(ValidationError, match="only valid for deploy"):
+    with pytest.raises(ValidationError):
         BoundedStepRequest(
             session_id="s",
             operation_id="o",

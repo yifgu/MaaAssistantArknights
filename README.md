@@ -49,6 +49,16 @@ MAA 的意思是 MAA Assistant Arknights
 
 ### MCP 能力与接口
 
+默认 `--tool-profile minimal` 仅注册十个工具：`battle_status`、`battle_connect`、`battle_attach`、`battle_observe`、`battle_inspect_preparation`、`battle_identify`、`battle_step`、`battle_get_unit_info`、`battle_get_operation`、`battle_close`。仅配置 `--intel-config` 时额外注册 `intel_query`；无配置不暴露空壳。需要下表中的旧入口、独立暂停／恢复、媒体或几何扩展时，显式使用 `--tool-profile full`（27 个基础工具，配置情报后 28 个），旧客户端须刷新 `tools/list`。
+
+minimal 响应在顶层提供单一 canonical `battle_decision`，不重复展开旧部署／场上列表和相同投影；操作、安全、未知值／原因及证据引用仍保留，原始审计结果不从日志删除。统一只读入口 `battle_observe` 默认不附图，`include_image=true` 读取同一原帧，`include_map=true` 返回结构化地图；`duration_ms=100..8000` 仅在输入已阻塞时复用只读终局／暂停采集，受超时限制，不隐式识别或输入。`evidence[].resource_uri` 指向 `image/png` MCP resource `battle-evidence://{session_id}/{operation_id}/{observation_id}`，只读取得操作已记录的原 PNG，不接受任意文件路径或重新截图。full 保留原有响应形状与旧入口附图行为。
+
+两种配置均支持 `battle_get_operation(..., detail="full")` 按需返回原始持久化结构化结果，包括完整动作边界／返回快照及各自决策，另附证据引用；不重做观测、不发送输入、不改写日志，也不默认附图。`detail="summary"` 默认遵循当前配置，minimal 精简、full 保持完整，无需为读取边界证据重启或切换 full。full 的 pause／speed step 会正确附上原生 `image_path` PNG，相同路径仅附一次。
+
+战前 `host_fallback.items[].retrieval` 按字段提供对应的原帧 `resource_uri`；minimal 不推荐未注册工具，full 保留兼容工具入口。历史读取使用同样的回读提示投影，原始事实、完整快照与 journal 记录不改。
+
+下表涵盖 minimal 与 full 的完整能力，非默认工具仅在 full 提供：
+
 | 能力 | MCP 工具 | 行为与边界 |
 | --- | --- | --- |
 | 连接与诊断 | `battle_status`、`battle_connect`、`battle_close` | 连接预配置设备，报告构建身份、Core 版本、资源哈希及会话状态；关闭会等待有界操作收尾，但本身不暂停或退出游戏。 |
@@ -57,15 +67,15 @@ MAA 的意思是 MAA Assistant Arknights
 | 离线单位资料 | `battle_get_unit_info(game_id)` | 不需要连接设备、预先列举召唤 ID 或配置情报服务，读取随包提供的 TOKEN／TRAP 分类、效果、基础属性关键帧、技能／天赋、召唤 ID 关联、能力适配与固定来源版本；不是本场实际属性测量。 |
 | 战前编队 | `battle_observe_preparation`、`battle_inspect_preparation`、`battle_invalidate_preparation` | 普通观察只读姓名；批量检查有界打开详情、查看技能列表，读取身份、选中 S1/S2/S3、精英阶段与等级，返回逐字段证据和页面恢复状态。不选择干员、切换技能或开始战斗。 |
 | 主动身份识别 | `battle_identify` | 在暂停状态查看部署卡详情，报告已识别、未解决与歧义数量；接管手动暂停必须显式授权，识别本身不恢复战斗。 |
-| 有界战术动作与等待 | `battle_step` | 一次执行 `deploy`、`retreat`、`skill` 或 `wait`，保留动作边界与返回截图，验证暂停或终局。等待为 100–8000 ms 主机时间，支持取消与关闭收尾，不等同于精确游戏时间。 |
+| 有界战术动作与等待 | `battle_step` | 按 action 判别的 Schema 导出各分支必填／禁止字段；一次执行 `deploy`、`retreat`、`skill`、`wait`、只暂停并验证的 `pause`，或仅已验证暂停时可用的 `speed`（1x/2x）。保留动作边界与返回原帧，验证暂停或终局；等待为 100–8000 ms 主机时间，支持取消与关闭收尾，不等同于精确游戏时间。 |
 | 独立动作与暂停控制 | `battle_deploy`、`battle_retreat`、`battle_use_skill`、`battle_set_paused`、`battle_set_speed` | 提供受保护的部署、撤退、技能与暂停请求；1x/2x 调速只在已验证暂停时执行和回读，不自动恢复。战术闭环优先使用 `battle_step`。 |
 | 终局证据与恢复 | `battle_collect_terminal` | 只读取证，区分胜利、失败、仍在战斗与未知；暂停不确定可由连续两帧新证据恢复，终局／安全隔离不能因此解除。 |
-| 操作持久化 | `battle_get_operation` | 读取 `operations.sqlite3` 中的结果；相同 `operation_id` 与相同参数只返回原结果，改参数拒绝，不重复发送输入。 |
-| 历史原帧回读 | `battle_get_evidence_frame` | 按会话、操作和观测 ID 只读取得操作已记录的单张原始 PNG，包括战前详情；不重新截图、不操作设备，不接受任意文件路径。 |
+| 操作持久化 | `battle_get_operation` | 只读查询 `operations.sqlite3`；默认 `detail="summary"`，`detail="full"` 按需取原始前后结构化证据。动作重放时相同 `operation_id` 与相同参数只返回原结果，改参数拒绝，不重复发送输入。 |
+| 历史原帧回读 | `battle-evidence://…` resource；full 的 `battle_get_evidence_frame` | 按会话、操作和观测 ID 只读取得操作已记录的单张原始 PNG，包括战前详情；不重新截图、不操作设备，不接受任意文件路径。 |
 | 有界原生录像 | `battle_record_clip`、`battle_get_media`、`battle_get_media_frames` | 原生采样与时间清单、无损 PNG 关键帧及通过回读验证后才提供的 AVI/MJPEG；MCP 通过资源和 ImageContent 返回，不自动恢复暂停，不上传第三方。 |
 | 本地视频导入 | `battle_import_video` | 只允许启动配置导入目录中的文件名，复制并校验哈希；在独立、无设备连接的 Core worker 中限时解码，拒绝路径逃逸、链接、设备和播放列表。 |
 | 实验性视频转作业 | `battle_analyze_video` | 独立 Core 的 `VideoRecognition` 仅生成近似作业候选，不执行；完整上下文是调用者声明，原生仍须识别编队和关卡。短战斗片段优先交给多模态宿主看关键帧。 |
-| 静态情报与阵型几何 | `intel_query`、`battle_evaluate_placement` | 可选查询关卡、干员与敌人资料，支持完整关卡分页及坐标转换；评估基础范围、静态部署兼容性与候选占格冲突，不追踪实时敌人或优化战术。 |
+| 静态情报与阵型几何 | 条件扩展 `intel_query`；full 的 `battle_evaluate_placement` | 可选查询关卡、干员与敌人资料，支持完整关卡分页及坐标转换；几何复用 Core 公共实现，评估基础范围、静态部署兼容性与候选占格冲突，不在 Python 复制投影，不追踪实时敌人或优化战术。 |
 
 `--intel-config` 可接入独立的 Intelligence／PRTS stdio 服务，或经过哈希校验的本地 raw 关卡与敌人快照；外部程序和数据不随运行包捆绑，也不自动下载。`--loadout-config` 可提供本场练度／技能配置，来源与原生观察分开记录，冲突显式报告，用户填写或确认不等于现场视觉验证。
 
@@ -90,9 +100,9 @@ Windows 使用 `run-mcp.cmd --check`，Linux 使用 `./run-mcp.sh --check` 检�
 典型调用流程：
 
 1. 停止同设备的其他 MAA／GUI 控制器，调用 `battle_connect`。
-2. 如需战前资料，手动打开编队页后调用只读 `battle_observe_preparation`，或显式授权有输入的 `battle_inspect_preparation`。编队、技能、账号或关卡变化后调用 `battle_invalidate_preparation` 并重新采集。
+2. 如需战前资料，手动打开编队页后显式授权有输入的 `battle_inspect_preparation`；编队、技能、账号或关卡变化后使用新操作重新采集。full 另有只读 `battle_observe_preparation` 和 `battle_invalidate_preparation`。
 3. 手动开始固定地图战斗，调用 `battle_attach` 并核对关卡与截图；使用战前快照时须显式重新确认编队未变。
-4. 用 `battle_capture_evidence`／`battle_observe` 检查状态，再调用 `battle_identify` 或 `battle_step`；每次检查返回证据、暂停状态与错误，不盲目重试。
+4. 用 `battle_observe` 检查状态，按需开启 `include_image`／`include_map` 或读取原图 resource，再调用 `battle_identify` 或 `battle_step`；每次检查返回证据、暂停状态与错误，不盲目重试。
 5. 需要静态情报或阵型评估时保持游戏暂停；结束后调用 `battle_close`，不要将关闭服务视为游戏已暂停。
 
 编译、客户端 JSON 配置、参数、可选情报配置和测试方法见本仓库的五语言指南：[简体中文](docs/zh-cn/develop/mcp-server.md) | [繁體中文](docs/zh-tw/develop/mcp-server.md) | [English](docs/en-us/develop/mcp-server.md) | [日本語](docs/ja-jp/develop/mcp-server.md) | [한국어](docs/ko-kr/develop/mcp-server.md)。
@@ -101,7 +111,7 @@ Windows 使用 `run-mcp.cmd --check`，Linux 使用 `./run-mcp.sh --check` 检�
 
 - 实验性功能，仅支持调用者确认的固定地图；不自动进入关卡、选合约、消费资源、移动镜头、重开作战或寻找最优策略，也不能重建中途接入的完整场上身份。
 - 召唤卡不再要求预先枚举 ID；已识别的医疗探机标准适配可凭新鲜 `card_id` 部署，同名多卡按具体卡片选择，不按姓名取第一张。旧 `--allow-summon` 保留为显式限制，不能授权未知交互。其他 TOKEN／TRAP 默认未知并拒绝部署。
-- `instance:<operation_id>` 分别记录输入状态、在场证据与位置证据。未确认实例继续占格；姓名详情不证明选中格子，当前缺少真实选中格锚点与明确离场识别，撤退检查不会盲点撤退按钮，完整部署／撤退闭环尚未完成，普通单位技能也因缺少位置证明而拒绝。旧独立入口使用同一安全检查，不可绕过。
+- `instance:<operation_id>` 分别记录输入状态、在场证据与位置证据；原生血条增加全部候选格、冲突、朝向与请求实例候选，不按首个匹配落格，候选不授权输入。缺少选中身份绑定格及撤退按钮 enabled 的正向规则，未建立 `VerifiedTileAnchor`；未确认实例继续占格，技能／撤退仍拒绝，完整部署／撤退闭环尚未完成，也不能自主开技能。旧独立入口使用同一安全检查，不可绕过。
 - TL／TL-EX 不再整关拒绝部署：已支持的固定地面按原有类型检查，战壕只放行在裸露／翻板覆盖两种情况下均可部署的普通远程干员；其他动态交互仍拒绝。翻板覆盖时的眩晕等效果由宿主判断，不宣称 TL 实机闭环已完成。｢自爆榴弹｣（`trap_341_dsjtzd`）仍仅能离线查询，再部署 20 秒不是爆炸倒计时。
 - `battle_get_map` 现在只读采集并返回同帧 PNG；它与观察／截图／动作快照中的 `dynamic_overlay` 报告各格相对本会话首次有效截图的像素是否变化，保留基准图供宿主二次识别。首次截图不等于关卡初始状态；积雪、翻板、单位、特效和截图噪声都可能造成变化。该结果不识别具体状态，不改变静态地图，不授权部署／撤退或释放未知占格。
 - `action_returned`／`helper_returned` 为 true 不证明游戏动作生效；`outcome_unknown` 必须结合截图人工或客户端复核。设备 I/O 卡死、断连或 worker 崩溃时无法保证暂停，进程隔离与 watchdog 不等于设备级硬期限。

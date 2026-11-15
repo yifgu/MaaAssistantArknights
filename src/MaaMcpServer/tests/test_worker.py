@@ -1,7 +1,10 @@
 import asyncio
+import json
 import subprocess
 import sys
+import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -152,7 +155,10 @@ async def test_connect_cancellation_reaps_worker(settings, worker_factory):
         service.journal.close()
 
 
-async def test_worker_accepts_cancel_while_command_is_running(settings, worker_factory):
+@pytest.mark.parametrize("action", ["step", "deploy", "retreat", "skill"])
+async def test_worker_accepts_cancel_while_command_is_running(
+    settings, worker_factory, action
+):
     backend = worker_factory(settings)
     try:
         await asyncio.to_thread(backend.request, "connect", {}, 5)
@@ -160,7 +166,7 @@ async def test_worker_accepts_cancel_while_command_is_running(settings, worker_f
             asyncio.to_thread(
                 backend.request,
                 "command",
-                {"action": "step", "session_id": "s", "command_id": "c"},
+                {"action": action, "session_id": "s", "command_id": "c"},
                 6,
             )
         )
@@ -176,13 +182,16 @@ async def test_worker_accepts_cancel_while_command_is_running(settings, worker_f
         backend.close()
 
 
-def test_cancel_before_submission_is_delivered_after_command(settings, worker_factory):
+@pytest.mark.parametrize("action", ["step", "deploy", "retreat", "skill"])
+def test_cancel_before_submission_is_delivered_after_command(
+    settings, worker_factory, action
+):
     backend = worker_factory(settings)
     try:
         backend.request("connect", {}, 5)
         backend.cancel("s", "early")
         result = backend.request(
-            "command", {"action": "step", "session_id": "s", "command_id": "early"}, 2
+            "command", {"action": action, "session_id": "s", "command_id": "early"}, 2
         )
         assert result["status"] == "failed"
         backend.cancel("s", "early")
@@ -192,3 +201,43 @@ def test_cancel_before_submission_is_delivered_after_command(settings, worker_fa
         assert result["status"] == "succeeded"
     finally:
         backend.close()
+
+
+@pytest.mark.parametrize(
+    ("action", "args"),
+    [
+        ("deploy", {"unit_id": "u", "location": [1, 1], "direction": "Right"}),
+        ("retreat", {"unit_id": "u"}),
+        ("skill", {"unit_id": "u"}),
+        ("step", {"action": "pause", "adopt_manual_pause": False}),
+        ("step", {"action": "speed", "multiplier": 2, "adopt_manual_pause": False}),
+    ],
+)
+def test_native_callback_wait_shares_bounded_cleanup_grace(settings, action, args):
+    submitted = []
+    waits = []
+    core = native.NativeCore.__new__(native.NativeCore)
+    core.task_id = 1
+    core.handle = 2
+    core.lib = SimpleNamespace(
+        AsstSetTaskParams=lambda *values: submitted.append(values) or True
+    )
+    core._wait = lambda *values: waits.append(values) or {"status": "succeeded"}
+    cancelled = threading.Event()
+    payload = {
+        "session_id": "s",
+        "command_id": "c",
+        "action": action,
+        "args": args,
+        "timeout_ms": 10_000,
+    }
+    assert (
+        core.dispatch("command", payload, settings, cancelled)["status"] == "succeeded"
+    )
+    assert waits == [("BattleControlResult", 20, "c", cancelled, "s")]
+    native_payload = json.loads(submitted[0][2])
+    assert native_payload["action"] == "step"
+    if action != "step":
+        assert native_payload["args"]["require_running"] is True
+        assert native_payload["args"]["adopt_manual_pause"] is False
+        assert native_payload["args"]["action"] == action

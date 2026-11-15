@@ -9,6 +9,7 @@
 #include "Controller/Controller.h"
 #include "MaaUtils/NoWarningCV.hpp"
 #include "Utils/Logger.hpp"
+#include "Utils/ScrollImageStitch.h"
 #include "Vision/Battle/BattleControlState.h"
 #include "Vision/Battle/BattleFormationAnalyzer.h"
 #include "Vision/Matcher.h"
@@ -381,31 +382,27 @@ json::value asst::BattleControlTask::inspect_preparation(const Command& command)
                             break;
                         }
                         const auto current = make_roi(detail.image, skill_roi);
-                        const auto strip = current(cv::Rect(0, 0, current.cols, 60));
-                        cv::Scalar mean, deviation;
-                        cv::meanStdDev(strip, mean, deviation);
-                        if (deviation[0] + deviation[1] + deviation[2] < 15) {
+                        const auto overlap =
+                            utils::match_scroll_image_overlap(panorama, current, { 60, 0.9, true, 15 });
+                        if (overlap.status == utils::ScrollOverlapStatus::Uninformative) {
                             skill_error = "skill_overlap_uninformative";
                             break;
                         }
-                        MultiMatcher overlap(panorama);
-                        overlap.set_templ(strip);
-                        overlap.set_threshold(0.9);
-                        const auto offsets = overlap.analyze();
-                        if (!offsets || offsets->size() != 1) {
+                        if (overlap.status != utils::ScrollOverlapStatus::Matched) {
                             skill_error = "skill_overlap_ambiguous";
                             break;
                         }
-                        const int offset = offsets->front().rect.y;
-                        const int remaining = panorama.rows - offset;
-                        if (offset <= 0 || remaining <= 0 || remaining >= current.rows || panorama.rows > 1400) {
+                        const int offset = overlap.offset_y;
+                        if (offset <= 0 || panorama.rows > 1400) {
                             skill_error = "skill_scroll_no_progress";
                             break;
                         }
-                        cv::vconcat(
-                            panorama,
-                            current(cv::Rect(0, remaining, current.cols, current.rows - remaining)),
-                            panorama);
+                        auto appended = utils::append_scroll_image(panorama, current, offset);
+                        if (!appended) {
+                            skill_error = "skill_scroll_no_progress";
+                            break;
+                        }
+                        panorama = std::move(*appended);
                         skill_frames.emplace_back(
                             json::object { { "frame", detail_evidence }, { "offset_y", offset } });
                     }
@@ -443,10 +440,10 @@ json::value asst::BattleControlTask::inspect_preparation(const Command& command)
                                         static_cast<int>(skill + 1),
                                         "unique_selected_marker_in_complete_ordered_skill_list",
                                         source.at("frame"),
-                                        { marker.x + skill_roi.x,
-                                          marker.y - offset + skill_roi.y,
-                                          marker.width,
-                                          marker.height });
+                                        utils::scroll_image_rect_to_frame(
+                                            marker,
+                                            { skill_roi.x, skill_roi.y },
+                                            offset));
                                     fields["selected_skill"]["row_order_frames"] = skill_frames;
                                     fields["selected_skill"]["marker_score"] = markers->front().score;
                                     fields["selected_skill"]["fingerprint"] = json::object {

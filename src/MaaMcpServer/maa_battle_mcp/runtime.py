@@ -182,6 +182,8 @@ def enrich_battle_decision(snapshot: dict, map_info: dict | None = None) -> None
                 ),
                 "location": unit.get("location"),
                 "location_verified": unit.get("location_verified") is True,
+                "spatial_evidence": unit.get("spatial_evidence"),
+                "action_verification": unit.get("action_verification"),
                 "observed_card_cooling": unit.get("observed_card_cooling")
                 or unknown("no_unique_matching_card", snapshot),
                 "owned_instance_departure_evidence": unit.get(
@@ -335,6 +337,7 @@ def enrich_battle_decision(snapshot: dict, map_info: dict | None = None) -> None
             "action_history": history,
             "field_units": snapshot.get("field_units"),
             "field_unit_detection": snapshot.get("field_unit_detection"),
+            "instance_association": snapshot.get("instance_association"),
             "complete_occupancy": False,
         },
         "deployment": {"cards": cards, "coverage": "same_frame_detected_cards"},
@@ -402,8 +405,14 @@ def enrich_battle_decision(snapshot: dict, map_info: dict | None = None) -> None
         "inspection": {
             "read_only_tools": [
                 "battle_observe",
+                "battle_get_operation",
+            ],
+            "original_frame_resource": "battle-evidence://{session_id}/{operation_id}/{observation_id}",
+            "image_and_map_options": "battle_observe(include_image=true, include_map=true)",
+            "full_profile_read_only_tools": [
                 "battle_capture_evidence",
                 "battle_get_map",
+                "battle_get_evidence_frame",
             ],
             "authorized_attached_input_tools": ["battle_identify"],
             "pre_attach_configuration_inspector": "battle_inspect_preparation",

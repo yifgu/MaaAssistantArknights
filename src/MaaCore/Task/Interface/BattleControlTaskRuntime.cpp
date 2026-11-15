@@ -2,6 +2,7 @@
 
 #include "Config/Miscellaneous/BattleDataConfig.h"
 #include "Config/TaskData.h"
+#include "Utils/BattlefieldObservation.h"
 #include "Vision/Battle/BattleControlState.h"
 #include "Vision/Battle/BattlefieldClassifier.h"
 #include "Vision/Battle/BattlefieldDetector.h"
@@ -126,20 +127,106 @@ void asst::BattleControlTask::observe_runtime(const CapturedFrame& frame, json::
         BattlefieldDetector detector(frame.image);
         detector.set_object_of_interest({ .operators = true });
         if (const auto result = detector.analyze()) {
-            size_t index = 0;
+            std::vector<battle::FieldUnitDetection> detections;
             for (const auto& detected : result->operators) {
-                if (!std::isfinite(detected.score) || detected.score < 0.9 ||
-                    !Rect(0, 0, frame.image.cols, frame.image.rows).include(detected.rect)) {
-                    continue;
+                detections.emplace_back(battle::FieldUnitDetection { detected.rect, detected.score });
+            }
+            std::vector<std::pair<Point, Point>> projected_tiles;
+            Matcher detail(frame.image);
+            detail.set_task_info("BattleOperRetreat");
+            detail.set_roi(Rect(m_retreat_button_pos.x - 50, m_retreat_button_pos.y - 50, 100, 100));
+            const auto selected_button = detail.analyze();
+            const bool selected_detail = selected_button && selected_button->score >= 0.95 &&
+                                         selected_button->rect.include(m_retreat_button_pos);
+            if (!selected_detail && frame.image.cols == 1280 && frame.image.rows == 720 && !m_has_multi_stages) {
+                for (const auto& [location, tile] : m_normal_tile_info) {
+                    projected_tiles.emplace_back(location, tile.pos);
+                }
+            }
+            const auto candidates = battle::project_field_unit_candidates(
+                detections,
+                projected_tiles,
+                Task.get("BattleOperBoxRectMove")->rect_move,
+                Rect(0, 0, frame.image.cols, frame.image.rows));
+            size_t index = 0;
+            for (const auto& candidate : candidates) {
+                json::array locations;
+                json::array requested_instances;
+                for (const auto& location : candidate.locations) {
+                    locations.emplace_back(json::array { location.x, location.y });
+                    for (const auto& [id, instance] : m_instances) {
+                        if (instance.location == location && instance.presence != Presence::Gone) {
+                            requested_instances.emplace_back(id);
+                        }
+                    }
+                }
+                json::value direction = unknown(
+                    !candidate.unique() ? "no_unique_uncontested_tile_projection" : "classifier_budget_exhausted");
+                if (candidate.unique() && !m_cancel_requested && !need_exit() &&
+                    std::chrono::steady_clock::now() < m_optional_runtime_deadline) {
+                    const auto& pos = m_normal_tile_info.at(candidate.locations.front()).pos;
+                    const auto roi =
+                        Rect(pos.x, pos.y, 0, 0).move(Task.get("BattleDeployDirectionRectMove")->rect_move);
+                    if (Rect(0, 0, frame.image.cols, frame.image.rows).include(roi)) {
+                        BattlefieldClassifier classifier(frame.image);
+                        classifier.set_object_of_interest({ .deploy_direction = true });
+                        classifier.set_base_point(pos);
+                        if (const auto classified = classifier.analyze()) {
+                            const auto& facing = classified->deploy_direction;
+                            const bool confident =
+                                std::isfinite(facing.score) && facing.score >= 0.9 && facing.score <= 1;
+                            const auto name = facing.direction == battle::DeployDirection::Right  ? "Right"
+                                              : facing.direction == battle::DeployDirection::Down ? "Down"
+                                              : facing.direction == battle::DeployDirection::Left ? "Left"
+                                              : facing.direction == battle::DeployDirection::Up   ? "Up"
+                                                                                                  : "";
+                            direction = json::object {
+                                { "value", confident && *name ? json::value(name) : json::value(nullptr) },
+                                { "source", "deploy_direction_cls_at_candidate_tile" },
+                                { "verification", "candidate_not_identity_bound" },
+                                { "score", facing.score },
+                                { "probabilities",
+                                  json::array { facing.prob[0], facing.prob[1], facing.prob[2], facing.prob[3] } },
+                                { "roi", json::array { roi.x, roi.y, roi.width, roi.height } },
+                                { "base_point", json::array { pos.x, pos.y } },
+                                { "presence_proof", false },
+                                { "reason", "four_direction_classes_have_no_empty_or_unknown_unit_class" },
+                                { "observation_id", snapshot.at("observation_id") },
+                                { "captured_at_ms", snapshot.at("captured_at_ms") },
+                            };
+                        }
+                    }
                 }
                 snapshot["field_units"].as_array().emplace_back(
                     json::object {
                         { "observation_local_id",
                           snapshot.at("observation_id").as_string() + ":bar:" + std::to_string(index++) },
                         { "source", "operators_det_health_bar" },
-                        { "score", detected.score },
+                        { "score", candidate.score },
                         { "rect",
-                          json::array { detected.rect.x, detected.rect.y, detected.rect.width, detected.rect.height } },
+                          json::array { candidate.detection.x,
+                                        candidate.detection.y,
+                                        candidate.detection.width,
+                                        candidate.detection.height } },
+                        { "tile_projection_rect",
+                          json::array { candidate.projection.x,
+                                        candidate.projection.y,
+                                        candidate.projection.width,
+                                        candidate.projection.height } },
+                        { "candidate_locations", std::move(locations) },
+                        { "candidate_location",
+                          candidate.unique()
+                              ? json::value(
+                                    json::array { candidate.locations.front().x, candidate.locations.front().y })
+                              : json::value(nullptr) },
+                        { "projection_status",
+                          projected_tiles.empty() ? "projection_unavailable_selected_view_or_unsupported_frame"
+                          : candidate.contested   ? "competing_detections"
+                          : candidate.unique()    ? "unique_candidate_not_identity_proof"
+                                                  : "ambiguous_or_unmapped" },
+                        { "projection_binding", "caller_map_and_assumed_normal_camera_not_visually_verified" },
+                        { "requested_instance_candidates", std::move(requested_instances) },
+                        { "direction_evidence", std::move(direction) },
                         { "observation_id", snapshot.at("observation_id") },
                         { "captured_at_ms", snapshot.at("captured_at_ms") },
                         { "instance_id", nullptr },
@@ -147,7 +234,8 @@ void asst::BattleControlTask::observe_runtime(const CapturedFrame& frame, json::
                         { "location", nullptr },
                         { "hp_fraction", unknown("detector_localizes_bar_not_hp_fill") },
                         { "danger", unknown("hp_and_incoming_damage_unmeasured") },
-                        { "association", "unassociated_not_tile_or_owned_instance_proof" },
+                        { "association", "projection_candidates_not_selected_identity_or_owned_instance_proof" },
+                        { "authorizes_input", false },
                     });
             }
             snapshot["field_unit_detection"] = json::object {
@@ -157,6 +245,8 @@ void asst::BattleControlTask::observe_runtime(const CapturedFrame& frame, json::
                 { "observation_id", snapshot.at("observation_id") },
                 { "captured_at_ms", snapshot.at("captured_at_ms") },
                 { "absence_proves_departure", false },
+                { "tile_mapping", "all_projected_candidates_no_first_match_or_nearest_neighbour" },
+                { "selected_identity_tile_anchor_available", false },
             };
         }
     }
@@ -187,6 +277,36 @@ void asst::BattleControlTask::observe_runtime(const CapturedFrame& frame, json::
     }
     for (auto& [id, instance] : m_instances) {
         const auto previous_runtime = instance.runtime;
+        json::array candidate_units;
+        if (snapshot.at("field_units").is_array()) {
+            for (const auto& unit : snapshot.at("field_units").as_array()) {
+                const auto& candidates = unit.at("requested_instance_candidates").as_array();
+                if (std::ranges::any_of(candidates, [&](const auto& candidate) {
+                        return candidate.as_string() == id;
+                    })) {
+                    candidate_units.emplace_back(
+                        json::object {
+                            { "field_unit_id", unit.at("observation_local_id") },
+                            { "candidate_locations", unit.at("candidate_locations") },
+                            { "projection_status", unit.at("projection_status") },
+                            { "requested_instance_candidates", unit.at("requested_instance_candidates") },
+                            { "direction_evidence", unit.at("direction_evidence") },
+                        });
+                }
+            }
+        }
+        instance.spatial_evidence = json::object {
+            { "source", "same_frame_health_bar_projection" },
+            { "verification", "unverified" },
+            { "measurement", snapshot.at("field_unit_detection") },
+            { "requested_location", json::array { instance.location.x, instance.location.y } },
+            { "candidate_units", std::move(candidate_units) },
+            { "observation_id", snapshot.at("observation_id") },
+            { "captured_at_ms", snapshot.at("captured_at_ms") },
+            { "missing_evidence", "selected_identity_bound_tile_and_owned_placement" },
+            { "detection_absence_proves_departure", false },
+            { "authorizes_input", false },
+        };
         const bool inspect_ready = m_allow_optional_visuals && !m_cancel_requested && !need_exit() &&
                                    std::chrono::steady_clock::now() < m_optional_runtime_deadline;
         instance.runtime = json::object();
