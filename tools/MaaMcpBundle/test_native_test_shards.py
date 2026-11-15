@@ -99,6 +99,7 @@ def invoke_shard(environment, index=0, flags=("-I", "-B"), extra_tests=(), tests
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
     )
     return result, reports
 
@@ -262,6 +263,45 @@ def test_failure_is_reported_immediately_without_stopping_remaining_cases(
     calls = [event for event in progress if event["phase"] == "call"]
     assert [event["outcome"] for event in calls] == ["failed", "passed", "passed"]
     assert "immediate failure details" in calls[0]["traceback"]
+    assert not (reports / "shard-0.json").exists()
+
+
+def test_unicode_failure_is_journaled_and_does_not_abort_a_legacy_console(
+    shard_environment,
+):
+    shard_environment["test_file"].write_text(
+        "import pytest\n"
+        "@pytest.mark.parametrize('case', range(9))\n"
+        "def test_case(case):\n"
+        "    print('\\u250c native log: \\u6682\\u505c')\n"
+        "    assert case != 0, 'unicode failure details'\n",
+        encoding="utf-8",
+    )
+    result, reports = invoke_shard(
+        shard_environment,
+        flags=(
+            "-I",
+            "-B",
+            "-c",
+            "import runpy, sys; "
+            "sys.stdout.reconfigure(encoding='cp1252', errors='strict'); "
+            "sys.stderr.reconfigure(encoding='cp1252', errors='strict'); "
+            "runpy.run_path(sys.argv.pop(1), run_name='__main__')",
+        ),
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "\u250c native log: \u6682\u505c" in result.stdout
+    assert "INTERNALERROR" not in result.stdout + result.stderr
+    progress = [
+        json.loads(line)
+        for line in (reports / "progress.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+    calls = [event for event in progress if event["phase"] == "call"]
+    assert [event["outcome"] for event in calls] == ["failed", "passed", "passed"]
+    assert any("\u250c" in content for _, content in calls[0]["sections"])
+    assert json.loads((reports / "diagnostics.json").read_text())["complete"] is False
     assert not (reports / "shard-0.json").exists()
 
 

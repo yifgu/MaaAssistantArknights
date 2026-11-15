@@ -491,7 +491,8 @@ def prepare(settings, known):
 
 def device(root, action, args):
     mode = (root / "mode").read_text(encoding="utf-8")
-    if (root / "preparation_variant").exists() and action in (
+    preparation = (root / "preparation_variant").exists()
+    if preparation and action in (
         "click",
         "swipe",
         "capture",
@@ -562,8 +563,9 @@ def device(root, action, args):
         if mode == "unknown" and (root / "return-after-unknown").exists():
             (root / "mode").write_text("paused")
     elif action in ("click", "swipe"):
-        # Make the interval between boundary acquisition and later analysis observable.
-        time.sleep(0.25)
+        # Battle boundary tests need this artificial latency; preparation has its own transitions.
+        if not preparation:
+            time.sleep(0.25)
         print("OK")
     else:
         print(

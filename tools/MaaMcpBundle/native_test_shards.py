@@ -4,6 +4,7 @@ Sorted pytest node IDs are assigned round-robin, including parametrized cases.
 Only a completed, entirely passing shard writes a receipt. Failures are printed
 immediately, and a flushed per-case journal survives interruptions and timeouts.
 Selectors can be pytest files or explicit node IDs; CI passes both complete files.
+Console output is UTF-8, including on Windows with a legacy system code page.
 """
 
 import argparse
@@ -172,6 +173,8 @@ def run_shard(args: argparse.Namespace) -> int:
             if report.failed:
                 event["traceback"] = str(report.longrepr)
                 event["sections"] = report.sections
+            self.record(event)
+            if report.failed:
                 print(
                     f"\nIMMEDIATE FAILURE: {report.nodeid} [{report.when}]\n"
                     f"{report.longrepr}",
@@ -179,7 +182,6 @@ def run_shard(args: argparse.Namespace) -> int:
                 )
                 for name, content in report.sections:
                     print(f"--- {name} ---\n{content}", flush=True)
-            self.record(event)
 
     plugin = Shard()
     exit_code = int(
@@ -252,6 +254,9 @@ def run_shard(args: argparse.Namespace) -> int:
 
 
 def main() -> int:
+    # Isolated Python ignores PYTHONIOENCODING; native logs include Unicode on Windows.
+    for stream in (sys.stdout, sys.stderr):
+        stream.reconfigure(encoding="utf-8", errors="backslashreplace")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--shard-index", type=int, choices=range(SHARD_COUNT), required=True

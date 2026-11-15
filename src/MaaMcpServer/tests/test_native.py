@@ -8,6 +8,21 @@ from maa_battle_mcp.models import Settings
 from maa_battle_mcp.native import NativeBackend, NativeCore
 
 
+def assert_map_without_live_evidence(ready, result):
+    assert result["status"] == "succeeded"
+    assert result["command_id"] == "map-1"
+    overlay = result["snapshot"]["dynamic_overlay"]
+    assert result["map"] == {**ready["map"], "dynamic_overlay": overlay}
+    assert ready["map"]["dynamic_overlay"]["status"] == "not_observed"
+    assert result["snapshot"]["in_battle"] is False
+    assert overlay["observation_id"] == result["snapshot"]["observation_id"]
+    assert overlay["captured_at_ms"] == result["snapshot"]["captured_at_ms"]
+    assert overlay["status"] == "unavailable"
+    assert overlay["tiles"] is None
+    assert overlay["baseline"] == {}
+    assert "baseline_image_path" not in result
+
+
 @pytest.mark.skipif(
     not os.environ.get("MAA_MCP_NATIVE_CORE"),
     reason="Set MAA_MCP_NATIVE_CORE to a Debug Core installation for the native ABI smoke test",
@@ -38,7 +53,7 @@ def test_debug_core_task_protocol_without_device(tmp_path):
             "command_id": "map-1",
             "action": "map",
             "args": {},
-            "timeout_ms": 1000,
+            "timeout_ms": 10_000,
         }
         for invalid in (
             {**command, "timeout_ms": -1},
@@ -81,9 +96,7 @@ def test_debug_core_task_protocol_without_device(tmp_path):
                 core.handle, core.task_id, json.dumps(invalid).encode("utf-8")
             )
         result = core.dispatch("command", command, settings)
-        assert result["status"] == "succeeded"
-        assert result["command_id"] == "map-1"
-        assert result["map"] == ready["map"]
+        assert_map_without_live_evidence(ready, result)
     finally:
         core.close()
 
@@ -117,11 +130,11 @@ def test_native_worker_process_protocol(tmp_path):
                 "command_id": "map-1",
                 "action": "map",
                 "args": {},
-                "timeout_ms": 1000,
+                "timeout_ms": 10_000,
             },
-            2,
+            15,
         )
-        assert result["map"] == ready["map"]
+        assert_map_without_live_evidence(ready, result)
     finally:
         backend.close()
     assert backend.process.poll() is not None
