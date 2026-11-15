@@ -16,11 +16,12 @@ from .media import MediaError, MediaService
 from .models import (
     BattleMode,
     OperationRequest,
+    Placement,
     PreparationOperationRequest,
     PreparationRequest,
     Settings,
 )
-from .native import NativeBackend, NativeError
+from .native import NativeBackend, NativeError, command_execution
 from .preparation import add_host_fallback
 
 logger = logging.getLogger(__name__)
@@ -292,7 +293,12 @@ class BattleService:
                 raise
 
     async def command(
-        self, action: str, request: OperationRequest, args: dict | None = None
+        self,
+        action: str,
+        request: OperationRequest,
+        args: dict | None = None,
+        *,
+        range_source: dict | None = None,
     ) -> dict:
         self._control_guard()
         if self.storage_failed:
@@ -342,25 +348,12 @@ class BattleService:
                         "artifact_id": media_id,
                     }
             encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False)
-            previous = self.journal.execute(
-                "SELECT request, result FROM operations WHERE session=? AND id=?",
-                (request.session_id, request.operation_id),
-            ).fetchone()
+            previous = self._admit_operation(request, encoded)
             if previous is not None:
-                if previous[0] != encoded:
-                    raise BattleError(
-                        "operation_id was already used with different parameters"
-                    )
-                if previous[1] is None:
-                    raise BattleError(
-                        "Operation has no final result; do not retry its input"
-                    )
-                return json.loads(previous[1])
-            self.journal.execute(
-                "INSERT INTO operations(session,id,request) VALUES(?,?,?)",
-                (request.session_id, request.operation_id, encoded),
-            )
-            self.journal.commit()
+                return previous
+            # Persist caller intent unchanged; canonical execution must not invalidate old journal fingerprints.
+            execution = command_execution(payload)
+            payload = execution.payload
             media_allocated = False
             if media_id:
                 try:
@@ -393,15 +386,11 @@ class BattleService:
                 self.preparation_snapshot = None
                 self.decision.preparation = None
             cancelled = False
-            bounded_cleanup = action in (
-                "step",
-                "inspect_preparation",
-                "record",
-            ) and payload["action"] in ("step", "inspect_preparation", "record")
+            bounded_cleanup = execution.bounded_cleanup
             self.step_active = bounded_cleanup
             self.active_request = request
             try:
-                timeout = request.timeout_ms / 1000 + (10 if bounded_cleanup else 0)
+                timeout = request.timeout_ms / 1000 + execution.cleanup_grace_seconds
                 request_task = asyncio.create_task(
                     asyncio.to_thread(
                         backend.request,
@@ -445,7 +434,7 @@ class BattleService:
                         "message": "Worker stopped. Input may have occurred; reconnect and inspect before retrying.",
                     },
                 }
-                if action == "step":
+                if payload["action"] == "step":
                     result["pause_verified"] = False
                     result["safe_state"] = "unknown"
                 if preparation:
@@ -528,12 +517,51 @@ class BattleService:
                     "source": "caller_supplied",
                 }
                 add_host_fallback(result)
+            if (
+                action == "evaluate_placement"
+                and result.get("status") == "succeeded"
+                and range_source is not None
+            ):
+                result["range_source"] = range_source
             self._save_result(request, result)
             if preparation and result.get("preparation_valid") is True:
                 self.preparation_snapshot = result
             if cancelled:
                 raise asyncio.CancelledError
             return result
+
+    def _admit_operation(self, request: OperationRequest, encoded: str) -> dict | None:
+        try:
+            previous = self.journal.execute(
+                "SELECT request, result FROM operations WHERE session=? AND id=?",
+                (request.session_id, request.operation_id),
+            ).fetchone()
+            if previous is not None:
+                if previous[0] != encoded:
+                    raise BattleError(
+                        "operation_id was already used with different parameters"
+                    )
+                if previous[1] is None:
+                    raise BattleError(
+                        "Operation has no final result; do not retry its input"
+                    )
+                return json.loads(previous[1])
+            self.journal.execute(
+                "INSERT INTO operations(session,id,request) VALUES(?,?,?)",
+                (request.session_id, request.operation_id, encoded),
+            )
+            self.journal.commit()
+        except sqlite3.Error as exc:
+            self.storage_failed = True
+            try:
+                self.journal.rollback()
+            except sqlite3.Error:
+                logger.exception("Could not roll back failed operation admission")
+            logger.exception("Could not persist operation admission")
+            raise BattleError(
+                "Operation storage failed; no device command was submitted"
+            ) from exc
+        return None
 
     def _save_result(self, request: OperationRequest, result: dict) -> None:
         try:
@@ -564,6 +592,21 @@ class BattleService:
         return await self.command(
             action,
             OperationRequest(session_id=session_id, operation_id=str(uuid.uuid4())),
+        )
+
+    async def evaluate_placement(
+        self, session_id: str, placements: list[Placement]
+    ) -> dict:
+        self._check_session(session_id)
+        if self.map_info is None:
+            raise BattleError("Attach a map before evaluating placements")
+        prepared = self.decision.prepare_placements(placements)
+        range_source = self.decision.placement_source()
+        return await self.command(
+            "evaluate_placement",
+            OperationRequest(session_id=session_id, operation_id=str(uuid.uuid4())),
+            {"placements": prepared},
+            range_source=range_source,
         )
 
     def operation(self, session_id: str, operation_id: str) -> dict:
@@ -603,6 +646,8 @@ class BattleService:
             for frame in result.get("evidence_frames", [])
             if isinstance(frame, dict)
         ]
+        if result.get("observation_id") and result.get("image_path"):
+            candidates.append(result)
         for snapshot_key, image_key in (
             ("snapshot", "image_path"),
             ("capture_time_snapshot", "capture_image_path"),

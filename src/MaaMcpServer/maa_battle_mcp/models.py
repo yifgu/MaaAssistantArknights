@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
 Identifier = Annotated[str, Field(min_length=1, max_length=128)]
 UnitIdentifier = Annotated[str, Field(min_length=1, max_length=137)]
@@ -112,56 +112,96 @@ class TerminalRequest(OperationRequest):
         return self
 
 
-class BoundedStepRequest(OperationRequest):
-    timeout_ms: Timeout = 10_000
-    action: Literal["deploy", "retreat", "skill", "wait"]
-    unit_id: UnitIdentifier | None = None
-    duration_ms: Annotated[int, Field(ge=100, le=8_000)] | None = None
+class StepRequest(OperationRequest):
     adopt_manual_pause: bool = False
-    location: Annotated[list[Coordinate], Field(min_length=2, max_length=2)] | None = (
-        None
-    )
-    direction: Literal["Right", "Down", "Left", "Up", "None"] | None = None
+
+
+class DeployStepRequest(StepRequest):
+    action: Literal["deploy"]
+    unit_id: UnitIdentifier
+    location: Annotated[list[Coordinate], Field(min_length=2, max_length=2)]
+    direction: Literal["Right", "Down", "Left", "Up", "None"]
     card_id: Identifier | None = None
-    recording: RecordingOptions | None = None
+
+
+class RetreatStepRequest(StepRequest):
+    action: Literal["retreat"]
+    unit_id: UnitIdentifier
+
+
+class SkillStepRequest(StepRequest):
+    action: Literal["skill"]
+    unit_id: UnitIdentifier
+
+
+class WaitStepRequest(StepRequest):
+    action: Literal["wait"]
+    duration_ms: Annotated[
+        int,
+        Field(
+            ge=100,
+            le=8_000,
+            description="Host-time wait; must leave at least 1000 ms of timeout_ms headroom.",
+        ),
+    ]
+    recording: RecordingOptions | None = Field(
+        default=None,
+        description="Wait-only sampling; duration_ms // interval_ms + 2 must not exceed max_frames.",
+    )
 
     @model_validator(mode="after")
-    def validate_action_args(self):
-        if self.recording is not None and self.action != "wait":
+    def bounded_wait(self):
+        if self.duration_ms + 1_000 > self.timeout_ms:
+            raise ValueError("wait requires at least 1000 ms of deadline headroom")
+        if self.recording is not None and (
+            self.duration_ms // self.recording.interval_ms + 2
+            > self.recording.max_frames
+        ):
             raise ValueError(
-                "recording is only allowed on an explicitly authorized wait"
+                "wait recording duration/interval cannot fit the frame limit"
             )
-        if self.card_id is not None and self.action != "deploy":
-            raise ValueError("card_id is only valid for deployment")
-        if self.action == "wait":
-            if (
-                self.unit_id is not None
-                or self.location is not None
-                or self.direction is not None
-            ):
-                raise ValueError("wait does not accept a unit, location or direction")
-            if self.duration_ms is None or self.duration_ms + 1_000 > self.timeout_ms:
-                raise ValueError(
-                    "wait requires duration_ms and at least 1000 ms of deadline headroom"
-                )
-            if self.recording is not None and (
-                self.duration_ms // self.recording.interval_ms + 2
-                > self.recording.max_frames
-            ):
-                raise ValueError(
-                    "wait recording duration/interval cannot fit the frame limit"
-                )
-            return self
-        if self.unit_id is None or self.duration_ms is not None:
-            raise ValueError(
-                "tactical actions require unit_id and do not accept duration_ms"
-            )
-        if self.action == "deploy":
-            if self.location is None or self.direction is None:
-                raise ValueError("deploy requires location and direction")
-        elif self.location is not None or self.direction is not None:
-            raise ValueError("location and direction are only valid for deploy")
         return self
+
+
+class PauseStepRequest(StepRequest):
+    action: Literal["pause"]
+
+
+class SpeedStepRequest(StepRequest):
+    action: Literal["speed"]
+    multiplier: Annotated[int, Field(ge=1, le=2, json_schema_extra={"enum": [1, 2]})]
+
+
+class BoundedStepRequest(
+    RootModel[
+        Annotated[
+            DeployStepRequest
+            | RetreatStepRequest
+            | SkillStepRequest
+            | WaitStepRequest
+            | PauseStepRequest
+            | SpeedStepRequest,
+            Field(discriminator="action"),
+        ]
+    ]
+):
+    """One action-specific request; preserve the original keyword constructor."""
+
+    def __getattr__(self, name: str):
+        if name in (
+            "unit_id",
+            "duration_ms",
+            "location",
+            "direction",
+            "card_id",
+            "recording",
+            "multiplier",
+        ):
+            return getattr(self.root, name, None)
+        try:
+            return super().__getattr__(name)
+        except AttributeError:
+            return getattr(self.root, name)
 
 
 class IntelligenceConfig(StrictModel):

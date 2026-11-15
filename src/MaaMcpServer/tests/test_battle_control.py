@@ -73,7 +73,7 @@ async def battle(tmp_path, monkeypatch, request):
                 else "main_01-07",
                 "challenge" if challenge else "normal",
             )
-        yield service, create_server(service), root
+        yield service, create_server(service, tool_profile="full"), root
     finally:
         await service.close()
         service.journal.close()

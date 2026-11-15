@@ -7,7 +7,29 @@ order: 20
 
 `src/MaaMcpServer` 提供本地 stdio MCP 服务，通过独立进程加载 MaaCore。需要 Python 3.11+、uv 和本分支编译的 Core；旧版本没有 `BattleControl` 任务。该功能是实验性的，不是危机合约自动优化器。
 
+## 工具配置与响应契约
+
+`--tool-profile minimal|full` 默认 `minimal`；Python 可调用 `create_server(service, intelligence=None, tool_profile="minimal")`。默认 `tools/list` 恰好包含十个工具：
+
+- 连接与生命周期：`battle_status`、`battle_connect`、`battle_attach`、`battle_close`。
+- 只读证据与资料：`battle_observe`、`battle_get_unit_info`、`battle_get_operation`。
+- 显式设备输入：`battle_inspect_preparation`、`battle_identify`、`battle_step`。
+
+仅配置 `--intel-config` 时注册 `intel_query`，为任一配置增加一个工具；不暴露无 provider 的空壳。`full` 提供原有 27 个非情报工具，包括旧动作、独立暂停／恢复、战前辅助、媒体和几何评估，配置情报后共 28 个。依赖这些扩展的旧客户端须添加 `--tool-profile full` 并刷新 `tools/list`；不使用混合只读与输入的万能动作工具。
+
+`battle_observe(session_id, include_image=false, include_map=false, duration_ms=0, operation_id=null, timeout_ms=10000)` 是统一被动入口，不隐式识别、暂停、恢复或发送输入。普通观察保留实际同帧 PNG，但不默认附图；`include_image=true` 附上同一原帧，`include_map=true` 增加结构化静态地图而不额外截图。默认地图为结构化引用。`duration_ms=100..8000` 复用原生只读 `finalize`，**仅输入已阻塞的会话可用**，不能超过 `timeout_ms`（1..30000）；不会暂停运行中的游戏。省略操作 ID 时自动生成并以 `command_id` 返回，显式 ID 仍遵循持久化重放规则。
+
+minimal 响应仅在**顶层**提供一个 canonical `battle_decision`，优先使用返回时快照，其次普通快照，最后动作边界快照。嵌套快照仍保留元数据、安全、操作结果及证据引用，但不重复展开 `battle_decision`、`deployment`、`battlefield`。未知值及原因不省略；这是响应投影，不删除 `operations.sqlite3` 中的原始审计结果。full 保留原有嵌套／原始输出形状和旧入口附图行为；minimal 工具默认不附 PNG。
+
+需要按需读取结构化动作边界证据时，任一配置均可调用 `battle_get_operation(session_id, operation_id, detail="full")`，直接返回未改写的持久结果，包括完整 `capture_time_snapshot`／`return_time_snapshot` 及各自的结构化决策，另附证据引用；不重做观测、不发送输入、不改写日志。`detail="summary"` 是默认值，遵循所选配置：minimal 返回精简摘要，full 为兼容仍返回完整结果。读取 full 操作详情不附 PNG，也无需切换工具配置。full 的 pause／speed step 也会内联原生 `image_path` PNG，相同图片路径仅附一次。
+
+操作保留的原帧可通过 `image/png` MCP resource `battle-evidence://{session_id}/{operation_id}/{observation_id}` 读取。响应提供 `evidence[].resource_uri` 与资源链接；返回记录的原始 PNG，不重新截图，关闭后只要仍保留即可读取。只接受操作绑定的 ID，不接受任意路径；full 的 `battle_get_evidence_frame` 继续兼容。过期明确报错，不合成或重新采集证据。
+
+`battle_step.request` 使用按 action 判别的 `oneOf` Schema，每个分支导出必填字段并设置 `additionalProperties=false`：`deploy` 必须有 `unit_id`、`location`、`direction`；`retreat`／`skill` 只需 `unit_id`；`wait` 必须有 `duration_ms`；`pause` 不收单位、位置、方向、时长；`speed` 必须有整数 `multiplier=1|2`，且仅在已验证暂停时可用。pause 只暂停并验证，不推进战斗。`recording` 仅 wait 可用，时长／期限／帧数之间的约束也在输入前校验。接管手动暂停仍须显式 `adopt_manual_pause=true`。独立的 `battle_set_paused(paused=false)` 仅 full 提供，不属于有界 step。
+
 ## 结构化战斗决策视图
+
+原生普通观察现已保留同帧 PNG。血条 `field_units` 导出全部候选格（`candidate_locations`）、冲突／投影状态、朝向证据和 `requested_instance_candidates`，不按首个匹配强行落格。`instance_association`、逐实例 `spatial_evidence` 与 `action_verification` 保留缺失前提；候选不等于已验证身份／格子关联，`instance_id`、`game_id`、`location` 仍未知，`authorizes_input=false`。目前缺少选中身份绑定格及撤退按钮 enabled 状态的正向规则，未建立 `VerifiedTileAnchor`，技能／撤退仍拒绝；不宣称已能自主开技能或完成部署／撤退闭环。
 
 快照新增 `battle_decision.schema_version=1`，原生协议仍为 1。分域包括 `safety`、`progress`、`deployment`、`allies`、`terrain`、`enemies`、`mechanics`、`events`、`coverage`、`inspection` 与 `alerts`。字段保留值、来源、验证、原因、观测 ID、采集时间与新鲜度；不可用不代表空战场，`allies.action_history` 与当前在场状态独立。
 
@@ -25,11 +47,15 @@ order: 20
 
 战前结果的 `host_fallback.required` 和逐槽位／字段 `items` 提供原因、可用原始候选、ROI、证据及 `retrieval` 引用。技能／等级／身份缺失仍未知，仅请求多模态宿主复核；宿主解释不会自动成为原生事实、改变安全锁或触发额外导航。
 
-`battle_get_evidence_frame(session_id, operation_id, observation_id)` 以 ImageContent 返回操作已保留的一张原始 PNG，包括历史战前详情，而不只返回编队页。ID 必须属于已记录操作；未知／歧义帧、跨会话路径、符号链接逃逸及超过 16 MiB 的图片被拒绝。关闭后只要日志和文件仍在也可回读；不会重新截图或控制设备，明确报告 `frame_is_live=false`。
+字段级 `items[].retrieval.resource_uri` 复用已记录原帧的 PNG 资源引用。minimal 不提示未注册的 full 专用工具，full 同时保留兼容工具；minimal 缺少已记录帧引用时明确 `available=false` 且资源 URI 为 null。历史操作读取（含 `detail="full"`）使用相同投影，只调整回读元数据，不改持久化事实或日志原记录。
+
+原帧 resource，或 full 的 `battle_get_evidence_frame(session_id, operation_id, observation_id)`（ImageContent），只读返回操作已保留的一张原始 PNG，包括历史战前详情，而不只返回编队页。ID 必须属于已记录操作；未知／歧义帧、跨会话路径、符号链接逃逸及超过 16 MiB 的图片被拒绝。关闭后只要日志和文件仍在也可回读；不会重新截图或控制设备，明确报告 `frame_is_live=false`。
 
 原生 `suspected_defeat` 是去重的**宿主复核提示**，不是引擎击倒事件。唯一普通非替身种类的已拥有部署记录出现冷却，且本会话没有撤退输入记录时，即使拥有关系／离场未验证，也可发出提示。保留 `departure_verified=false`、未知原因、null 置信度、`record_coverage="this_session_only"` 与替代原因。重复／召唤／替身歧义和终局清理不发此提示。提示不改变在场状态、不释放占格、不授权输入；外部／会话前操作及机制原因仍可能存在。
 
 ## 本地媒体与实验性视频候选
+
+下文独立媒体工具仅 full 提供；明确授权的 wait recording 及其资源链接在 minimal 仍可用。
 
 `battle_record_clip(request)` 接受战斗 `session_id`、持久 `operation_id`、`duration_ms`（100–8000，默认 2000）、`interval_ms`（200–2000，默认 500）、`max_frames`（2–24，默认 24）及普通 `timeout_ms`。不可能容纳的时长／间隔／帧数组合会预先拒绝。它**不发送输入**，不暂停／恢复；运行中的游戏继续推进，最终快照与 PNG 仍对应真实采集帧。
 
@@ -174,13 +200,13 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 }
 ```
 
-按顺序调用 `battle_connect`、`battle_attach(stage_name="main_01-07")`、`battle_capture_evidence` 和 `battle_observe`。关卡 ID 必须对应实际画面；地图绑定来自调用者，不是自动识别。`battle_get_map` 返回静态格子、两种屏幕投影及实时像素变化。未知名字返回 null，需要主动识别时调用 `battle_identify`；它可能点击详情并请求暂停，之后须查看截图并显式调用 `battle_set_paused(paused=false)` 恢复。
+按顺序调用 `battle_connect`、`battle_attach(stage_name="main_01-07")`、`battle_observe(session_id=..., include_image=true, include_map=true)`。关卡 ID 必须对应实际画面；地图绑定来自调用者，不是自动识别。未知名字返回 null，需要主动识别时调用 `battle_identify`；它可能点击详情并请求暂停，检查证据后再调用有界 `battle_step`。full 的 `battle_get_map` 返回静态格子、两种屏幕投影及实时像素变化。
 
 `battle_get_map` 的 MCP 图像内容依次为当前 PNG（`image_path`）和基准 PNG（`baseline_image_path`）；两者路径相同时只附一张，尚无有效基准时不附基准图。宿主无需直接访问 Core 文件系统即可二次识别，具体变化字段及限制见下文。
 
 新会话接入手动暂停时，`battle_identify` 的严格布尔参数 `request.adopt_manual_pause=true` 明确授权接管而不恢复；默认 false。Core 必须识别到正向暂停证据，缺少运行按钮不再足够，入场标题过渡不能接管。识别只在暂停时查看卡牌；返回 `pause_verified`、`safe_state`、同帧 `snapshot` / `image_path` 和 PNG，部分 OCR 也保留证据。保存失败通过 `evidence_error` 明示，取消或 worker 故障可能无法提供最终证据，不会主动恢复战斗。
 
-部署示例，替换会话和单位 ID；工具参数包含一层 `request`：
+full 旧入口 `battle_deploy` 部署示例，替换会话和单位 ID；工具参数包含一层 `request`：
 
 ```json
 {
@@ -212,9 +238,9 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 }
 ```
 
-`action` 可为 `deploy`、`retreat`、`skill` 或下文的 `wait`；部署还须提供 `location` 和 `direction`。手动暂停默认不接管；恢复须显式 `adopt_manual_pause=true` 并由新截图确认暂停。每次至多执行一个动作，先取得并分析动作边界，再请求暂停并返回新截图与 `pause_verified`；取消会通知 Core 并等待清理。worker 失效时暂停可能未知。`battle_step` 的 `timeout_ms` 默认 10000，上限 30000，不自动延长调用者的预算。
+`action` 可为 `deploy`、`retreat`、`skill`、`wait`、`pause` 或 `speed`，各分支参数见上面的 Schema 说明。手动暂停默认不接管；恢复须显式 `adopt_manual_pause=true` 并由新截图确认暂停。每次至多执行一个动作，先取得并分析动作边界，再请求暂停并返回新截图与 `pause_verified`；pause／speed 不恢复战斗。取消会通知 Core 并等待清理，worker 失效时暂停可能未知。`battle_step` 的 `timeout_ms` 默认 10000，上限 30000，不自动延长调用者的预算。
 
-`captured_at_ms` 是取帧完成后、分析开始前记录的主机 Unix 毫秒时间，不是设备渲染时间。`capture_time_snapshot` 始终对应 `capture_image_path`（动作边界），`return_time_snapshot` 对应 `return_image_path`（稍后的暂停验证）；MCP 图片内容仍按返回帧、动作边界帧排列。`observation_id` 按分析顺序递增而非取帧顺序，因此动作边界观测的 ID 可能更大，但时间戳更早。系统时钟调整会影响时间差，这些时间戳不构成运行时长硬限制。完全相同的操作重放保留原始时间戳与路径，新截图则记录自己的取帧时间。
+`captured_at_ms` 是取帧完成后、分析开始前记录的主机 Unix 毫秒时间，不是设备渲染时间。`capture_time_snapshot` 始终对应 `capture_image_path`（动作边界），`return_time_snapshot` 对应 `return_image_path`（稍后的暂停验证）；full 的 MCP 图片内容仍按返回帧、动作边界帧排列，minimal 改为提供原帧 resource。`observation_id` 按分析顺序递增而非取帧顺序，因此动作边界观测的 ID 可能更大，但时间戳更早。系统时钟调整会影响时间差，这些时间戳不构成运行时长硬限制。完全相同的操作重放保留原始时间戳与路径，新截图则记录自己的取帧时间。
 
 `battle_identify` 返回 `identified_count`、`unresolved_count`、`ambiguous_count` 和逐卡 `identity_reason`；空名缓存不会再抑制详情 OCR。其他动作返回 `outcome_unknown` 时，MCP `isError` 为 true，即使 `helper_returned` 或 `action_returned` 为 true 也不代表游戏内成功。须截图复核，不能盲目重试。场上位置标为 `action_history_unverified`，敌人状态为 null；首版不接受模型直接覆写状态。单独的暂停请求不等于已确认暂停，恢复只允许针对本服务请求过或明确接管的暂停。
 
@@ -280,9 +306,11 @@ PRTS 映射为 `stage → get_stage_enemies(stage_id)`、`operator → get_opera
 
 区服、关卡和显式模式必须一致。还可填写 `actual_level`、`potential`、`module_id`、`module_level`、`skill_level`、`mastery`；省略字段为 unknown。快照的 `decision_context` 单独保留逐字段来源、用户确认状态及配置哈希，不覆盖原生观测，也不把用户确认称为视觉验证。SP、技能阶段、持续时间和天赋仍未知；不根据姓名选择候选 ID 中的第一项。
 
-`battle_evaluate_placement(session_id, placements)` 只读检查候选全队阵型。每项填写 `operator_game_id`、`location`、`direction`，精英阶段取配置，或显式填写 `assumed_elite` 作为假设。输出基础范围格、几何上的友军覆盖、静态部署类型兼容性及占格冲突；未知精英或范围不套职业默认模板。该结果不验证现场占位、实际治疗资格、生存或全局最优，也不包含技能、模组、天赋和地形特殊效果。现场敌人追踪仍不支持。
+full 的 `battle_evaluate_placement(session_id, placements)` 只读检查候选全队阵型，复用 Core 共用几何实现，不在 Python 维护第二套投影算法。每项填写 `operator_game_id`、`location`、`direction`，精英阶段取配置，或显式填写 `assumed_elite` 作为假设。输出基础范围格、几何上的友军覆盖、静态部署类型兼容性及占格冲突；未知精英或范围不套职业默认模板。该结果不验证现场占位、实际治疗资格、生存或全局最优，也不包含技能、模组、天赋和地形特殊效果。现场敌人追踪仍不支持。
 
 ## 场景证据、准备观察与受限操作
+
+minimal 使用 `battle_observe(duration_ms=..., ...)` 进行有界只读恢复采集；下文独立截图／终局／战前辅助工具仅 full 提供。
 
 `scene` 区分 `running / paused / transition / terminal / unknown`。每张采样帧均检查终局，正向终局证据优先于残留战斗 UI。确认战斗后，仍在战斗内的 `transition` 以 `input_block_reason=pause_verification_pending` 禁止输入，不再直接视为永久终局隔离。恢复必须连续采集两帧带正向暂停证据的新画面；运行或过渡帧会清零计数。不能仅凭运行按钮消失认定暂停。暂停收尾的只读验证预算取 3000 ms 与 ｢已观测到的最大单帧采集及分析耗时的两倍 + 1000 ms｣ 中的较大值，为两帧确认及轮询留出时间，但始终受命令剩余期限限制，取消会停止验证；持续无法确认时仍禁止输入。
 
@@ -377,4 +405,4 @@ python tools/ResourceUpdater/generate_unit_info.py \
 
 `identify` 接受可选的严格布尔参数 `args.adopt_manual_pause`，默认 false。显式接管只取得已识别暂停的控制权，不切换暂停，也不授权此次识别恢复战斗。
 
-`step` 也接受 `args.action="wait"` 与 `args.duration_ms`，不传单位参数。运行中可通过 `AsstSetTaskParams` 发送 `{"session_id":"…","cancel_command_id":"…"}`；它只设置对应命令的取消信号，不执行设备操作，不生成第二份操作结果。迟到的取消不会作用于下一条命令，原命令仍通过原回调返回清理结果；MCP 结果继续按原 `operation_id` 持久化和去重。
+`step` 也接受不带单位的 `args.action="wait"` 与 `args.duration_ms`、不带动作参数的 `args.action="pause"`，以及仅已验证暂停时可用的 `args.action="speed"` 与 `args.multiplier=1|2`。只读 `evaluate_placement` 命令接收 `placements` 数组并复用 Core 几何。运行中可通过 `AsstSetTaskParams` 发送 `{"session_id":"…","cancel_command_id":"…"}`；它只设置对应命令的取消信号，不执行设备操作，不生成第二份操作结果。迟到的取消不会作用于下一条命令，原命令仍通过原回调返回清理结果；MCP 结果继续按原 `operation_id` 持久化和去重。

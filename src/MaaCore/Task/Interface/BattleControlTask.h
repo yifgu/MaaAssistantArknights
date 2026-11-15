@@ -32,6 +32,8 @@ protected:
     bool _run() override;
 
 private:
+    friend struct BattleControlObservationTest;
+
     struct Command
     {
         std::string id;
@@ -123,6 +125,7 @@ private:
         std::vector<SelectionEvidence> selection_evidence;
         json::value departure_evidence = nullptr;
         json::value observed_card_cooling = nullptr;
+        json::value spatial_evidence = nullptr;
         json::value runtime = json::object();
         unsigned cooling_confirmations = 0;
         std::chrono::steady_clock::time_point last_cooling_capture {};
@@ -150,6 +153,7 @@ private:
     json::value execute(const Command& command);
     json::value execute_step(const Command& command, json::value snapshot);
     json::value execute_wait(const Command& command, CapturedFrame frame, json::value snapshot);
+    json::value execute_pause(const Command& command, CapturedFrame frame, json::value snapshot);
     json::value execute_speed(const Command& command, CapturedFrame frame, json::value snapshot);
     json::value execute_record(const Command& command, CapturedFrame frame, json::value snapshot);
     Recording recording_options(const json::value& options) const;
@@ -213,7 +217,7 @@ private:
     std::string m_session_id;
     uint64_t m_observation_id = 0;
     std::deque<std::filesystem::path> m_evidence_files;
-    std::unordered_map<std::string, std::string> m_directions;
+    std::unordered_set<std::filesystem::path> m_retained_evidence_files;
     cv::Mat m_terrain_baseline_image;
     json::value m_terrain_baseline = json::object();
     json::value m_terrain_observation = nullptr;

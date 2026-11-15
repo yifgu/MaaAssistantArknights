@@ -9,6 +9,7 @@
 #include "Config/Miscellaneous/BattleDataConfig.h"
 #include "Config/TemplResource.h"
 #include "MaaUtils/ImageIo.h"
+#include "Utils/BattleGeometry.h"
 #include "Utils/Platform.hpp"
 
 void expect(bool condition, const char* name)
@@ -159,6 +160,7 @@ json::value unit_metadata()
                 json::object {
                     { "game_id", "unit" },
                     { "entity_kind", "operator" },
+                    { "execution_support", json::object { { "status", "supported" } } },
                     { "capabilities",
                       json::object {
                           { "standard_drag",
@@ -205,6 +207,19 @@ void test_unit_metadata(const std::filesystem::path& root)
     const auto capabilities = resource.get_unit_capabilities("unit");
     expect(capabilities.standard_drag == true && capabilities.direction == false, "boolean capabilities are retained");
     expect(!capabilities.manual_retreat, "unknown capability is retained");
+    const auto summary = resource.get_unit_summary("unit");
+    for (const auto* key :
+         { "game_id", "entity_kind", "capabilities", "source", "metadata_status", "execution_support" }) {
+        expect(summary.at(key) == info.at(key), "lightweight summary retains entity contract");
+    }
+    expect(
+        !summary.contains("skills") && !summary.contains("skill_definitions") && !summary.contains("base_attributes") &&
+            !summary.contains("base_range_definitions"),
+        "lightweight summary omits static skill and range knowledge");
+    expect(
+        resource.get_unit_summary("missing").at("metadata_status").as_string() == "unavailable" &&
+            !resource.get_unit_capabilities("missing").standard_drag,
+        "missing unit summary and capabilities stay unknown");
     expect(resource.load_unit_info(root / asst::utils::path("missing.json")), "optional missing metadata is accepted");
     expect(resource.get_unit_info("unit") == info, "optional missing metadata preserves previous layer");
 
@@ -267,6 +282,227 @@ void test_unit_metadata(const std::filesystem::path& root)
     expect(resource.get_unit_info("unit") == info, "reloaded metadata is intact");
 }
 
+json::value geometry_battle_data()
+{
+    json::object characters;
+    const auto add =
+        [&](const std::string& id, const std::string& role, const std::string& position, const std::string& range) {
+            characters[id] = json::object {
+                { "name", id },
+                { "profession", role },
+                { "subProfessionId",
+                  role == "TANK"      ? "protector"
+                  : role == "MEDIC"   ? "physician"
+                  : role == "SPECIAL" ? "pusher"
+                                      : "pioneer" },
+                { "position", position },
+                { "rangeId", json::array { range, range, range } },
+                { "rarity", 5 },
+            };
+        };
+    add("char_4228_closur", "PIONEER", "RANGED", "3-3");
+    add("char_1052_kalts2", "MEDIC", "RANGED", "y-6");
+    add("char_2027_wang", "SPECIAL", "RANGED", "3-3");
+    add("char_2025_shu", "TANK", "MELEE", "unknown");
+    add("token", "TOKEN", "NONE", "3-3");
+    json::array forward, medic;
+    for (int x = -1; x <= 3; ++x) {
+        for (int y = -1; y <= 1; ++y) {
+            if (x >= 0) {
+                forward.emplace_back(json::array { x, y });
+            }
+            if (x <= 2) {
+                medic.emplace_back(json::array { x, y });
+            }
+        }
+    }
+    for (int x : { 0, 1 }) {
+        for (int y : { -2, 2 }) {
+            medic.emplace_back(json::array { x, y });
+        }
+    }
+    return json::object {
+        { "chars", std::move(characters) },
+        { "ranges", json::object { { "3-3", std::move(forward) }, { "y-6", std::move(medic) } } },
+    };
+}
+
+json::value geometry_map()
+{
+    json::array tiles;
+    for (int y = 0; y < 7; ++y) {
+        for (int x = 0; x < 11; ++x) {
+            tiles.emplace_back(
+                json::object {
+                    { "location", json::array { x, y } },
+                    { "buildable_type", x == 8 && y == 3 ? 1 : 2 },
+                });
+        }
+    }
+    return json::object {
+        { "stage_id", "act55side_ex01" }, { "coordinate_system", "maa_grid" }, { "width", 11 }, { "height", 7 },
+        { "tiles", std::move(tiles) },
+    };
+}
+
+json::value geometry_placement(const std::string& id, int x, int y, const std::string& direction)
+{
+    return json::object {
+        { "operator_game_id", id },
+        { "location", json::array { x, y } },
+        { "direction", direction },
+        { "elite", 2 },
+        { "elite_source", "caller_assumption" },
+    };
+}
+
+bool array_contains(const json::value& values, const json::value& expected)
+{
+    return std::ranges::any_of(values.as_array(), [&](const auto& value) { return value == expected; });
+}
+
+void test_battle_geometry(const std::filesystem::path& root)
+{
+    const auto path = root / asst::utils::path("battle_data.json");
+    write_json(path, geometry_battle_data());
+    expect(asst::BattleData.load(path), "load exact-ID battle geometry fixtures");
+    using asst::battle::DeployDirection;
+    const asst::battle::AttackRange base { { 3, 1 }, { -1, 2 }, { 0, 0 } };
+    expect(asst::battle::rotate_attack_range(base, DeployDirection::Right) == base, "right rotation preserves range");
+    expect(
+        asst::battle::rotate_attack_range(base, DeployDirection::Up) ==
+            asst::battle::AttackRange { { 1, -3 }, { 2, 1 }, { 0, 0 } },
+        "up rotation uses grid coordinates");
+    expect(
+        asst::battle::rotate_attack_range(base, DeployDirection::Left) ==
+            asst::battle::AttackRange { { -3, -1 }, { 1, -2 }, { 0, 0 } },
+        "left rotation");
+    expect(
+        asst::battle::rotate_attack_range(base, DeployDirection::Down) ==
+            asst::battle::AttackRange { { -1, 3 }, { -2, -1 }, { 0, 0 } },
+        "down rotation");
+    expect(
+        asst::battle::rotate_attack_range(base, DeployDirection::None) == base,
+        "legacy nondirectional rotation remains unchanged");
+
+    const auto map = geometry_map();
+    const std::vector<std::pair<std::string, json::value>> rotations {
+        { "Right", json::array { 6, 2 } },
+        { "Up", json::array { 3, 0 } },
+        { "Left", json::array { 0, 2 } },
+        { "Down", json::array { 3, 5 } },
+    };
+    for (const auto& [direction, expected] : rotations) {
+        const auto result = asst::battle::evaluate_placement(
+            map,
+            json::array { geometry_placement("char_4228_closur", 3, 2, direction) });
+        expect(result.get("status", "") == "succeeded", "directional evaluation succeeds");
+        expect(
+            array_contains(result.at("placements").at(0).at("base_range_cells"), expected),
+            "evaluated ranges share four-direction rotation");
+    }
+
+    auto unknown_elite = geometry_placement("char_4228_closur", 3, 2, "Right");
+    unknown_elite["elite"] = nullptr;
+    unknown_elite["elite_source"] = "unknown";
+    const auto unknown = asst::battle::evaluate_placement(
+        map,
+        json::array { unknown_elite, geometry_placement("char_2025_shu", 8, 3, "Left") });
+    expect(unknown.at("placements").at(0).at("base_range_id").is_null(), "unknown elite has no base range ID");
+    expect(
+        unknown.at("placements").at(1).at("base_range_id").as_string() == "unknown",
+        "missing range retains the referenced range ID");
+    for (const auto& placement : unknown.at("placements").as_array()) {
+        expect(
+            placement.at("base_range_cells").is_null() && placement.at("geometric_allied_coverage").is_null(),
+            "unknown elite or range never uses empty or profession fallback geometry");
+        expect(placement.at("uncertainties").as_array().size() == 2, "unknown geometry remains explicit");
+    }
+    auto elite_zero = geometry_placement("char_4228_closur", 3, 2, "Right");
+    elite_zero["elite"] = 0;
+    elite_zero["elite_source"] = "user_supplied_loadout";
+    const auto zero = asst::battle::evaluate_placement(map, json::array { elite_zero });
+    expect(!zero.at("placements").at(0).at("base_range_cells").is_null(), "explicit elite zero is not unknown");
+
+    const auto conflicts = asst::battle::evaluate_placement(
+        map,
+        json::array {
+            geometry_placement("char_4228_closur", 8, 3, "Right"),
+            geometry_placement("char_1052_kalts2", 8, 3, "Left"),
+        });
+    const auto& first = conflicts.at("placements").at(0);
+    expect(!first.at("static_buildability_compatible").as_boolean(), "ranged unit is incompatible with melee tile");
+    expect(
+        first.at("conflicting_operators") == json::value(json::array { "char_1052_kalts2" }),
+        "same-cell operators are reported independently of static buildability");
+    expect(
+        array_contains(first.at("geometric_allied_coverage"), "char_4228_closur") &&
+            array_contains(first.at("geometric_allied_coverage"), "char_1052_kalts2"),
+        "coverage is geometric and includes self and incompatible candidates");
+    const auto candidates = asst::battle::evaluate_placement(
+        map,
+        json::array {
+            geometry_placement("char_4228_closur", 7, 2, "Down"),
+            geometry_placement("char_1052_kalts2", 6, 2, "Right"),
+            geometry_placement("char_2027_wang", 7, 1, "Left"),
+            geometry_placement("char_2025_shu", 8, 3, "Left"),
+        });
+    for (const auto& placement : candidates.at("placements").as_array()) {
+        expect(
+            placement.at("static_buildability_compatible").as_boolean(),
+            "known compatible static tiles remain compatible");
+        expect(placement.at("conflicting_operators").as_array().empty(), "distinct cells do not conflict");
+    }
+    expect(
+        candidates.at("placements").at(1).at("geometric_allied_coverage").as_array().size() == 4,
+        "medic base geometry covers all four candidate cells");
+
+    const auto reject = [&](const json::value& placements, const char* code) {
+        const auto result = asst::battle::evaluate_placement(map, placements);
+        expect(result.get("status", "") == "failed" && result.at("error").get("code", "") == code, code);
+    };
+    const auto placement = geometry_placement("char_4228_closur", 3, 2, "Right");
+    reject(json::array(), "invalid_geometry_request");
+    json::array oversized;
+    for (int index = 0; index < 33; ++index) {
+        oversized.emplace_back(placement);
+    }
+    reject(oversized, "invalid_geometry_request");
+    oversized.erase(32);
+    reject(oversized, "duplicate_operator");
+    reject(json::array { placement, placement }, "duplicate_operator");
+    reject(json::array { geometry_placement("token", 0, 0, "Up") }, "unsupported_entity");
+    reject(json::array { geometry_placement("missing", 0, 0, "Up") }, "unknown_operator");
+    for (const auto& [key, value] : std::vector<std::pair<std::string, json::value>> {
+             { "elite", true },
+             { "elite", -1 },
+             { "elite", 3 },
+             { "elite", nullptr },
+             { "direction", "None" },
+             { "elite_source", "unknown" },
+             { "elite_source", "live_observed" },
+             { "location", json::array { 11, 0 } },
+             { "location", json::array { 0.5, 0 } },
+             { "unexpected", true },
+         }) {
+        auto invalid = placement;
+        invalid[key] = value;
+        reject(json::array { invalid }, "invalid_placement");
+    }
+    for (const auto* key : { "operator_game_id", "location", "direction", "elite", "elite_source" }) {
+        auto invalid = placement;
+        invalid.erase(key);
+        reject(json::array { invalid }, "invalid_placement");
+    }
+    reject(json::object(), "invalid_geometry_request");
+    auto invalid_map = map;
+    invalid_map["tiles"].as_array().emplace_back(map.at("tiles").at(0));
+    expect(
+        asst::battle::evaluate_placement(invalid_map, json::array { placement }).get("error", "code", "") ==
+            "invalid_map_geometry",
+        "duplicate map cells are rejected");
+}
+
 int main()
 {
 #ifndef ASST_DEBUG
@@ -278,6 +514,7 @@ int main()
         test_template_matching(fixture.path);
         test_template_layers(fixture.path);
         test_unit_metadata(fixture.path);
+        test_battle_geometry(fixture.path);
     }
     catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

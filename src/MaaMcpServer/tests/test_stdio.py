@@ -12,41 +12,67 @@ from mcp.client.stdio import stdio_client
 
 from maa_battle_mcp.server import tool_result
 
+PYTHON_FLAGS = ["-I", "-B"] if sys.flags.isolated else []
 
-async def test_stdio_handshake_tools_and_errors(tmp_path):
+
+@pytest.mark.parametrize("profile,count", [("minimal", 10), ("full", 27)])
+async def test_stdio_handshake_tools_and_errors(tmp_path, profile, count):
     parameters = StdioServerParameters(
         command=sys.executable,
         args=[
+            *PYTHON_FLAGS,
             "-m",
             "maa_battle_mcp.server",
             "--core-dir",
             str(tmp_path / "missing-core"),
             "--user-dir",
             str(tmp_path / "state"),
+            "--tool-profile",
+            profile,
         ],
     )
     async with stdio_client(parameters) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
             tools = {tool.name: tool for tool in (await session.list_tools()).tools}
-            assert len(tools) == 28
+            assert len(tools) == count
+            assert "intel_query" not in tools
             assert tools["battle_get_unit_info"].annotations.readOnlyHint is True
-            assert tools["battle_get_evidence_frame"].annotations.readOnlyHint is True
-            assert tools["battle_observe_preparation"].annotations.readOnlyHint is True
+            detail_schema = tools["battle_get_operation"].inputSchema["properties"][
+                "detail"
+            ]
+            assert detail_schema["enum"] == ["summary", "full"]
+            assert detail_schema["default"] == "summary"
+            if profile == "full":
+                assert (
+                    tools["battle_get_evidence_frame"].annotations.readOnlyHint is True
+                )
+                assert (
+                    tools["battle_observe_preparation"].annotations.readOnlyHint is True
+                )
+                assert tools["battle_collect_terminal"].annotations.readOnlyHint is True
+                assert tools["battle_set_speed"].annotations.readOnlyHint is False
+                assert (
+                    tools["battle_evaluate_placement"].annotations.readOnlyHint is True
+                )
             assert tools["battle_inspect_preparation"].annotations.readOnlyHint is False
             preparation = tools["battle_inspect_preparation"].inputSchema["$defs"][
                 "PreparationRequest"
             ]
             assert preparation["properties"]["timeout_ms"]["maximum"] == 180_000
             assert "session_id" not in preparation["properties"]
-            assert tools["battle_collect_terminal"].annotations.readOnlyHint is True
-            assert tools["battle_set_speed"].annotations.readOnlyHint is False
-            assert tools["battle_evaluate_placement"].annotations.readOnlyHint is True
             step_schema = tools["battle_step"].inputSchema["$defs"][
                 "BoundedStepRequest"
             ]
-            assert "wait" in step_schema["properties"]["action"]["enum"]
-            assert "unit_id" not in step_schema["required"]
+            assert step_schema["discriminator"]["propertyName"] == "action"
+            assert set(step_schema["discriminator"]["mapping"]) == {
+                "deploy",
+                "retreat",
+                "skill",
+                "wait",
+                "pause",
+                "speed",
+            }
             assert tools["battle_observe"].annotations.readOnlyHint is True
             assert tools["battle_identify"].annotations.readOnlyHint is False
             identify_schema = tools["battle_identify"].inputSchema
@@ -112,6 +138,7 @@ async def test_stdio_worker_lifecycle_with_sdk_client(tmp_path):
     parameters = StdioServerParameters(
         command=sys.executable,
         args=[
+            *PYTHON_FLAGS,
             str(Path(__file__).with_name("worker_fixture.py")),
             "server",
             "--core-dir",
@@ -148,6 +175,7 @@ async def test_stdio_worker_lifecycle_with_plain_popen(tmp_path):
     process = subprocess.Popen(
         [
             sys.executable,
+            *PYTHON_FLAGS,
             str(Path(__file__).with_name("worker_fixture.py")),
             "server",
             "--core-dir",
@@ -242,6 +270,7 @@ async def test_stdio_real_device_connect_attach_capture(tmp_path):
     parameters = StdioServerParameters(
         command=sys.executable,
         args=[
+            *PYTHON_FLAGS,
             "-m",
             "maa_battle_mcp.server",
             "--core-dir",
@@ -273,8 +302,11 @@ async def test_stdio_real_device_connect_attach_capture(tmp_path):
                     )
                     assert not attached.isError, attached.content
                     captured = await session.call_tool(
-                        "battle_capture_evidence",
-                        {"session_id": attached.structuredContent["session_id"]},
+                        "battle_observe",
+                        {
+                            "session_id": attached.structuredContent["session_id"],
+                            "include_image": True,
+                        },
                     )
                     assert not captured.isError, captured.content
                     assert any(item.type == "image" for item in captured.content)

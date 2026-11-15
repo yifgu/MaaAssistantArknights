@@ -13,6 +13,7 @@
 #include "Config/TaskData.h"
 #include "Controller/Controller.h"
 #include "Task/ProcessTask.h"
+#include "Utils/BattleGeometry.h"
 #include "Utils/Logger.hpp"
 #include "Vision/RegionOCRer.h"
 
@@ -909,19 +910,7 @@ asst::battle::AttackRange asst::RoguelikeBattleTaskPlugin::get_attack_range(
         }
     }
 
-    for (auto cur_direction :
-         { DeployDirection::Right, DeployDirection::Up, DeployDirection::Left, DeployDirection::Down }) {
-        if (cur_direction == direction) {
-            break;
-        }
-
-        // rotate relative attack range counterclockwise
-        for (Point& point : right_attack_range) {
-            point = { point.y, -point.x };
-        }
-    }
-
-    return right_attack_range;
+    return battle::rotate_attack_range(right_attack_range, direction);
 }
 
 std::optional<asst::RoguelikeBattleTaskPlugin::DeployInfo>

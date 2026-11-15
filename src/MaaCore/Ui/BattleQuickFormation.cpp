@@ -6,6 +6,7 @@
 #include "Task/ProcessTask.h"
 #include "Utils/DebugImageHelper.hpp"
 #include "Utils/Logger.hpp"
+#include "Utils/ScrollImageStitch.h"
 #include "Vision/Matcher.h"
 #include "Vision/MultiMatcher.h"
 #include "Vision/RegionOCRer.h"
@@ -109,17 +110,13 @@ std::optional<asst::BattleQuickFormation::SkillResult>
         image = ctrler()->get_image();
         auto roi_image_new = make_roi(image, make_rect<cv::Rect>(base_task->roi));
 
-        // 使用模板匹配检测重叠区域
-        Matcher match(stitched_image);
-        match.set_templ(make_roi(roi_image_new, cv::Rect { 0, 0, roi_image_new.cols, 30 }));
-        match.set_method(MatchMethod::Ccoeff);
-        match.set_threshold(0.8);
-        if (!match.analyze()) {
+        const auto overlap = utils::match_scroll_image_overlap(stitched_image, roi_image_new, { 30, 0.8 });
+        if (overlap.status != utils::ScrollOverlapStatus::Matched) {
             retry++;
             continue;
         }
 
-        int current_y = match.get_result().rect.y;
+        int current_y = overlap.offset_y;
         if (last_y != -1 && std::abs(current_y - last_y) < 5) { // 检测是否已经滑动到末端
             LogDebug << __FUNCTION__ << "| Reached the end of skill list, y offset unchanged: " << current_y;
             break;
@@ -128,17 +125,14 @@ std::optional<asst::BattleQuickFormation::SkillResult>
         last_y = current_y;
 
         // 即时拼接图片：保留新图片中未重叠的部分
-        int overlap_height = stitched_image.rows - current_y;
-        if (overlap_height > 0 && overlap_height < roi_image_new.rows) {
-            cv::Mat non_overlap_part =
-                roi_image_new(cv::Rect(0, overlap_height, roi_image_new.cols, roi_image_new.rows - overlap_height));
-
-            cv::vconcat(stitched_image, non_overlap_part, stitched_image); // 拼接到已有图片
+        if (auto appended = utils::append_scroll_image(stitched_image, roi_image_new, current_y)) {
+            stitched_image = std::move(*appended);
             LogDebug << __FUNCTION__ << "| Stitched image updated, current size: " << stitched_image.cols << "x"
                      << stitched_image.rows;
         }
         else {
-            LogWarn << __FUNCTION__ << "| Invalid overlap detected, overlap_height: " << overlap_height;
+            LogWarn << __FUNCTION__
+                    << "| Invalid overlap detected, overlap_height: " << stitched_image.rows - current_y;
             retry++;
             continue;
         }
@@ -148,10 +142,7 @@ std::optional<asst::BattleQuickFormation::SkillResult>
         auto result = find_skill(stitched_image, skill, false, skip_level);
         if (result) {
             // 拼接图片中的技能等级icon坐标转换回全图的icon坐标
-            Rect rect { result->first.x,
-                        result->first.y + base_task->roi.y - last_y,
-                        result->first.width,
-                        result->first.height };
+            const auto rect = utils::scroll_image_rect_to_frame(result->first, { 0, base_task->roi.y }, last_y);
 
             // 偏移为技能范围rect, 并根据图片大小修正
             return SkillResult {
@@ -166,10 +157,7 @@ std::optional<asst::BattleQuickFormation::SkillResult>
     auto result = find_skill(stitched_image, skill, false, skip_level);
     if (result) {
         // 拼接图片中的技能等级icon坐标转换回全图的icon坐标
-        Rect rect { result->first.x,
-                    result->first.y + base_task->roi.y - last_y,
-                    result->first.width,
-                    result->first.height };
+        const auto rect = utils::scroll_image_rect_to_frame(result->first, { 0, base_task->roi.y }, last_y);
 
         // 偏移为技能范围rect, 并根据图片大小修正
         return SkillResult {

@@ -105,7 +105,7 @@ async def test_resource_callback_and_keyframes_work_after_battle_close(
             video=b"RIFF-original-owned-video-AVI ",
             mime_type=mime_type,
         )
-        server = create_server(service)
+        server = create_server(service, tool_profile="full")
         await service.close()
         monkeypatch.setattr(
             service,
@@ -149,6 +149,8 @@ async def test_real_stdio_resource_read_and_keyframe_callback_after_close(settin
         args=[
             "-m",
             "maa_battle_mcp.server",
+            "--tool-profile",
+            "full",
             "--core-dir",
             str(settings.core_dir),
             "--user-dir",

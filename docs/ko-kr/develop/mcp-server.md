@@ -7,7 +7,29 @@ order: 20
 
 `src/MaaMcpServer`는 별도 worker 프로세스에서 MaaCore를 실행하는 로컬 stdio MCP 서버입니다. Python 3.11+, uv, 현재 브랜치에서 빌드한 Core가 필요합니다. 이전 버전에는 `BattleControl` 작업이 없습니다. 실험적인 전투 제어 기능이며 위기협약 자동 최적화 도구가 아닙니다.
 
+## 도구 프로필과 응답 계약
+
+`--tool-profile minimal|full`의 기본값은 `minimal`입니다. Python에서는 `create_server(service, intelligence=None, tool_profile="minimal")`을 사용합니다. 기본 `tools/list`는 다음 10개 도구만 포함합니다.
+
+- 연결과 수명 주기: `battle_status`, `battle_connect`, `battle_attach`, `battle_close`.
+- 읽기 전용 증거와 자료: `battle_observe`, `battle_get_unit_info`, `battle_get_operation`.
+- 명시적인 장치 입력: `battle_inspect_preparation`, `battle_identify`, `battle_step`.
+
+`intel_query`는 `--intel-config`가 설정된 경우에만 등록하며 두 프로필 모두에 도구 하나를 추가합니다. provider 없는 빈 도구는 노출하지 않습니다. `full`은 기존 비정보 도구 27개를 노출하며 이전 행동, 독립적인 정지/재개, 전투 전 보조, 미디어와 기하 평가를 포함합니다. 정보 설정 시 총 28개입니다. 기존 확장을 사용하는 클라이언트는 `--tool-profile full`을 추가하고 `tools/list`를 새로 조회해야 합니다. 읽기와 장치 입력을 만능 action 도구에 섞지 않습니다.
+
+`battle_observe(session_id, include_image=false, include_map=false, duration_ms=0, operation_id=null, timeout_ms=10000)`가 통합 수동 관측 진입점입니다. 암묵적인 식별, 정지, 재개 또는 입력은 하지 않습니다. 일반 관측은 동일 프레임 PNG를 저장하지만 기본적으로 첨부하지 않습니다. `include_image=true`는 같은 원본을 첨부하고, `include_map=true`는 추가 캡처 없이 구조화된 정적 맵을 반환하며 기본 맵은 구조화된 참조입니다. `duration_ms=100..8000`은 읽기 전용 `finalize`를 재사용하며 **세션 입력이 차단된 상태에서만** 가능합니다. `timeout_ms`(1..30000)를 초과할 수 없으며 실행 중인 게임을 정지하지 않습니다. 작업 ID 생략 시 생성한 ID를 `command_id`로 반환하고 명시된 ID는 영구 재생 규칙을 따릅니다.
+
+minimal 응답은 **최상위**에 canonical `battle_decision` 하나를 제공하며 반환 시점, 일반 관측, 행동 경계 순으로 스냅샷을 선택합니다. 중첩 스냅샷의 메타데이터, 안전, 작업 결과와 증거 참조는 유지하지만 `battle_decision`, `deployment`, `battlefield`를 반복하지 않습니다. 미확인 값과 이유는 생략하지 않습니다. 응답 투영일 뿐 `operations.sqlite3`의 원본 감사 결과를 삭제하지 않습니다. full은 기존 중첩/원시 형태와 이전 진입점의 이미지 첨부를 유지하고 minimal은 기본적으로 PNG를 첨부하지 않습니다.
+
+구조화된 행동 경계 증거가 필요하면 두 프로필 모두에서 `battle_get_operation(session_id, operation_id, detail="full")`을 호출할 수 있습니다. 저장된 결과를 바꾸지 않고 완전한 `capture_time_snapshot`/`return_time_snapshot`, 각각의 구조화된 판단과 증거 참조를 반환합니다. 새 관측, 입력 또는 기록 재작성은 하지 않습니다. 기본 `detail="summary"`는 선택한 프로필을 따라 minimal에서는 요약, full에서는 호환성을 위해 여전히 완전한 결과를 반환합니다. full 작업 상세는 PNG를 첨부하지 않으며 프로필 전환도 필요 없습니다. full의 pause/speed step은 네이티브 `image_path` PNG도 첨부하고 같은 이미지 경로는 한 번만 첨부합니다.
+
+보관된 작업 프레임은 `image/png` MCP resource `battle-evidence://{session_id}/{operation_id}/{observation_id}`로 읽습니다. 응답에 `evidence[].resource_uri`와 링크를 제공합니다. 새 캡처가 아닌 기록된 원본 PNG를 반환하며 종료 후에도 보존 기간 안에서는 조회할 수 있습니다. 작업에 연결된 ID만 허용하고 임의 경로는 받지 않습니다. full의 `battle_get_evidence_frame`도 유지합니다. 만료는 명시적인 오류이며 합성하거나 다시 캡처하지 않습니다.
+
+`battle_step.request`는 action으로 구분하는 `oneOf` Schema이며 각 분기의 필수 필드와 `additionalProperties=false`를 노출합니다. `deploy`는 `unit_id`, `location`, `direction`, `retreat`/`skill`은 `unit_id`, `wait`는 `duration_ms`가 필수입니다. `pause`는 유닛, 위치, 방향, 시간을 받지 않고 정지 후 검증만 하며 전투를 진행하지 않습니다. `speed`는 정수 `multiplier=1|2`가 필수이며 검증된 정지 상태에서만 가능합니다. `recording`은 wait 전용이고 시간/기한/프레임 관계도 입력 전에 검사합니다. 수동 정지 인계는 여전히 명시적 `adopt_manual_pause=true`가 필요합니다. 독립적인 `battle_set_paused(paused=false)`는 full 전용이며 유한 step이 아닙니다.
+
 ## 구조화된 전투 판단 뷰
+
+일반 네이티브 관측도 동일 프레임 PNG를 저장합니다. 체력 바 `field_units`는 모든 후보 타일(`candidate_locations`), 충돌/투영 상태, 방향 증거와 `requested_instance_candidates`를 반환하며 첫 일치로 위치를 확정하지 않습니다. `instance_association`, 개체별 `spatial_evidence`와 `action_verification`은 부족한 조건을 유지합니다. 후보는 검증된 식별/타일 연결이 아니므로 `instance_id`, `game_id`, `location`은 미확인이고 `authorizes_input=false`입니다. 선택된 식별을 타일에 연결하는 양성 규칙과 퇴각 버튼 enabled 상태 규칙이 없어 `VerifiedTileAnchor`는 확립되지 않았습니다. 스킬/퇴각은 계속 거부되며 자율 스킬 실행이나 배치/퇴각 루프 완성을 주장하지 않습니다.
 
 스냅샷에 `battle_decision.schema_version=1`을 추가하며 네이티브 프로토콜은 1을 유지합니다. 영역은 `safety`, `progress`, `deployment`, `allies`, `terrain`, `enemies`, `mechanics`, `events`, `coverage`, `inspection`, `alerts`입니다. 값마다 출처, 검증 상태, 이유, 관측 ID, 획득 시각, 최신성을 보존합니다. 미지원 상태는 빈 전장을 뜻하지 않으며 `allies.action_history`는 현재 존재 상태와 독립입니다.
 
@@ -25,11 +47,15 @@ order: 20
 
 전투 전 결과의 `host_fallback.required`와 슬롯/필드별 `items`는 이유, 사용 가능한 원시 후보, ROI, 증거 및 `retrieval` 참조를 제공합니다. 미확인 스킬·레벨·식별은 그대로 미확인입니다. 멀티모달 호스트 검토용일 뿐 해석을 네이티브 사실로 자동 승격하거나 안전 잠금 변경·추가 탐색을 수행하지 않습니다.
 
-`battle_get_evidence_frame(session_id, operation_id, observation_id)`는 기록된 작업의 원본 PNG 한 장을 ImageContent로 반환합니다. 편성 복귀 이미지뿐 아니라 과거 전투 전 상세 프레임도 조회합니다. 기록된 작업 ID만 허용하며 미등록/모호한 프레임, 다른 세션 경로, 심볼릭 링크 이탈 및 16 MiB 초과 이미지는 거부합니다. 종료 후에도 기록과 파일이 남으면 조회할 수 있습니다. 새 캡처나 장치 입력 없이 `frame_is_live=false`를 반환합니다.
+필드별 `items[].retrieval.resource_uri`는 기록된 원본 PNG 리소스 참조를 재사용합니다. minimal은 등록되지 않은 full 전용 도구를 안내하지 않으며 full은 호환 도구와 리소스를 함께 유지합니다. 기록된 프레임 참조가 없으면 minimal은 `available=false`와 null 리소스 URI를 반환합니다. `detail="full"`을 포함한 과거 작업 조회에도 같은 투영을 적용하며 조회 메타데이터만 조정하고 영구 사실이나 원본 기록은 변경하지 않습니다.
+
+원본 프레임 resource 또는 full의 `battle_get_evidence_frame(session_id, operation_id, observation_id)`(ImageContent)는 기록된 작업의 원본 PNG 한 장을 반환합니다. 편성 복귀 이미지뿐 아니라 과거 전투 전 상세 프레임도 조회합니다. 기록된 작업 ID만 허용하며 미등록/모호한 프레임, 다른 세션 경로, 심볼릭 링크 이탈 및 16 MiB 초과 이미지는 거부합니다. 종료 후에도 기록과 파일이 남으면 조회할 수 있습니다. 새 캡처나 장치 입력 없이 `frame_is_live=false`를 반환합니다.
 
 네이티브 `suspected_defeat`는 중복 제거된 **호스트 검토 단서**이며 엔진의 격퇴 이벤트가 아닙니다. 현재 세션에 퇴각 입력 기록이 없고 유일한 일반 비대체 종류의 배치 기록이 쿨다운이면 소유 관계/이탈 미검증 상태에서도 제시할 수 있습니다. `departure_verified=false`, 원인 미상, 신뢰도 null, `record_coverage="this_session_only"` 및 다른 가능성을 명시합니다. 중복/소환/대체 모호함이나 종료 정리는 단서를 만들지 않습니다. 존재 상태 변경·타일 해제·입력 허가에 사용하지 않으며 외부/세션 이전 입력과 기믹도 가능한 원인입니다.
 
 ## 로컬 미디어와 실험적 동영상 후보
+
+아래 독립 미디어 도구는 full 전용입니다. 명시적으로 허용한 wait recording과 리소스 링크는 minimal에서도 가능합니다.
 
 `battle_record_clip(request)`는 전투 `session_id`, 영구 `operation_id`, `duration_ms`(100–8000, 기본 2000), `interval_ms`(200–2000, 기본 500), `max_frames`(2–24, 기본 24), 일반 `timeout_ms`를 받습니다. 불가능한 시간/간격/프레임 조합은 사전 거부합니다. **입력을 보내지 않고** 정지/재개하지 않습니다. 실행 중 게임은 계속 진행되며 마지막 스냅샷/PNG는 실제 획득 프레임과 대응합니다.
 
@@ -174,13 +200,13 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 }
 ```
 
-`battle_connect`, `battle_attach(stage_name="main_01-07")`, `battle_capture_evidence`, `battle_observe` 순서로 호출합니다. 스테이지 ID는 실제 화면과 일치해야 합니다. 맵 지정은 호출자가 제공하며 자동 인식이 아닙니다. `battle_get_map`은 정적 타일, 두 가지 화면 투영과 실시간 픽셀 변화를 반환합니다. 알 수 없는 이름은 null입니다. `battle_identify`는 상세 화면을 열어 인식하며 일시 정지를 요청합니다. 이후 스크린샷을 확인하고 `battle_set_paused(paused=false)`로 명시적으로 재개하세요.
+`battle_connect`, `battle_attach(stage_name="main_01-07")`, `battle_observe(session_id=..., include_image=true, include_map=true)` 순으로 호출합니다. 스테이지 ID는 실제 화면과 일치해야 하며 호출자가 지정하므로 자동 인식이 아닙니다. 미확인 이름은 null입니다. `battle_identify`는 상세 화면을 열고 정지를 요청하므로 증거를 확인한 뒤 유한 `battle_step`을 사용하세요. full의 `battle_get_map`은 정적 타일, 두 화면 투영과 실시간 픽셀 변화를 반환합니다.
 
 `battle_get_map`의 MCP 이미지는 현재 PNG(`image_path`), 기준 PNG(`baseline_image_path`) 순서입니다. 경로가 같으면 한 장만 첨부하며 유효한 기준이 없으면 기준 이미지를 첨부하지 않습니다. 호스트가 Core 파일 시스템에 직접 접근하지 않고 재인식할 수 있습니다. 변화 필드와 제한은 아래에 설명합니다.
 
 수동 정지를 인계하려면 `battle_identify`의 엄격한 boolean 인수 `request.adopt_manual_pause=true`가 필요하며 기본값은 false입니다. 재개를 허용하지는 않습니다. Core는 명확한 정지 증거를 요구합니다. 실행 버튼이 없다는 이유만으로 정지로 판단하지 않고 입장 제목 전환도 인계하지 않습니다. 정지 상태에서 카드를 확인하고 부분 OCR에서도 `pause_verified`, `safe_state`, 같은 프레임의 `snapshot` / `image_path`와 PNG를 반환합니다. 저장 실패는 `evidence_error`에 기록하며 취소나 worker 장애로 최종 증거를 얻지 못해도 자동 재개하지 않습니다.
 
-배치 요청 예시입니다. 세션과 관측된 유닛 ID를 바꾸세요. 도구 인수에는 `request` 객체가 있습니다.
+full의 이전 진입점 `battle_deploy` 예시입니다. 세션과 관측된 유닛 ID를 바꾸세요. 도구 인수에는 `request` 객체가 있습니다.
 
 ```json
 {
@@ -212,9 +238,9 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 }
 ```
 
-`action`은 `deploy`, `retreat`, `skill`, `wait`이며 배치에는 `location`과 `direction`도 필요합니다. 수동 정지 재개에는 명시적 `adopt_manual_pause=true`와 새 정지 증거가 필요합니다. 호출당 행동은 최대 하나이며 경계 프레임을 분석한 다음 정지를 요청하고 새 이미지와 `pause_verified`를 반환합니다. 취소 시 Core 정리를 기다리지만 worker 장애 시 정지가 미확인일 수 있습니다. `battle_step.timeout_ms` 기본값은 10000, 상한은 30000이며 호출자의 예산을 임의 연장하지 않습니다.
+`action`은 `deploy`, `retreat`, `skill`, `wait`, `pause`, `speed`이며 분기별 인수는 앞의 Schema를 따릅니다. 수동 정지 재개에는 명시적 `adopt_manual_pause=true`와 새 정지 증거가 필요합니다. 호출당 행동은 최대 하나이며 경계를 분석한 뒤 정지를 요청하고 새 증거와 `pause_verified`를 반환합니다. pause/speed는 재개하지 않습니다. 취소 시 Core 정리를 기다리지만 worker 장애 시 정지가 미확인일 수 있습니다. `battle_step.timeout_ms` 기본값은 10000, 상한은 30000이며 예산을 임의 연장하지 않습니다.
 
-`captured_at_ms`는 이미지 획득 직후, 분석 전에 기록한 호스트의 Unix 밀리초 시각으로 기기의 렌더링 시각이 아닙니다. `capture_time_snapshot`은 `capture_image_path`(행동 경계), `return_time_snapshot`은 `return_image_path`(이후 정지 확인)와 연결됩니다. MCP 이미지는 기존처럼 반환 시점 프레임, 행동 경계 프레임 순서입니다. `observation_id`는 획득 순서가 아닌 분석 순서대로 증가하므로 행동 경계의 ID가 더 커도 시각은 더 이를 수 있습니다. 시스템 시계 조정은 시간 차이에 영향을 주며 이 시각은 실행 시간의 엄격한 상한이 아닙니다. 동일 작업 재전송은 원래 시각과 경로를 보존하고 새 캡처에는 자체 획득 시각을 기록합니다.
+`captured_at_ms`는 이미지 획득 직후, 분석 전에 기록한 호스트의 Unix 밀리초 시각으로 기기의 렌더링 시각이 아닙니다. `capture_time_snapshot`은 `capture_image_path`(행동 경계), `return_time_snapshot`은 `return_image_path`(이후 정지 확인)와 연결됩니다. full의 MCP 이미지는 반환 시점, 행동 경계 순서이며 minimal은 원본 프레임 resource를 제공합니다. `observation_id`는 획득 순서가 아닌 분석 순서대로 증가하므로 행동 경계의 ID가 더 커도 시각은 더 이를 수 있습니다. 시스템 시계 조정은 시간 차이에 영향을 주며 이 시각은 실행 시간의 엄격한 상한이 아닙니다. 동일 작업 재전송은 원래 시각과 경로를 보존하고 새 캡처에는 자체 획득 시각을 기록합니다.
 
 `battle_identify`는 `identified_count`, `unresolved_count`, `ambiguous_count`와 카드별 `identity_reason`을 반환합니다. 이름이 빈 캐시 항목은 더 이상 상세 OCR을 억제하지 않습니다. 다른 행동이 `outcome_unknown`을 반환하면 MCP `isError=true`이며 `helper_returned=true` 또는 `action_returned=true`도 게임 내 성공을 증명하지 않습니다. 새 증거를 확인하고 무작정 재시도하지 마세요. 위치 출처는 `action_history_unverified`, 적 상태는 null이며 모델의 직접 상태 덮어쓰기는 지원하지 않습니다. 별도의 일시 정지 요청은 정지 확인이 아니며 재개는 이 서버가 요청하거나 명시적으로 인계한 정지에만 허용됩니다.
 
@@ -280,9 +306,11 @@ PRTS 매핑은 `stage → get_stage_enemies(stage_id)`, `operator → get_operat
 
 지역, 스테이지와 명시적 모드가 일치해야 합니다. `actual_level`, `potential`, `module_id`, `module_level`, `skill_level`, `mastery`도 선택적으로 입력하며 생략하면 unknown입니다. 스냅샷의 `decision_context`는 필드별 출처, 사용자 확인, 설정 해시를 별도로 보존하고 원시 관측을 덮어쓰거나 사용자 확인을 시각 검증으로 취급하지 않습니다. SP, 스킬 단계, 지속 시간과 재능은 여전히 미확인이며 모호한 game ID 후보의 첫 항목을 임의 선택하지 않습니다.
 
-`battle_evaluate_placement(session_id, placements)`는 후보 전체 진형을 읽기 전용으로 검사합니다. 각 항목에 `operator_game_id`, `location`, `direction`을 넣고 정예 단계는 설정에서 가져오거나 `assumed_elite`로 가정을 명시합니다. 기본 범위, 기하학적 아군 커버, 정적 배치 호환성과 타일 충돌을 반환합니다. 정예 단계/범위를 모르면 직군 기본값을 대입하지 않습니다. 실제 점유, 치료 대상 자격, 생존이나 최적성을 검증하지 않고 스킬, 모듈, 재능과 특수 지형 효과도 포함하지 않습니다. 실시간 적 추적은 계속 미지원입니다.
+full의 `battle_evaluate_placement(session_id, placements)`는 Core 공통 기하 구현을 재사용하고 Python에 별도 투영 알고리즘을 두지 않으며 후보 전체 진형을 읽기 전용으로 검사합니다. 각 항목에 `operator_game_id`, `location`, `direction`을 넣고 정예 단계는 설정에서 가져오거나 `assumed_elite`로 가정을 명시합니다. 기본 범위, 기하학적 아군 커버, 정적 배치 호환성과 타일 충돌을 반환합니다. 정예 단계/범위를 모르면 직군 기본값을 대입하지 않습니다. 실제 점유, 치료 대상 자격, 생존이나 최적성을 검증하지 않고 스킬, 모듈, 재능과 특수 지형 효과도 포함하지 않습니다. 실시간 적 추적은 계속 미지원입니다.
 
 ## 장면 증거, 준비 관측 및 제한된 조작
+
+minimal에서는 `battle_observe(duration_ms=..., ...)`로 유한 읽기 전용 복구 증거를 수집합니다. 아래 독립 캡처/종료/전투 전 보조 도구는 full 전용입니다.
 
 `scene`은 `running / paused / transition / terminal / unknown`을 구분합니다. 모든 샘플에서 종료 증거를 확인하고 명확한 종료 증거를 잔존 전투 UI보다 우선합니다. 전투 확인 후 전투 내부의 `transition`은 `input_block_reason=pause_verification_pending`으로 입력을 막으며 곧바로 영구 종료 격리로 처리하지 않습니다. 복구하려면 명확한 일시 정지 증거가 있는 새 화면을 연속 두 번 캡처해야 하며 실행 중 또는 전환 프레임은 횟수를 초기화합니다. 실행 버튼이 없다는 사실만으로 일시 정지를 판정하지 않습니다. 정지 마무리 단계의 읽기 전용 확인 시간은 3000 ms와 관측된 최대 프레임 캡처·분석 시간의 두 배에 1000 ms를 더한 값 중 큰 값으로 정하여 두 프레임 확인과 폴링 시간을 확보합니다. 다만 항상 명령의 남은 기한을 상한으로 삼으며 취소되면 확인을 멈춥니다. 계속 불확실하면 입력 차단을 유지합니다.
 
@@ -377,4 +405,4 @@ python tools/ResourceUpdater/generate_unit_info.py \
 
 `identify`는 선택적인 엄격한 boolean 인수 `args.adopt_manual_pause`(기본값 false)를 받습니다. 명시적 인계는 인식된 정지를 관리 대상으로 삼을 뿐 정지를 전환하거나 해당 인식 작업의 전투 재개를 허용하지 않습니다.
 
-`step`은 유닛 인수 없는 `args.action="wait"`와 `args.duration_ms`도 지원합니다. 실행 중 `AsstSetTaskParams`에 `{"session_id":"…","cancel_command_id":"…"}`를 보낼 수 있습니다. 해당 명령의 취소 신호만 설정하며 기기 입력이나 두 번째 결과를 만들지 않습니다. 늦은 취소는 다음 명령에 영향을 주지 않고 원래 콜백으로 정리 결과를 반환합니다. MCP는 원래 `operation_id`로 저장하고 중복을 방지합니다.
+`step`은 유닛 없는 `args.action="wait"`와 `args.duration_ms`, 행동 인수 없는 `args.action="pause"`, 검증된 정지 전용 `args.action="speed"`와 `args.multiplier=1|2`도 지원합니다. 읽기 전용 `evaluate_placement`는 `placements` 배열을 받아 Core 기하를 재사용합니다. 실행 중 `AsstSetTaskParams`에 `{"session_id":"…","cancel_command_id":"…"}`를 보낼 수 있습니다. 해당 명령의 취소 신호만 설정하며 기기 입력이나 두 번째 결과를 만들지 않습니다. 늦은 취소는 다음 명령에 영향을 주지 않고 원래 콜백으로 정리 결과를 반환합니다. MCP는 원래 `operation_id`로 저장하고 중복을 방지합니다.
