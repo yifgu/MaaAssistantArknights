@@ -35,12 +35,17 @@ BattleFormationAnalyzer::ResultsVecOpt BattleFormationAnalyzer::analyze_slots() 
     for (const auto& flag : *matches) {
         Result slot;
         slot.flag_rect = flag.rect;
+        slot.flag_score = flag.score;
         for (const auto& task : { "BattleFormationOperNames", "BattleFormationOperNamesOldVersion" }) {
             RegionOCRer name(m_image);
             name.set_task_info(task);
             name.set_roi(flag.rect.move(Task.get(task)->roi));
             const auto text = name.analyze();
-            if (text && !BattleData.is_name_invalid(battle::Role::Unknown, text->text)) {
+            if (text) {
+                slot.name_evidence = *text;
+            }
+            if (text && std::isfinite(text->score) && text->score >= 0.9 &&
+                !BattleData.is_name_invalid(battle::Role::Unknown, text->text)) {
                 slot.name = text->text;
                 slot.rect = text->rect;
                 break;

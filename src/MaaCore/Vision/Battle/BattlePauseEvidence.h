@@ -8,8 +8,17 @@
 
 namespace asst::battle
 {
+struct PauseCorroboration
+{
+    bool battle_hud = false;
+    bool continue_button = false;
+    bool running_button = false;
+    bool contradictory_scene = false;
+};
+
 // The caller supplies one OCR result set from one capture; no fragments survive this call.
-inline json::value localized_pause_evidence(std::vector<TextRect> candidates, const Rect& roi)
+inline json::value
+    localized_pause_evidence(std::vector<TextRect> candidates, const Rect& roi, PauseCorroboration corroboration = {})
 {
     std::ranges::sort(candidates, {}, [](const TextRect& candidate) { return candidate.rect.x; });
     json::value result = json::object {
@@ -18,11 +27,23 @@ inline json::value localized_pause_evidence(std::vector<TextRect> candidates, co
         { "fragments", json::array() },
         { "accepted", false },
         { "rejection_reason", "missing_fragment" },
+        { "rule", "complete_or_adjacent_localized_label" },
+        { "corroboration",
+          json::object {
+              { "battle_hud", corroboration.battle_hud },
+              { "continue_button", corroboration.continue_button },
+              { "running_button", corroboration.running_button },
+              { "contradictory_scene", corroboration.contradictory_scene },
+          } },
     };
     for (const auto& candidate : candidates) {
         result["fragments"].as_array().emplace_back(candidate.to_json());
     }
     if (candidates.empty()) {
+        return result;
+    }
+    if (corroboration.running_button || corroboration.contradictory_scene) {
+        result["rejection_reason"] = "contradictory_scene";
         return result;
     }
     if (candidates.size() > 3) {
@@ -49,9 +70,17 @@ inline json::value localized_pause_evidence(std::vector<TextRect> candidates, co
         text += candidate.text;
     }
     result["score"] = score;
-    if (text != "暂停中") {
+    const bool missing_glyph = text == "暂停" && candidates.size() == 1;
+    if (text != "暂停中" && !missing_glyph) {
         result["rejection_reason"] = "unexpected_text";
         return result;
+    }
+    if (missing_glyph) {
+        result["rule"] = "occluded_suffix_with_same_frame_hud_and_continue_triangle";
+        if (!corroboration.battle_hud || !corroboration.continue_button) {
+            result["rejection_reason"] = "missing_positive_corroboration";
+            return result;
+        }
     }
     for (size_t i = 1; i < candidates.size(); ++i) {
         const auto& left = candidates[i - 1].rect;

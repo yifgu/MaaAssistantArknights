@@ -9,6 +9,7 @@
 #include "Controller/Controller.h"
 #include "MaaUtils/NoWarningCV.hpp"
 #include "Utils/Logger.hpp"
+#include "Vision/Battle/BattleControlState.h"
 #include "Vision/Battle/BattleFormationAnalyzer.h"
 #include "Vision/Matcher.h"
 #include "Vision/Miscellaneous/PipelineAnalyzer.h"
@@ -117,15 +118,14 @@ json::value asst::BattleControlTask::inspect_preparation(const Command& command)
         if (!slots || slots->size() != initial_slots->size()) {
             return false;
         }
-        for (size_t i = 0; i < slots->size(); ++i) {
-            const auto& before = initial_slots->at(i);
-            const auto& after = slots->at(i);
-            if (before.name != after.name || std::abs(before.flag_rect.x - after.flag_rect.x) > 5 ||
-                std::abs(before.flag_rect.y - after.flag_rect.y) > 5) {
-                return false;
-            }
+        std::vector<std::pair<std::string, Rect>> before, after;
+        for (const auto& slot : *initial_slots) {
+            before.emplace_back(slot.name, slot.flag_rect);
         }
-        return true;
+        for (const auto& slot : *slots) {
+            after.emplace_back(slot.name, slot.flag_rect);
+        }
+        return battle::formation_identity_unchanged(before, after);
     };
     auto stop_reason = [&]() -> std::string {
         return !evidence_ok                        ? "evidence_write_failed"
@@ -179,11 +179,19 @@ json::value asst::BattleControlTask::inspect_preparation(const Command& command)
             slot.rect);
         fields["identity"]["ordinary_operator_game_ids"] = ordinary_ids;
         fields["identity"]["mapping_source"] = "bundled_battle_data_roles";
+        fields["identity"]["name_ocr"] = slot.name_evidence ? slot.name_evidence->to_json() : json::value(nullptr);
+        fields["identity"]["required_score"] = 0.9;
         if (!resolved_id.is_null()) {
             fields["identity"]["source"] = "preparation_vision_with_static_identity_mapping";
             fields["identity"]["verification"] = "derived_from_observed_name_and_ordinary_operator_class";
         }
-        const Rect level_roi = slot.flag_rect.move(Task.get("BattlePreparationLevel")->rect_move);
+        const auto& level_move = Task.get("BattlePreparationLevel")->rect_move;
+        const Rect level_roi = Rect(
+                                   slot.flag_rect.x + (slot.flag_rect.width - level_move.width) / 2,
+                                   slot.flag_rect.y + slot.flag_rect.height,
+                                   0,
+                                   0)
+                                   .move(level_move);
         RegionOCRer level(formation_image);
         level.set_task_info("BattlePreparationLevel");
         level.set_roi(level_roi);
@@ -192,18 +200,25 @@ json::value asst::BattleControlTask::inspect_preparation(const Command& command)
                                         level_roi.x + level_roi.width <= formation_image.cols &&
                                         level_roi.y + level_roi.height <= formation_image.rows;
         const auto level_text = level_roi_in_frame ? level.analyze() : std::nullopt;
-        if (!level_text || !utils::chars_to_number(level_text->text, actual_level) || actual_level < 1 ||
-            actual_level > 90) {
-            actual_level = -1;
+        auto numeric = battle::numeric_hud_evidence(level_text, level_roi, 1, 90);
+        if (slot.flag_score < 0.9 || !std::isfinite(slot.flag_score)) {
+            numeric["value"] = nullptr;
+            numeric["reason"] = "level_flag_anchor_low_confidence";
+            numeric["verification"] = "unknown";
         }
+        actual_level = numeric.get("value", -1);
         fields["actual_level"] = field(
             actual_level == -1 ? json::value(nullptr) : json::value(actual_level),
             !level_roi_in_frame  ? "level_roi_out_of_bounds"
-            : actual_level == -1 ? "level_unreadable_or_out_of_range"
+            : actual_level == -1 ? numeric.get("reason", "level_unreadable_or_out_of_range")
                                  : "level_ocr",
             initial_evidence,
             level_roi);
         fields["actual_level"]["roi_within_frame"] = level_roi_in_frame;
+        fields["actual_level"]["numeric_evidence"] = numeric;
+        fields["actual_level"]["required_score"] = 0.9;
+        fields["actual_level"]["flag_score"] = slot.flag_score;
+        fields["actual_level"]["anchor_reference"] = "centered_below_positive_lv_flag";
         if (level_text) {
             fields["actual_level"]["text"] = level_text->text;
             fields["actual_level"]["score"] = level_text->score;
@@ -432,6 +447,14 @@ json::value asst::BattleControlTask::inspect_preparation(const Command& command)
                                           marker.height });
                                     fields["selected_skill"]["row_order_frames"] = skill_frames;
                                     fields["selected_skill"]["marker_score"] = markers->front().score;
+                                    fields["selected_skill"]["fingerprint"] = json::object {
+                                        { "skill_slot", skill + 1 },
+                                        { "marker_template", markers->front().templ_name },
+                                        { "marker_rect", fields["selected_skill"].at("roi") },
+                                        { "frame", source.at("frame") },
+                                        { "row_order_frames", skill_frames },
+                                        { "scope", "selected_skill_evidence_not_roster_identity_or_live_phase" },
+                                    };
                                     if (skill < skill_ids.size()) {
                                         fields["equipped_skill_id"] = fields.at("selected_skill");
                                         fields["equipped_skill_id"]["value"] = skill_ids[skill];
@@ -544,6 +567,8 @@ json::value asst::BattleControlTask::inspect_preparation(const Command& command)
         { "preparation_valid",
           !initial_slots->empty() && restored && roster_unchanged && evidence_ok && error.empty() },
         { "configuration_preservation", "no_roster_or_skill_selection_input_sent_not_continuous_visual_verification" },
+        { "selected_skill_preservation_verified", nullptr },
+        { "selected_skill_preservation_reason", "unchanged_roster_identity_is_not_continuous_skill_verification" },
     };
     if (!error.empty()) {
         result["error"] =

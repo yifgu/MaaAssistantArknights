@@ -438,6 +438,18 @@ def prepare(settings, known):
                 image = rendered.tobytes()
             (root / f"{mode}-{speed}x.png").write_bytes(png(1280, 720, image))
     tasks["BattleOperAvailable"] = {"specialParams": [0]}
+    if known == "v13_cooling":
+        from PIL import Image, ImageDraw
+
+        tasks["BattleOperAvailable"] = {
+            "specialParams": [100],
+            "rectMove": [20, 0, 10, 10],
+        }
+        for path in root.glob("*-?x.png"):
+            with Image.open(path) as source:
+                rendered = source.convert("RGB")
+            ImageDraw.Draw(rendered).rectangle((120, 590, 129, 599), fill="white")
+            rendered.save(path)
     tasks["BattleOperRole"] = {"templThreshold": 0.99}
     if known == "ocr_pause":
         tasks["BattleControlPaused"] = {

@@ -55,7 +55,7 @@ int main()
     reject({}, "missing_fragment", "no candidates");
     reject({ prefix, suffix, TextRect(suffix.rect, 0.99, "") }, "unexpected_text", "empty extra fragment");
     // Independent calls model successive frames; neither half can supply the other half's missing text.
-    reject({ prefix }, "unexpected_text", "first frame missing suffix");
+    reject({ prefix }, "missing_positive_corroboration", "first frame missing suffix");
     reject({ suffix }, "unexpected_text", "next frame missing prefix");
     reject(
         { TextRect(prefix.rect, prefix.score, "中"), TextRect(suffix.rect, suffix.score, "暂停") },
@@ -84,5 +84,38 @@ int main()
         { prefix, suffix, TextRect({ 590, 365, 80, 38 }, 0.99, "暂停中") },
         "unexpected_text",
         "ambiguous duplicate label");
+    const auto occluded = asst::battle::localized_pause_evidence(
+        { TextRect({ 591, 363, 67, 40 }, 0.999325, "暂停") },
+        roi,
+        { true, true, false, false });
+    expect(occluded.at("accepted").as_boolean(), "occluded suffix requires independent positive evidence");
+    expect(occluded.at("text").as_string() == "暂停", "never invent missing OCR glyph");
+    expect(occluded.at("fragments").as_array().size() == 1, "accepted raw fragment retained");
+    for (const auto& context : {
+             asst::battle::PauseCorroboration { false, true, false, false },
+             { true, false, false, false },
+             { true, true, true, false },
+             { true, true, false, true },
+         }) {
+        expect(
+            !asst::battle::localized_pause_evidence({ prefix }, roi, context).at("accepted").as_boolean(),
+            "missing HUD, missing continue, running or contradictory screen");
+    }
+    expect(
+        !asst::battle::localized_pause_evidence(
+             { TextRect({ 590, 100, 67, 40 }, 0.999, "暂停") },
+             roi,
+             { true, true, false, false })
+             .at("accepted")
+             .as_boolean(),
+        "chat or operator name outside localized ROI");
+    expect(
+        !asst::battle::localized_pause_evidence(
+             { TextRect(prefix.rect, 0.899, "暂停") },
+             roi,
+             { true, true, false, false })
+             .at("accepted")
+             .as_boolean(),
+        "corroboration never reduces OCR confidence");
     std::cout << "Native localized pause evidence regressions passed\n";
 }

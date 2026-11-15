@@ -2,11 +2,14 @@
     "BattlePreparationNameFlags": {
         "baseTask": "BattleFormationOCRNameFlag",
         "template": "BattleFormationOCRNameFlag.png",
+        "templThreshold": 0.9,
         "roi": [88, 264, 1150, 354]
     },
     "BattlePreparationLevel": {
         "baseTask": "NumberOcrReplace",
-        "rectMove": [14, -2, 45, 24]
+        "ocrReplace": [],
+        "rectMove": [0, 0, 45, 24],
+        "rectMove_Doc": "Centered below the positively matched LV flag; offsets apply after centering the configured width"
     },
     "BattlePreparationElite": {
         "baseTask": "BattleQuickFormation-Elite",

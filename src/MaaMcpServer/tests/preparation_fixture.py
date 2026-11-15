@@ -57,10 +57,6 @@ def prepare(root, tasks, variant):
         "roi": [-18, 34, 122, 30],
     }
     tasks["BattleFormationOperNamesOldVersion"] = tasks["BattleFormationOperNames"]
-    tasks["BattlePreparationLevel"] = {
-        "baseTask": "NumberOcrReplace",
-        "rectMove": [14, -2, 45, 28],
-    }
     skill_count = {"one_skill": 1, "two_skills": 2}.get(variant, 3)
     skills = ["fixture_s1", "fixture_s2", "fixture_s3"][:skill_count]
     names = (
@@ -124,7 +120,7 @@ def prepare(root, tasks, variant):
     if variant == "support":
         slots.append((1100, 280, "Fang"))
     if variant == "level_out_of_bounds":
-        slots.append((1248, 280, "Fang"))
+        slots.append((1268, 280, "Fang"))
     (root / "preparation_slots.json").write_text(json.dumps(slots))
     for x, y, name in slots:
         formation.paste(patterns["BattlePreparationNameFlags"], (x, y))
@@ -135,10 +131,39 @@ def prepare(root, tasks, variant):
             fill="white",
         )
         if variant != "unknown_level":
-            draw.text((x + 14, y - 2), "50", font=small, fill="white")
+            draw.text(
+                (
+                    x + patterns["BattlePreparationNameFlags"].width / 2,
+                    y + patterns["BattlePreparationNameFlags"].height,
+                ),
+                "2*"
+                if variant == "malformed_level"
+                else "60"
+                if variant == "level60"
+                else "50",
+                font=small,
+                fill="white",
+                anchor="mt",
+            )
+        if variant == "level60":
+            draw.text(
+                (x + patterns["BattlePreparationNameFlags"].width + 24, y - 2),
+                "2*",
+                font=small,
+                fill="white",
+            )
         if variant != "unknown_elite":
             formation.paste(patterns["BattleQuickFormation-Elite2"], (x - 30, y - 140))
     _save(root, "formation", formation)
+    if variant == "jitter":
+        jitter = formation.copy()
+        for index, (x, y, _) in enumerate(slots):
+            ImageDraw.Draw(jitter).rectangle((x, y, x + 9, y + 9), fill="black")
+            jitter.paste(
+                patterns["BattlePreparationNameFlags"],
+                (x, y + (1 if index == 0 else -1)),
+            )
+        _save(root, "formation_jitter", jitter)
     changed = formation.copy()
     ImageDraw.Draw(changed).rectangle((420, 312, 550, 344), fill="black")
     _save(root, "formation_changed", changed)
@@ -201,7 +226,7 @@ def navigate(root, action, args, mode):
         transition.write_text(json.dumps(state))
     if action == "click":
         x, y = map(int, args)
-        if mode == "formation" and y < 600 and x < 950:
+        if mode in ("formation", "formation_jitter") and y < 600 and x < 950:
             slots = json.loads((root / "preparation_slots.json").read_text())
             target = min(
                 slots, key=lambda slot: (slot[0] - x) ** 2 + (slot[1] - 134 - y) ** 2
@@ -232,6 +257,8 @@ def navigate(root, action, args, mode):
                 if variant == "lost_page"
                 else "formation_changed"
                 if variant == "changed"
+                else "formation_jitter"
+                if variant == "jitter"
                 else "formation"
             )
     if action == "swipe" and mode.startswith("detail-"):

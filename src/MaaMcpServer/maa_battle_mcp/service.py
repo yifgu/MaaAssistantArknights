@@ -359,9 +359,9 @@ class BattleService:
                 self.active_request = None
             for key in ("snapshot", "capture_time_snapshot", "return_time_snapshot"):
                 if isinstance(result.get(key), dict):
-                    self.decision.enrich_snapshot(result[key])
+                    self.decision.enrich_snapshot(result[key], self.map_info)
             if isinstance(result.get("deployment"), list):
-                self.decision.enrich_snapshot(result)
+                self.decision.enrich_snapshot(result, self.map_info)
             if preparation:
                 result["session_id"] = request.session_id
                 result["region"] = CLIENT_REGIONS[self.settings.client_type]

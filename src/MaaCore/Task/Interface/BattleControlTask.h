@@ -55,6 +55,7 @@ private:
         std::chrono::steady_clock::time_point seen;
         std::vector<std::string> game_ids;
         cv::Mat avatar;
+        json::value layout = json::array();
     };
 
     enum class Presence
@@ -104,7 +105,15 @@ private:
         LocationEvidence location_evidence = LocationEvidence::Requested;
         OperationState operation_state = OperationState::Pending;
         bool helper_returned = false;
+        bool owned_presence_verified = false;
         std::vector<SelectionEvidence> selection_evidence;
+        json::value departure_evidence = nullptr;
+        json::value observed_card_cooling = nullptr;
+        json::value runtime = json::object();
+        unsigned cooling_confirmations = 0;
+        std::chrono::steady_clock::time_point last_cooling_capture {};
+        std::chrono::steady_clock::time_point last_cooling_break_capture {};
+        json::array cooling_evidence;
     };
 
     bool tile_reserved(const Point& location) const;
@@ -116,6 +125,7 @@ private:
         bool& dismiss_allowed);
     json::value instance_info(const Instance& instance) const;
     json::value entity_summary(const std::vector<std::string>& ids) const;
+    json::value evaluate_card_binding(const Card& bound, const battle::DeploymentOper& current) const;
 
     bool validate_command(const json::value& params) const;
     CapturedFrame capture_frame();
@@ -147,6 +157,10 @@ private:
     json::value split_victory_evidence(const cv::Mat& image) const;
     json::value match_evidence(const cv::Mat& image, const std::string& task) const;
     json::value speed_info(const cv::Mat& image) const;
+    json::value life_info(const CapturedFrame& frame, const json::value& snapshot) const;
+    void observe_runtime(const CapturedFrame& frame, json::value& snapshot);
+    void record_state_event(const std::string& type, const json::value& snapshot, json::value details);
+    void complete_runtime_evidence(const Command& command, const CapturedFrame& frame, json::value& snapshot);
     json::value map_info() const;
     json::value observe_terrain(const CapturedFrame& frame, const json::value& snapshot);
     bool terrain_allows_deploy(const Point& location, const battle::DeploymentOper& oper) const;
@@ -163,6 +177,7 @@ private:
     bool m_terminal_seen = false;
     bool m_pause_unverified = false;
     int m_pause_confirmations = 0;
+    std::chrono::steady_clock::time_point m_last_pause_capture {};
     bool m_battle_observed = false;
     bool m_preparation_only = false;
     std::chrono::milliseconds m_frame_cost { 0 };
@@ -172,6 +187,7 @@ private:
     std::unordered_set<std::string> m_allowed_summons;
     bool m_restrict_summons = false;
     std::unordered_map<std::string, Card> m_cards;
+    json::value m_card_layout = json::array();
     std::map<std::string, Instance> m_instances;
     std::atomic_bool m_cancel_requested = false;
     std::string m_active_command_id;
@@ -182,5 +198,13 @@ private:
     cv::Mat m_terrain_baseline_image;
     json::value m_terrain_baseline = json::object();
     json::value m_terrain_observation = nullptr;
+    json::value m_previous_life = json::object();
+    std::unordered_map<std::string, bool> m_observed_cooling;
+    std::deque<json::value> m_state_events;
+    uint64_t m_state_event_sequence = 0;
+    unsigned m_life_gap_observations = 0;
+    bool m_allow_optional_visuals = false;
+    std::chrono::milliseconds m_optional_runtime_cost { 2000 };
+    std::chrono::steady_clock::time_point m_optional_runtime_deadline {};
 };
 }

@@ -31,6 +31,14 @@
         "fullMatch": true,
         "roi": [560, 350, 160, 70]
     },
+    "BattleControlLife": {
+        "algorithm": "OcrDetect",
+        "isAscii": true,
+        "text": [],
+        "ocrReplace": [],
+        "useRaw": true,
+        "withoutDet": true
+    },
     "BattleControlSpeedOne": {
         "algorithm": "OcrDetect",
         "text": ["1", "1X", "1x", "1×", "×1"],
