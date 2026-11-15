@@ -4,7 +4,9 @@ import json
 import os
 import subprocess
 import sys
+from copy import deepcopy
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 import pytest
 from battle_fixture import MARKERS, first_pixel, prepare
@@ -86,6 +88,147 @@ def events(root):
     ]
 
 
+def assert_preparation_presentation(raw, value):
+    normalized = deepcopy(value)
+    assert "evidence" not in raw
+    references = normalized.pop("evidence")
+    frames = [
+        *raw.get("evidence_frames", []),
+        {**raw["snapshot"], "image_path": raw["image_path"]},
+    ]
+    recorded = {}
+    for frame in frames:
+        if not frame.get("observation_id") or not frame.get("image_path"):
+            continue
+        proof = {
+            key: frame.get(key)
+            for key in ("observation_id", "captured_at_ms", "image_path")
+        }
+        previous = recorded.setdefault(frame["observation_id"], proof)
+        assert previous == proof
+    assert recorded
+    assert len(references) == len(recorded)
+    assert {reference["observation_id"] for reference in references} == set(recorded)
+    by_observation = {}
+    for reference in references:
+        observation_id = reference["observation_id"]
+        frame = recorded[observation_id]
+        uri = urlsplit(reference["resource_uri"])
+        assert uri.scheme == "battle-evidence"
+        assert unquote(uri.netloc) == raw["session_id"]
+        assert [unquote(part) for part in uri.path.split("/")] == [
+            "",
+            raw["preparation_id"],
+            observation_id,
+        ]
+        assert not uri.query and not uri.fragment
+        assert reference == {
+            "resource_uri": reference["resource_uri"],
+            "mime_type": "image/png",
+            "session_id": raw["session_id"],
+            "operation_id": raw["preparation_id"],
+            **frame,
+            "frame_is_live": False,
+        }
+        by_observation[observation_id] = reference
+    raw_items = raw["host_fallback"]["items"]
+    displayed_items = normalized["host_fallback"]["items"]
+    assert len(displayed_items) == len(raw_items)
+    for raw_item, displayed_item in zip(raw_items, displayed_items, strict=True):
+        retrieval = raw_item["retrieval"]
+        assert {"resource_uri", "mime_type"}.isdisjoint(retrieval)
+        if retrieval["available"]:
+            reference = by_observation[retrieval["observation_id"]]
+            assert retrieval["session_id"] == reference["session_id"]
+            assert retrieval["operation_id"] == reference["operation_id"]
+            for key in ("observation_id", "captured_at_ms", "image_path"):
+                assert raw_item["evidence"][key] == reference[key]
+        else:
+            reference = None
+        displayed_retrieval = displayed_item["retrieval"]
+        assert displayed_retrieval.pop("resource_uri") == (
+            reference["resource_uri"] if reference else None
+        )
+        assert displayed_retrieval.pop("mime_type") == (
+            "image/png" if reference else None
+        )
+    assert normalized == raw
+    return references
+
+
+async def assert_preparation_result(service, server, root, value):
+    parameters = (value["session_id"], value["preparation_id"])
+    query = "SELECT request,result FROM operations WHERE session=? AND id=?"
+    record = service.journal.execute(query, parameters).fetchone()
+    assert record is not None
+    raw = json.loads(record[1])
+    internal = service.preparation_snapshot
+    assert internal == raw
+    before = events(root)
+    references = assert_preparation_presentation(raw, value)
+    session_root = (
+        service.settings.user_dir / "battle-control" / raw["session_id"]
+    ).resolve()
+    for reference in references:
+        path = (service.settings.user_dir / reference["image_path"]).resolve()
+        assert path.is_relative_to(session_root)
+        resource = list(await server.read_resource(reference["resource_uri"]))
+        assert len(resource) == 1
+        assert resource[0].mime_type == "image/png"
+        assert resource[0].content == path.read_bytes()
+    assert events(root) == before
+    assert service.preparation_snapshot is internal
+    assert internal == raw
+    assert service.journal.execute(query, parameters).fetchone() == record
+    return raw
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        ("snapshot", "native_source", "resource_uri"),
+        ("evidence", 0, "image_path"),
+    ],
+)
+def test_preparation_presentation_rejects_raw_source_or_frame_changes(path):
+    raw = {
+        "session_id": "s",
+        "preparation_id": "p",
+        "binding": {"stage_id": "stage", "mode": "normal", "source": "caller_supplied"},
+        "image_path": "battle-control/s/1.png",
+        "snapshot": {
+            "observation_id": "1",
+            "captured_at_ms": 100,
+            "operators": [{"actual_level": 50}],
+            "native_source": {"resource_uri": "original-native-source"},
+        },
+        "host_fallback": {"items": []},
+    }
+    value = {
+        **deepcopy(raw),
+        "evidence": [
+            {
+                "resource_uri": "battle-evidence://s/p/1",
+                "mime_type": "image/png",
+                "session_id": "s",
+                "operation_id": "p",
+                "observation_id": "1",
+                "captured_at_ms": 100,
+                "image_path": "battle-control/s/1.png",
+                "frame_is_live": False,
+            }
+        ],
+    }
+    assert_preparation_presentation(raw, value)
+    changed = deepcopy(value)
+    target = changed
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = "tampered"
+    with pytest.raises(AssertionError):
+        assert_preparation_presentation(raw, changed)
+
+
 async def identify(battle, operation_id, **kwargs):
     service, server, _ = battle
     return await server.call_tool(
@@ -130,10 +273,14 @@ async def test_batch_preparation_keeps_ordinary_observation_input_free(battle):
         assert oper["actual_elite"] is None
         assert oper["actual_level"] is None
     assert not any(e["action"] in ("click", "swipe") for e in events(root))
+    raw = await assert_preparation_result(service, server, root, value)
+    prepared = service.preparation_snapshot
     backend = service.backend
     await service.attach("main_01-07", "normal", value["preparation_id"], True)
     assert service.backend is backend
-    assert service.decision.preparation == value
+    assert service.decision.preparation is prepared
+    assert service.decision.preparation == raw
+    assert service.operation(value["session_id"], value["preparation_id"]) == raw
     assert service.preparation_snapshot is None
 
 
@@ -528,14 +675,15 @@ async def test_batch_preparation_short_deadline_sends_no_navigation(battle):
 
 @pytest.mark.parametrize("battle", ["preparation:full_roster"], indirect=True)
 async def test_batch_preparation_reads_twelve_members_in_one_operation(battle):
-    service, _, root = battle
+    service, server, root = battle
     result = await inspect_preparation(battle, timeout_ms=180_000)
     value = result.structuredContent
     assert not result.isError, value
     assert value["snapshot"]["scan_status"] == "complete", value
     assert len(value["snapshot"]["operators"]) == 12
     assert all(o["selected_skill"] == 3 for o in value["snapshot"]["operators"])
-    assert service.preparation_snapshot == value
+    raw = await assert_preparation_result(service, server, root, value)
+    assert service.preparation_snapshot == raw
     assert (root / "mode").read_text() == "formation"
     assert not any(
         e["action"] == "click"
