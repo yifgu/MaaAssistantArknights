@@ -1161,6 +1161,111 @@ async def test_failed_ocr_pause_keeps_diagnostics_without_positive_evidence(batt
 
 
 @pytest.mark.parametrize("battle", ["localized_ocr"], indirect=True)
+async def test_decorated_pause_retry_preserves_raw_evidence_and_readonly_recovery(
+    battle,
+):
+    service, server, root = battle
+    initial = (await service.read(service.session_id, "capture"))["snapshot"]
+    assert initial["scene"] == "paused"
+    (root / "mode").write_text("pausex_only")
+    blocked = (await service.read(service.session_id, "capture"))["snapshot"]
+    assert blocked["input_block_reason"] == "pause_verification_pending"
+
+    (root / "mode").write_text("paused_decorated")
+    first = (await service.read(service.session_id, "capture"))["snapshot"]
+    assert first["scene"] == "paused"
+    assert first["session_input_blocked"] is True
+    diagnostic = first["pause_diagnostics"]["localized"]
+    original = diagnostic["fragment_rule"]
+    assert original["accepted"] is False
+    assert original["fragments"] == diagnostic["candidates"]
+    assert "暂停中" in diagnostic["candidates"][0]["text"]
+    retry = diagnostic["decoration_retry"]
+    assert retry["attempted"] is True
+    assert retry["accepted"] is True
+    assert retry["removed_bands"]
+    assert retry["observation_id"] == first["observation_id"]
+    assert retry["captured_at_ms"] == first["captured_at_ms"]
+    evidence = first["pause_evidence"]
+    assert evidence == retry["result"]
+    assert evidence["source"] == "BattleControlPausedLocalizedDecorationRetry"
+    assert evidence["text"] == "暂停中"
+    assert evidence["score"] >= 0.9
+    assert evidence["fragments"] == retry["candidates"]
+    assert evidence["rect"] == retry["roi"]
+    assert evidence["rect_kind"] == "recognition_roi_not_detection_box"
+    assert first["pause_requested"] is False
+
+    # A failed retry gate breaks the consecutive-frame sequence.
+    (root / "mode").write_text("decorated_no_continue")
+    failed = (await service.read(service.session_id, "capture"))["snapshot"]
+    assert failed["pause_evidence"] is None
+    assert failed["session_input_blocked"] is True
+    retry = failed["pause_diagnostics"]["localized"]["decoration_retry"]
+    assert retry["attempted"] is False
+    assert retry["rejection_reason"] == "missing_or_contradictory_corroboration"
+    (root / "mode").write_text("paused_decorated")
+    first = (await service.read(service.session_id, "capture"))["snapshot"]
+    assert first["session_input_blocked"] is True
+    collection = (
+        await server.call_tool(
+            "battle_collect_terminal",
+            {
+                "request": {
+                    "session_id": service.session_id,
+                    "operation_id": "decorated-readonly-recovery",
+                    "duration_ms": 1000,
+                }
+            },
+        )
+    ).structuredContent
+    assert collection["pause_verified"] is True
+    assert collection["input_sent"] is False
+    recovered = collection["snapshot"]
+    assert recovered["observation_id"] != first["observation_id"]
+    assert recovered["session_input_blocked"] is False
+    assert recovered["pause_requested"] is False
+    denied = (await identify(battle, "decorated-not-adopted")).structuredContent
+    assert denied["error"]["code"] == "pause_state_unknown"
+    assert not any(
+        event["action"] in ("pause", "resume", "click", "swipe", "speed")
+        for event in events(root)
+    )
+
+
+@pytest.mark.parametrize("battle", ["localized_ocr"], indirect=True)
+@pytest.mark.parametrize(
+    ("mode", "scene"),
+    [
+        ("decorated_negative", "transition"),
+        ("running_decorated", "running"),
+        ("victory_decorated", "terminal"),
+    ],
+)
+async def test_decorated_pause_never_trims_negative_text_or_overrides_scene(
+    battle, mode, scene
+):
+    service, server, root = battle
+    (root / "mode").write_text(mode)
+    snapshot = (await service.read(service.session_id, "capture"))["snapshot"]
+    assert snapshot["scene"] == scene
+    assert snapshot["pause_evidence"] is None
+    if scene == "terminal":
+        (root / "mode").write_text("paused_decorated")
+        for _ in range(2):
+            recovered = (await service.read(service.session_id, "capture"))["snapshot"]
+            assert (
+                recovered["pause_evidence"]["source"]
+                == "BattleControlPausedLocalizedDecorationRetry"
+            )
+            assert recovered["input_block_reason"] == "terminal_or_safety_quarantine"
+    assert not any(
+        event["action"] in ("pause", "resume", "click", "swipe", "speed")
+        for event in events(root)
+    )
+
+
+@pytest.mark.parametrize("battle", ["localized_ocr"], indirect=True)
 @pytest.mark.parametrize(
     ("mode", "source", "text"),
     [
