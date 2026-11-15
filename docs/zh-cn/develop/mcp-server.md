@@ -134,7 +134,9 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 }
 ```
 
-按顺序调用 `battle_connect`、`battle_attach(stage_name="main_01-07")`、`battle_capture_evidence` 和 `battle_observe`。关卡 ID 必须对应实际画面；地图绑定来自调用者，不是自动识别。`battle_get_map` 返回静态格子与两种屏幕投影。未知名字返回 null，需要主动识别时调用 `battle_identify`；它可能点击详情并请求暂停，之后须查看截图并显式调用 `battle_set_paused(paused=false)` 恢复。
+按顺序调用 `battle_connect`、`battle_attach(stage_name="main_01-07")`、`battle_capture_evidence` 和 `battle_observe`。关卡 ID 必须对应实际画面；地图绑定来自调用者，不是自动识别。`battle_get_map` 返回静态格子、两种屏幕投影及实时像素变化。未知名字返回 null，需要主动识别时调用 `battle_identify`；它可能点击详情并请求暂停，之后须查看截图并显式调用 `battle_set_paused(paused=false)` 恢复。
+
+`battle_get_map` 的 MCP 图像内容依次为当前 PNG（`image_path`）和基准 PNG（`baseline_image_path`）；两者路径相同时只附一张，尚无有效基准时不附基准图。宿主无需直接访问 Core 文件系统即可二次识别，具体变化字段及限制见下文。
 
 新会话接入手动暂停时，`battle_identify` 的严格布尔参数 `request.adopt_manual_pause=true` 明确授权接管而不恢复；默认 false。Core 必须识别到正向暂停证据，缺少运行按钮不再足够，入场标题过渡不能接管。识别只在暂停时查看卡牌；返回 `pause_verified`、`safe_state`、同帧 `snapshot` / `image_path` 和 PNG，部分 OCR 也保留证据。保存失败通过 `evidence_error` 明示，取消或 worker 故障可能无法提供最终证据，不会主动恢复战斗。
 
@@ -297,7 +299,13 @@ Core 根据等级标签定位有人的槽位，保留名称无法读取的条目
 
 旧 `battle_deploy` 新增可选 `card_id`；旧部署／撤退／技能入口仍要求起始战斗运行，但使用同一有界预检与暂停收尾，不可绕过能力、实例和位置检查。没有选中格锚点时普通干员技能／撤退也拒绝，不再凭未验证动作历史执行。
 
-TL／TL-EX 绑定 `act55side_*`（如 `act55side_ex01`，不是 `TL-EX-1`）。｢自爆榴弹｣ `trap_341_dsjtzd` 可离线查询：基础费用 20、再部署 20 秒、范围 `x-4`、没有列出的技能、天赋 blackboard 眩晕 5 秒。**再部署时间不是爆炸倒计时。** 原表不能证明拖拽／撤退策略；缺少爆炸、明确消失和翻板变化的可靠实图规则，动态覆盖保持 unknown／unsupported，TL 部署返回 `dynamic_terrain_unknown`。预计计时不会改静态地图；不宣称 TL 闭环已完成或实机通过。
+TL／TL-EX 绑定 `act55side_*`（如 `act55side_ex01`，不是 `TL-EX-1`；突袭用 `act55side_ex01#f#` 与显式 `mode="challenge"`）。部署不再整关拒绝，而是检查目标格的不变量：已支持的低地 `tile_road`／`tile_fence_bound`／`tile_infection` 按原有部署类型检查；`tile_trench` 仅放行普通远程干员，因为裸露战壕与翻板覆盖的暗阱都允许远程部署。覆盖状态可能造成眩晕，宿主仍须判断策略风险。近战／召唤物进入战壕及其他未适配动态交互仍返回 `dynamic_terrain_unknown`；像素未变不会扩大权限。卡片、占格、能力及实例安全检查保持不变，不宣称完整战斗闭环或实机验收。
+
+`battle_get_map` 现在只读采集并返回当前 PNG、`snapshot` 与 `map`；静态 `map.tiles` 不变。观察／截图／动作快照和 `map.dynamic_overlay` 使用同帧 `observation_id`／`captured_at_ms`。首次有效的 1280×720 战斗截图建立固定 `baseline`，保留其 PNG 路径且本会话不滚动替换；它是**首次观测，不是游戏开局状态**，中途接入时可能已经存在翻板变化或积雪。绑定时还未截图则为 `status="not_observed"`。
+
+`dynamic_overlay.tiles` 提供各格 `location`、基于固定地图投影的 `roi`／`screen_polygon` 及 `changed_from_baseline`：true 表示投影多边形内有像素不同，false 表示完全相同，null 表示正在建立基准或区域越界；场景不可用时 `status="unavailable"`、`tiles=null`，不沿用旧判定。比较为 `exact_masked_pixels`，不设噪声容差；`scene_changed_from_baseline` 提醒暂停遮罩等场景差异。宿主应结合基准图和当前图二次识别：翻板、积雪、单位、特效、UI 和截图噪声都可能导致变化，画面未变也不证明没有遮挡。基础地形、机关状态与视觉覆盖可叠加，Core 不猜测其状态枚举；`semantic_state="unknown"`、`static_geometry_is_current_terrain=false`。差异不证明落地、离场、选中格或可部署性，也不释放占格。
+
+｢自爆榴弹｣ `trap_341_dsjtzd` 仍可离线查询：基础费用 20、再部署 20 秒、范围 `x-4`、没有列出的技能、天赋 blackboard 眩晕 5 秒。**再部署时间不是爆炸倒计时。** 此次不新增其拖拽／撤退适配，也不按计时或像素变化推断爆炸与消失。逐格变化报告和部署不变量不等于已完成翻板语义识别；真实画面与完整实战仍须后续验证。
 
 先构建 Debug `res_updater`，再使用本地固定版本的角色／技能原表重新生成：
 

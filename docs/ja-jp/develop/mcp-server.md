@@ -134,7 +134,9 @@ uv run --project src/MaaMcpServer maa-battle-mcp \
 }
 ```
 
-`battle_connect`、`battle_attach(stage_name="main_01-07")`、`battle_capture_evidence`、`battle_observe` の順で呼び出します。ステージ ID は画面と一致している必要があります。マップの指定は呼び出し側の責任で、自動認識ではありません。`battle_get_map` は静的なマスと 2 種類の画面投影を返します。不明な名前は null です。`battle_identify` は詳細画面を開いて認識し、一時停止を要求します。実行後に画像を確認してから `battle_set_paused(paused=false)` で明示的に再開してください。
+`battle_connect`、`battle_attach(stage_name="main_01-07")`、`battle_capture_evidence`、`battle_observe` の順で呼び出します。ステージ ID は画面と一致している必要があります。マップの指定は呼び出し側の責任で、自動認識ではありません。`battle_get_map` は静的なマス、2 種類の画面投影、最新の画素変化を返します。不明な名前は null です。`battle_identify` は詳細画面を開いて認識し、一時停止を要求します。実行後に画像を確認してから `battle_set_paused(paused=false)` で明示的に再開してください。
+
+`battle_get_map` の MCP 画像は現在 PNG（`image_path`）、基準 PNG（`baseline_image_path`）の順です。同じパスなら 1 枚のみ添付し、有効な基準がなければ基準画像を添付しません。ホストは Core のファイルシステムに直接アクセスせず二次認識できます。差分フィールドと制限は後述します。
 
 手動一時停止の引き継ぎには、`battle_identify` の厳密な boolean 引数 `request.adopt_manual_pause=true` が必要です。既定値は false で、再開を許可しません。Core は明確な停止証拠を要求します。実行ボタンの不在だけでは不十分で、入場タイトルの遷移は引き継げません。停止中にカードを確認し、部分 OCR でも `pause_verified`、`safe_state`、同一フレームの `snapshot` / `image_path` と PNG を返します。保存失敗は `evidence_error` に記録され、キャンセルや worker 障害では最終証拠が得られない場合がありますが、自動再開しません。
 
@@ -297,7 +299,13 @@ C++ 型で presence・位置証拠・操作状態を分離し、入力やコス�
 
 旧 `battle_deploy` は任意の `card_id` を受け、旧配置／撤退／スキル入口も同じ有界事前確認・停止処理を通ります。開始時は実行中戦闘が必要で、能力・個体・位置検証を迂回できません。選択マス anchor がない通常オペレーターのスキル／撤退も未確認履歴で実行せず拒否します。
 
-TL／TL-EX の ID は `act55side_*`（例 `act55side_ex01`、`TL-EX-1` ではありません）です。｢自爆榴弹｣（爆発するステージ装置）`trap_341_dsjtzd` はオフライン照会可能で、基本コスト 20、再配置 20 秒、範囲 `x-4`、スキル記載なし、素質 blackboard のスタン 5 秒です。**再配置時間は爆発のカウントダウンではありません。** 原表はドラッグ／撤退方針を証明せず、爆発・確実な消滅・翻板変更の実画像規則がないので動的 overlay は unknown／unsupported、TL 配置は `dynamic_terrain_unknown` です。推定時間で静的地図を変更せず、TL の完全ループ・実機合格を宣言しません。
+TL／TL-EX の ID は `act55side_*`（例 `act55side_ex01`、`TL-EX-1` ではありません）です。強襲は `act55side_ex01#f#` と明示的な `mode="challenge"` を使います。配置をステージ全体で拒否せず、対象マスの不変条件を確認します。対応済みの低地 `tile_road`／`tile_fence_bound`／`tile_infection` は従来の配置種別を確認し、`tile_trench` は板の有無にかかわらず配置可能な通常の遠距離オペレーターのみ許可します。板で覆われた塹壕ではスタンの可能性があり、戦術上の影響はホストが判断します。塹壕への近接／召喚物配置と未対応の動的操作は引き続き `dynamic_terrain_unknown` です。画素不変は権限を拡大せず、カード・占有・能力・インスタンス確認も維持します。完全な戦闘ループや実機合格を意味しません。
+
+`battle_get_map` は読み取り専用で最新 PNG、`snapshot`、`map` を返します。静的な `map.tiles` は変更しません。観測／画像／操作スナップショットと `map.dynamic_overlay` は同一フレームの `observation_id`／`captured_at_ms` を使います。最初の操作可能な 1280×720 戦闘画像を固定 `baseline` として PNG パスを保持し、セッション中に更新しません。これは**最初の観測であり、ゲーム開始時の状態ではありません**。途中接続では板の変化や積雪が既に存在し得ます。初回撮影前のバインドでは `status="not_observed"` です。
+
+`dynamic_overlay.tiles` は `location`、固定地図投影の `roi`／`screen_polygon`、`changed_from_baseline` を返します。true は多角形内の画素差、false は完全一致、null は基準作成中または画像外を表します。場面が利用不能なら `status="unavailable"`、`tiles=null` とし、古い結果を使いません。`exact_masked_pixels` はノイズ許容幅を設けず、`scene_changed_from_baseline` は一時停止表示などの場面差を示します。ホストが基準画像と現在画像で二次確認してください。板、積雪、ユニット、エフェクト、UI、撮影ノイズのいずれも変化の原因になり、不変でも遮蔽なしとは限りません。地形・仕掛け・視覚的被覆は重複し得るため、Core は状態一覧を推測せず、`semantic_state="unknown"`、`static_geometry_is_current_terrain=false` を保ちます。差分は配置成功・離場・選択マス・配置可否の証明ではなく、占有も解放しません。
+
+｢自爆榴弹｣（爆発するステージ装置）`trap_341_dsjtzd` は引き続きオフライン照会可能で、基本コスト 20、再配置 20 秒、範囲 `x-4`、スキル記載なし、素質 blackboard のスタン 5 秒です。**再配置時間は爆発のカウントダウンではありません。** ドラッグ／撤退対応は追加せず、時間や画素差で爆発・消滅を推定しません。マスの画像差と配置不変条件は板の状態認識ではなく、実画像と完全な実戦の検証は今後必要です。
 
 Debug の `res_updater` をビルドし、固定版のローカルキャラクター／スキル表から再生成します。
 

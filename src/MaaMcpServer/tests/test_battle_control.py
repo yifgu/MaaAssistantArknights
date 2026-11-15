@@ -59,8 +59,19 @@ async def battle(tmp_path, monkeypatch, request):
         if variant != "prepare" and not (
             isinstance(variant, str) and variant.startswith("preparation:")
         ):
+            tl = variant == "summon_tl" or (
+                isinstance(variant, str) and variant.startswith("tl_")
+            )
+            challenge = tl and variant.endswith("_challenge")
             await service.attach(
-                "act55side_ex01" if variant == "summon_tl" else "main_01-07"
+                "act55side_ex01#f#"
+                if challenge
+                else "act55side_01"
+                if variant == "tl_story"
+                else "act55side_ex01"
+                if tl
+                else "main_01-07",
+                "challenge" if challenge else "normal",
             )
         yield service, create_server(service), root
     finally:
@@ -1863,7 +1874,7 @@ async def test_ambiguous_game_ids_and_unadapted_traps_never_deploy(battle, code)
                     "action": "deploy",
                     "unit_id": card["unit_id"],
                     "card_id": card["card_id"],
-                    "location": [1, 1],
+                    "location": [7, 1] if code == "dynamic_terrain_unknown" else [1, 1],
                     "direction": "None",
                 }
             },
@@ -1871,6 +1882,163 @@ async def test_ambiguous_game_ids_and_unadapted_traps_never_deploy(battle, code)
     ).structuredContent
     assert value["error"]["code"] == code
     assert not any(e["action"] in ("click", "swipe", "resume") for e in events(root))
+
+
+@pytest.mark.parametrize(
+    "battle, buildable",
+    [
+        ("tl_story", 1),
+        ("tl_melee", 1),
+        ("tl_melee_challenge", 1),
+        ("tl_ranged", 2),
+        ("tl_ranged_challenge", 2),
+    ],
+    indirect=["battle"],
+)
+async def test_tl_deployment_uses_per_tile_invariants_not_visual_change(
+    battle, buildable
+):
+    from PIL import Image
+
+    service, server, root = battle
+    result = await service.read(service.session_id, "map")
+    tile = next(t for t in result["map"]["tiles"] if t["buildable_type"] == buildable)
+    # A synthetic overlay can change a tile's pixels without proving a terrain state.
+    for mode in ("paused", "running"):
+        path = root / f"{mode}-1x.png"
+        with Image.open(path) as source:
+            image = source.copy()
+        image.putpixel(tuple(tile["screen"]), (230, 230, 230))
+        image.save(path)
+    capture = await service.read(service.session_id, "capture")
+    changed = next(
+        t
+        for t in capture["snapshot"]["dynamic_overlay"]["tiles"]
+        if t["location"] == tile["location"]
+    )
+    assert changed["changed_from_baseline"] is True
+    card = capture["snapshot"]["deployment"][0]
+    request = {
+        "session_id": service.session_id,
+        "operation_id": "tl-deploy",
+        "action": "deploy",
+        "unit_id": card["unit_id"],
+        "card_id": card["card_id"],
+        "location": tile["location"],
+        "direction": "None",
+        "adopt_manual_pause": True,
+        "timeout_ms": 30_000,
+    }
+    value = (
+        await server.call_tool("battle_step", {"request": request})
+    ).structuredContent
+    assert value["action_returned"] is True, value
+    assert sum(e["action"] == "swipe" for e in events(root)) == 1
+    instance = value["return_time_snapshot"]["battlefield"][0]
+    assert instance["presence"] == "unknown"
+    assert instance["location_verified"] is False
+    assert instance["tile_reserved"] is True
+    before = events(root)
+    replay = await server.call_tool("battle_step", {"request": request})
+    assert replay.structuredContent == value
+    assert events(root) == before
+
+
+@pytest.mark.parametrize("battle", ["tl_melee", "tl_melee_challenge"], indirect=True)
+async def test_tl_melee_trench_is_not_authorized_by_unchanged_pixels(battle):
+    service, server, root = battle
+    result = await service.read(service.session_id, "map")
+    tile = next(t for t in result["map"]["tiles"] if t["tile_key"] == "tile_trench")
+    capture = await service.read(service.session_id, "capture")
+    evidence = next(
+        t
+        for t in capture["snapshot"]["dynamic_overlay"]["tiles"]
+        if t["location"] == tile["location"]
+    )
+    assert evidence["changed_from_baseline"] is False
+    card = capture["snapshot"]["deployment"][0]
+    value = (
+        await server.call_tool(
+            "battle_step",
+            {
+                "request": {
+                    "session_id": service.session_id,
+                    "operation_id": "tl-melee-trench",
+                    "action": "deploy",
+                    "unit_id": card["unit_id"],
+                    "card_id": card["card_id"],
+                    "location": tile["location"],
+                    "direction": "None",
+                    "adopt_manual_pause": True,
+                }
+            },
+        )
+    ).structuredContent
+    assert value["error"]["code"] == "dynamic_terrain_unknown", value
+    assert not any(
+        e["action"] in ("click", "swipe", "resume", "pause") for e in events(root)
+    )
+
+
+async def test_map_reports_changes_from_pinned_first_frame_without_input(battle):
+    from PIL import Image
+
+    service, server, root = battle
+    first = await server.call_tool("battle_get_map", {"session_id": service.session_id})
+    value = first.structuredContent
+    assert not first.isError, value
+    overlay = value["map"]["dynamic_overlay"]
+    assert overlay == value["snapshot"]["dynamic_overlay"]
+    assert overlay["observation_id"] == value["snapshot"]["observation_id"]
+    assert overlay["captured_at_ms"] == value["snapshot"]["captured_at_ms"]
+    assert overlay["baseline_created"] is True
+    baseline = overlay["baseline"]
+    assert baseline["image_path"] == value["image_path"]
+    baseline_bytes = service.evidence_path(baseline).read_bytes()
+    assert baseline["source"] == "first_actionable_session_frame_not_initial_game_state"
+    assert sum(item.type == "image" for item in first.content) == 1
+    tile = next(t for t in value["map"]["tiles"] if t["buildable_type"] == 1)
+    source = root / "paused-1x.png"
+    original = source.read_bytes()
+    with Image.open(source) as frame:
+        image = frame.copy()
+    image.putpixel(tuple(tile["screen"]), (230, 230, 230))
+    image.save(source)
+    for _ in range(2):
+        response = await server.call_tool(
+            "battle_get_map", {"session_id": service.session_id}
+        )
+        current = response.structuredContent
+        assert not response.isError, current
+        images = [item for item in response.content if item.type == "image"]
+        assert len(images) == 2
+        assert base64.b64decode(images[1].data) == baseline_bytes
+        latest = current["map"]["dynamic_overlay"]
+        assert latest["baseline"] == baseline
+        assert latest["observation_id"] != baseline["observation_id"]
+        changed = next(t for t in latest["tiles"] if t["location"] == tile["location"])
+        assert changed["changed_from_baseline"] is True
+        assert latest["semantic_state"] == "unknown"
+        assert latest["static_geometry_is_current_terrain"] is False
+        assert current["map"]["tiles"] == value["map"]["tiles"]
+        assert service.evidence_path(baseline).read_bytes() == baseline_bytes
+    (root / "mode").write_text("unknown")
+    unknown = await service.read(service.session_id, "map")
+    assert unknown["map"]["dynamic_overlay"]["status"] == "unavailable"
+    assert unknown["map"]["dynamic_overlay"]["tiles"] is None
+    source.write_bytes(original)
+    (root / "mode").write_text("paused")
+    restored = await service.read(service.session_id, "map")
+    restored_overlay = restored["map"]["dynamic_overlay"]
+    assert restored_overlay["baseline"] == baseline
+    assert all(
+        t["changed_from_baseline"] is False
+        for t in restored_overlay["tiles"]
+        if t["comparison_status"] == "compared"
+    )
+    assert not any(
+        e["action"] in ("click", "swipe", "resume", "pause") for e in events(root)
+    )
 
 
 @pytest.mark.parametrize("battle", ["summon"], indirect=True)

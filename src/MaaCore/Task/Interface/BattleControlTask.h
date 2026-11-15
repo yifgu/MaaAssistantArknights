@@ -148,6 +148,8 @@ private:
     json::value match_evidence(const cv::Mat& image, const std::string& task) const;
     json::value speed_info(const cv::Mat& image) const;
     json::value map_info() const;
+    json::value observe_terrain(const CapturedFrame& frame, const json::value& snapshot);
+    bool terrain_allows_deploy(const Point& location, const battle::DeploymentOper& oper) const;
     json::value failure(const std::string& code, const std::string& message) const;
     void emit(const std::string& what, json::value details);
     static std::string unit_id(battle::Role role, const std::string& name);
@@ -177,5 +179,8 @@ private:
     uint64_t m_observation_id = 0;
     std::deque<std::filesystem::path> m_evidence_files;
     std::unordered_map<std::string, std::string> m_directions;
+    cv::Mat m_terrain_baseline_image;
+    json::value m_terrain_baseline = json::object();
+    json::value m_terrain_observation = nullptr;
 };
 }
