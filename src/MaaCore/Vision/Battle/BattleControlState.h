@@ -112,4 +112,11 @@ inline bool owned_instance_departure(const DepartureEvidence& evidence)
            evidence.substitution_excluded && evidence.owned_presence_verified && evidence.cooling &&
            !evidence.available && evidence.consecutive_cooling >= 2;
 }
+
+inline bool suspected_defeat_hint(const DepartureEvidence& evidence, bool retreat_input_recorded, bool terminal)
+{
+    return evidence.ordinary && evidence.unique_card && evidence.unique_owned_instance &&
+           evidence.substitution_excluded && evidence.cooling && !evidence.available && !retreat_input_recorded &&
+           !terminal;
+}
 }

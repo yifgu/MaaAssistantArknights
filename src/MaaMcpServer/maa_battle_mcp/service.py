@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import logging
 import sqlite3
@@ -11,6 +12,7 @@ from filelock import FileLock, Timeout
 
 from .decision import CLIENT_REGIONS, DecisionContext
 from .diagnostics import provenance
+from .media import MediaError, MediaService
 from .models import (
     BattleMode,
     OperationRequest,
@@ -19,6 +21,7 @@ from .models import (
     Settings,
 )
 from .native import NativeBackend, NativeError
+from .preparation import add_host_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +67,18 @@ class BattleService:
             "PRIMARY KEY(session, id))"
         )
         self.journal.commit()
+        self.media = MediaService(settings, self._media_guard)
+        self._close_generation = 0
+
+    def _media_guard(self) -> None:
+        if self.storage_failed:
+            raise BattleError(
+                "Operation storage failed; media jobs are disabled in this service"
+            )
+
+    def _control_guard(self) -> None:
+        if self.media.closing or self.media.stopping:
+            raise BattleError("Controller is closing; new operations are not admitted")
 
     def _check_session(self, session_id: str) -> Backend:
         if self.backend is None or self.session_id != session_id:
@@ -71,6 +86,10 @@ class BattleService:
         return self.backend
 
     async def connect(self) -> dict:
+        if self.media.stopping:
+            raise BattleError(
+                "Controller is shutting down; connections are not admitted"
+            )
         async with self.lock:
             if self.backend is not None:
                 raise BattleError(
@@ -108,6 +127,7 @@ class BattleService:
         return {**self.connection_info, **provenance(self.settings)}
 
     async def prepare(self, stage_name: str, mode: BattleMode) -> dict:
+        self._control_guard()
         if self.lock.locked():
             raise BattleError("Controller is busy")
         async with self.lock:
@@ -140,14 +160,45 @@ class BattleService:
                 self.preparation_session_id = None
                 self.lease.release()
                 raise
+            result["region"] = CLIENT_REGIONS[self.settings.client_type]
+            result["preparation_id"] = request_id
+            result["session_id"] = self.preparation_session_id
+            result["binding"] = {
+                "stage_id": stage_name,
+                "mode": mode,
+                "source": "caller_supplied",
+            }
+            add_host_fallback(result)
+            try:
+                self.journal.execute(
+                    "INSERT INTO operations(session,id,request,result) VALUES(?,?,?,?)",
+                    (
+                        self.preparation_session_id,
+                        request_id,
+                        json.dumps(
+                            {
+                                "action": "prepare",
+                                "stage_name": stage_name,
+                                "mode": mode,
+                            }
+                        ),
+                        json.dumps(result, ensure_ascii=False),
+                    ),
+                )
+                self.journal.commit()
+            except sqlite3.Error as exc:
+                self.storage_failed = True
+                try:
+                    self.journal.rollback()
+                except sqlite3.Error:
+                    logger.exception(
+                        "Could not roll back failed preparation persistence"
+                    )
+                logger.exception("Could not persist preparation evidence")
+                raise BattleError(
+                    "Preparation evidence could not be persisted"
+                ) from exc
             if result.get("status") == "succeeded":
-                result["region"] = CLIENT_REGIONS[self.settings.client_type]
-                result["preparation_id"] = request_id
-                result["binding"] = {
-                    "stage_id": stage_name,
-                    "mode": mode,
-                    "source": "caller_supplied",
-                }
                 self.preparation_snapshot = result
             return result
 
@@ -180,6 +231,7 @@ class BattleService:
         preparation_id: str | None = None,
         confirm_preparation_unchanged: bool = False,
     ) -> dict:
+        self._control_guard()
         async with self.lock:
             if self.backend is None:
                 raise BattleError("Connect before attaching")
@@ -242,6 +294,7 @@ class BattleService:
     async def command(
         self, action: str, request: OperationRequest, args: dict | None = None
     ) -> dict:
+        self._control_guard()
         if self.storage_failed:
             raise BattleError(
                 "Operation storage failed; do not retry input in this service"
@@ -270,6 +323,24 @@ class BattleService:
                 "args": args or {},
                 "timeout_ms": request.timeout_ms,
             }
+            media_id = None
+            if (
+                action == "record"
+                or action == "step"
+                and payload["args"].get("recording") is not None
+            ):
+                # Stable intent participates in payload comparison; allocation happens ONLY after replay lookup.
+                media_id = hashlib.sha256(
+                    f"record:{request.session_id}:{request.operation_id}".encode()
+                ).hexdigest()[:32]
+                payload["args"] = dict(payload["args"])
+                if action == "record":
+                    payload["args"]["artifact_id"] = media_id
+                else:
+                    payload["args"]["recording"] = {
+                        **payload["args"]["recording"],
+                        "artifact_id": media_id,
+                    }
             encoded = json.dumps(payload, sort_keys=True, ensure_ascii=False)
             previous = self.journal.execute(
                 "SELECT request, result FROM operations WHERE session=? AND id=?",
@@ -290,11 +361,43 @@ class BattleService:
                 (request.session_id, request.operation_id, encoded),
             )
             self.journal.commit()
+            media_allocated = False
+            if media_id:
+                try:
+                    self.media.store.allocate(media_id)
+                    media_allocated = True
+                except (OSError, MediaError, sqlite3.Error) as exc:
+                    if isinstance(exc, sqlite3.Error):
+                        self.storage_failed = True
+                    result = {
+                        "status": "failed",
+                        "session_id": request.session_id,
+                        "command_id": request.operation_id,
+                        "input_sent": False,
+                        "safe_state": "unknown",
+                        "pause_verified": False,
+                        "requires_fresh_observation": True,
+                        "error": {
+                            "code": "media_preflight_failed",
+                            "message": "Media storage could not be reserved. No device command was submitted; the current game state was not observed.",
+                        },
+                        "media": {
+                            "artifact_id": media_id,
+                            "status": "unavailable",
+                            "error": str(exc),
+                        },
+                    }
+                    self._save_result(request, result)
+                    return result
             if preparation:
                 self.preparation_snapshot = None
                 self.decision.preparation = None
             cancelled = False
-            bounded_cleanup = action in ("step", "inspect_preparation")
+            bounded_cleanup = action in (
+                "step",
+                "inspect_preparation",
+                "record",
+            ) and payload["action"] in ("step", "inspect_preparation", "record")
             self.step_active = bounded_cleanup
             self.active_request = request
             try:
@@ -348,6 +451,18 @@ class BattleService:
                 if preparation:
                     result["formation_restored"] = False
                     result["preparation_valid"] = False
+                    result["preparation_id"] = request.operation_id
+                    add_host_fallback(result)
+                if media_allocated:
+                    self.media.store.discard(media_id, "interrupted")
+                if media_id:
+                    result["media"] = {
+                        "artifact_id": media_id,
+                        "status": "unavailable",
+                        "error": "worker_interrupted",
+                    }
+                if action == "record":
+                    result["input_sent"] = False
                 self._save_result(request, result)
                 if cancelled:
                     raise asyncio.CancelledError from exc
@@ -362,6 +477,47 @@ class BattleService:
                     self.decision.enrich_snapshot(result[key], self.map_info)
             if isinstance(result.get("deployment"), list):
                 self.decision.enrich_snapshot(result, self.map_info)
+            if media_id:
+                try:
+                    if isinstance(result.get("media"), dict):
+                        result["media"] = self.media.store.publish(
+                            media_id, result["media"]
+                        )
+                    else:
+                        self.media.store.discard(media_id, "unavailable")
+                        result["media"] = {
+                            "artifact_id": media_id,
+                            "status": "unavailable",
+                            "error": "native_recording_not_produced",
+                        }
+                except (OSError, RuntimeError, sqlite3.Error) as exc:
+                    if isinstance(exc, sqlite3.Error):
+                        self.storage_failed = True
+                    try:
+                        self.media.store.discard(media_id, "failed")
+                    except (OSError, RuntimeError, sqlite3.Error):
+                        logger.exception("Could not discard failed media")
+                    result["media"] = {
+                        "artifact_id": media_id,
+                        "status": "unavailable",
+                        "error": str(exc),
+                    }
+                if result.get("status") == "succeeded":
+                    media = result["media"]
+                    if media.get("status") == "unavailable" or not media.get(
+                        "retained"
+                    ):
+                        result["status"] = "failed"
+                        result["error"] = {
+                            "code": "media_unavailable",
+                            "message": "Requested media was not retained. Input and pause results remain separate; do not blindly replay the operation.",
+                        }
+                    elif media.get("status") not in ("complete", "succeeded"):
+                        result["status"] = "partial"
+                        result["error"] = {
+                            "code": "media_incomplete",
+                            "message": "Only partial requested media was retained. Inspect its manifest and the separate input/pause results.",
+                        }
             if preparation:
                 result["session_id"] = request.session_id
                 result["region"] = CLIENT_REGIONS[self.settings.client_type]
@@ -371,6 +527,7 @@ class BattleService:
                     "mode": payload["args"]["mode"],
                     "source": "caller_supplied",
                 }
+                add_host_fallback(result)
             self._save_result(request, result)
             if preparation and result.get("preparation_valid") is True:
                 self.preparation_snapshot = result
@@ -410,6 +567,8 @@ class BattleService:
         )
 
     def operation(self, session_id: str, operation_id: str) -> dict:
+        if session_id == "media":
+            return self.media.store.operation(operation_id)
         row = self.journal.execute(
             "SELECT result FROM operations WHERE session=? AND id=?",
             (session_id, operation_id),
@@ -435,41 +594,105 @@ class BattleService:
             raise BattleError("Screenshot exceeds the 16 MiB evidence limit")
         return path
 
-    async def close(self) -> dict:
-        backend = self.backend
-        if backend is not None and self.step_active and self.active_request is not None:
-            try:
-                backend.cancel(
-                    self.active_request.session_id, self.active_request.operation_id
-                )
-            except NativeError:
-                logger.exception(
-                    "Could not signal bounded operation cancellation; terminating worker with unknown recovery state"
-                )
-                await asyncio.to_thread(backend.abort)
-        if backend is not None and self.lock.locked() and not self.step_active:
-            await asyncio.to_thread(backend.abort)
-        async with self.lock:
-            if self.backend is not None and self.backend is not backend:
-                raise BattleError(
-                    "Connection changed during closure; close it explicitly"
-                )
-            current = self.backend
-            self.backend = None
-            self.session_id = None
-            self.map_info = None
-            self.mode = None
-            self.preparation_session_id = None
-            self.preparation_snapshot = None
-            self.decision.preparation = None
-            self.connection_info = {}
-            if current is not None:
-                try:
-                    await asyncio.to_thread(current.close)
-                except NativeError:
-                    logger.exception("Graceful shutdown failed; worker was terminated")
-            self.lease.release()
+    def evidence_frame(
+        self, session_id: str, operation_id: str, observation_id: str
+    ) -> dict:
+        result = self.operation(session_id, operation_id)
+        candidates = [
+            frame
+            for frame in result.get("evidence_frames", [])
+            if isinstance(frame, dict)
+        ]
+        for snapshot_key, image_key in (
+            ("snapshot", "image_path"),
+            ("capture_time_snapshot", "capture_image_path"),
+            ("return_time_snapshot", "return_image_path"),
+            ("terminal", "terminal_evidence_path"),
+        ):
+            snapshot = result.get(snapshot_key) or {}
+            if not isinstance(snapshot, dict):
+                continue
+            path = result.get(image_key) or snapshot.get("image_path")
+            if path:
+                candidates.append({**snapshot, "image_path": path})
+        matches = [
+            frame
+            for frame in candidates
+            if frame.get("observation_id") == observation_id and frame.get("image_path")
+        ]
+        paths = {frame["image_path"] for frame in matches}
+        if len(paths) != 1:
+            raise BattleError("Unknown or ambiguous evidence frame for this operation")
+        frame = matches[0]
+        path = self.evidence_path(frame)
+        session_root = (
+            self.settings.user_dir / "battle-control" / session_id
+        ).resolve()
+        if not path.is_relative_to(session_root):
+            raise BattleError("Evidence frame does not belong to this session")
         return {
-            "status": "closed",
-            "message": "Control released. This does not pause, abandon or stop the game.",
+            "status": "succeeded",
+            "session_id": session_id,
+            "operation_id": operation_id,
+            "observation_id": observation_id,
+            "captured_at_ms": frame.get("captured_at_ms"),
+            "image_path": frame["image_path"],
+            "purpose": frame.get("purpose"),
+            "source": "retained_operation_evidence",
+            "read_only": True,
+            "frame_is_live": False,
+            "safety_locks_changed": False,
         }
+
+    async def close(self) -> dict:
+        self._close_generation += 1
+        generation = self._close_generation
+        self.media.closing = True
+        try:
+            backend = self.backend
+            if (
+                backend is not None
+                and self.step_active
+                and self.active_request is not None
+            ):
+                try:
+                    backend.cancel(
+                        self.active_request.session_id, self.active_request.operation_id
+                    )
+                except NativeError:
+                    logger.exception(
+                        "Could not signal bounded operation cancellation; terminating worker with unknown recovery state"
+                    )
+                    await asyncio.to_thread(backend.abort)
+            await self.media.cancel_jobs()
+            if backend is not None and self.lock.locked() and not self.step_active:
+                await asyncio.to_thread(backend.abort)
+            async with self.lock:
+                if self.backend is not None and self.backend is not backend:
+                    raise BattleError(
+                        "Connection changed during closure; close it explicitly"
+                    )
+                current = self.backend
+                self.backend = None
+                self.session_id = None
+                self.map_info = None
+                self.mode = None
+                self.preparation_session_id = None
+                self.preparation_snapshot = None
+                self.decision.preparation = None
+                self.connection_info = {}
+                if current is not None:
+                    try:
+                        await asyncio.to_thread(current.close)
+                    except NativeError:
+                        logger.exception(
+                            "Graceful shutdown failed; worker was terminated"
+                        )
+                self.lease.release()
+            return {
+                "status": "closed",
+                "message": "Control released. This does not pause, abandon or stop the game.",
+            }
+        finally:
+            if self._close_generation == generation:
+                self.media.closing = False

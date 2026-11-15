@@ -26,12 +26,47 @@ class Settings(StrictModel):
     touch_mode: Literal["adb", "minitouch", "maatouch", "MaaFwAdb"] = "maatouch"
     client_type: ClientType = "Official"
     allowed_summons: list[Identifier] | None = None
+    media_import_dir: Path | None = None
+
+
+class RecordingOptions(StrictModel):
+    interval_ms: Annotated[int, Field(ge=200, le=2_000)] = 500
+    max_frames: Annotated[int, Field(ge=2, le=24)] = 24
 
 
 class OperationRequest(StrictModel):
     session_id: Identifier
     operation_id: Identifier
     timeout_ms: Timeout = 10_000
+
+
+class RecordClipRequest(OperationRequest):
+    duration_ms: Annotated[int, Field(ge=100, le=8_000)] = 2_000
+    interval_ms: Annotated[int, Field(ge=200, le=2_000)] = 500
+    max_frames: Annotated[int, Field(ge=2, le=24)] = 24
+
+    @model_validator(mode="after")
+    def bounded_recording(self):
+        if self.duration_ms + 1_000 > self.timeout_ms:
+            raise ValueError("recording needs at least 1000 ms of deadline headroom")
+        if (
+            self.duration_ms + self.interval_ms - 1
+        ) // self.interval_ms + 1 > self.max_frames:
+            raise ValueError("duration/interval cannot fit the requested frame limit")
+        return self
+
+
+class ImportVideoRequest(StrictModel):
+    operation_id: Identifier
+    import_name: Identifier
+    declared_context: Literal["full_battle", "mid_battle", "unknown"] = "unknown"
+    timeout_ms: Annotated[int, Field(ge=1, le=120_000)] = 30_000
+
+
+class AnalyzeVideoRequest(StrictModel):
+    operation_id: Identifier
+    artifact_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")]
+    timeout_ms: Annotated[int, Field(ge=1, le=120_000)] = 120_000
 
 
 class PreparationOperationRequest(OperationRequest):
@@ -88,9 +123,14 @@ class BoundedStepRequest(OperationRequest):
     )
     direction: Literal["Right", "Down", "Left", "Up", "None"] | None = None
     card_id: Identifier | None = None
+    recording: RecordingOptions | None = None
 
     @model_validator(mode="after")
     def validate_action_args(self):
+        if self.recording is not None and self.action != "wait":
+            raise ValueError(
+                "recording is only allowed on an explicitly authorized wait"
+            )
         if self.card_id is not None and self.action != "deploy":
             raise ValueError("card_id is only valid for deployment")
         if self.action == "wait":
@@ -103,6 +143,13 @@ class BoundedStepRequest(OperationRequest):
             if self.duration_ms is None or self.duration_ms + 1_000 > self.timeout_ms:
                 raise ValueError(
                     "wait requires duration_ms and at least 1000 ms of deadline headroom"
+                )
+            if self.recording is not None and (
+                self.duration_ms // self.recording.interval_ms + 2
+                > self.recording.max_frames
+            ):
+                raise ValueError(
+                    "wait recording duration/interval cannot fit the frame limit"
                 )
             return self
         if self.unit_id is None or self.duration_ms is not None:

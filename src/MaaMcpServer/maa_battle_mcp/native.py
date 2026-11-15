@@ -10,6 +10,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from .diagnostics import provenance, stage_data
@@ -125,6 +126,17 @@ class NativeCore:
             if message in (0, 1, 10_000, 10_004) or event.get("what") in (
                 "BattleControlReady",
                 "BattleControlResult",
+                "BattleMediaResult",
+                "Finished",
+                "OcrFormation",
+                "OcrStage",
+                "MatchDeployment",
+                "Slice",
+                "DetectOperators",
+                "ClassifyDirection",
+                "VideoStageCandidate",
+                "VideoSliceCandidate",
+                "VideoWorkingSetLimit",
             ):
                 self.events.put((message, event))
         except (ValueError, TypeError):
@@ -181,6 +193,88 @@ class NativeCore:
         cancelled: threading.Event | None = None,
     ) -> dict:
         import json
+
+        if operation in ("media_inspect", "video_analyze") and (
+            self.task_id is not None or self.lib.AsstConnected(self.handle)
+        ):
+            raise NativeError(
+                "Offline media requires an isolated worker without device connection or battle task"
+            )
+        if operation == "media_inspect":
+            task = self.lib.AsstAppendTask(
+                self.handle, b"BattleMedia", json.dumps(payload).encode("utf-8")
+            )
+            self._require(task, "BattleMedia task initialization")
+            self._require(self.lib.AsstStart(self.handle), "AsstStart(media)")
+            return self._wait("BattleMediaResult", payload["timeout_ms"] / 1000 + 2)
+        if operation == "video_analyze":
+            task = self.lib.AsstAppendTask(
+                self.handle,
+                b"VideoRecognition",
+                json.dumps({**payload, "bounded_media": True}).encode("utf-8"),
+            )
+            self._require(task, "VideoRecognition task initialization")
+            self._require(
+                self.lib.AsstStart(self.handle), "AsstStart(VideoRecognition)"
+            )
+            deadline = time.monotonic() + payload["timeout_ms"] / 1000
+            phase = "initialization"
+            candidates = []
+            progress_evidence = {}
+            slice_candidates = []
+            while time.monotonic() < deadline:
+                try:
+                    message, event = self.events.get(
+                        timeout=min(0.1, max(0.001, deadline - time.monotonic()))
+                    )
+                except queue.Empty:
+                    continue
+                what = event.get("what")
+                if what == "VideoStageCandidate":
+                    if len(candidates) < 16:
+                        candidates.append(event.get("details", {}))
+                    continue
+                if what == "VideoSliceCandidate":
+                    if len(slice_candidates) < 16:
+                        slice_candidates.append(event.get("details", {}))
+                    continue
+                if what == "Finished":
+                    path = Path(event.get("details", {}).get("filename", "")).resolve()
+                    root = (settings.user_dir / "cache/CombatRecord").resolve()
+                    if (
+                        not path.is_relative_to(root)
+                        or not path.is_file()
+                        or path.stat().st_size > 4 * 1024 * 1024
+                    ):
+                        raise NativeError("Invalid VideoRecognition candidate file")
+                    return {
+                        "status": "succeeded",
+                        "candidate": json.loads(path.read_text(encoding="utf-8")),
+                        "candidate_source": "native_VideoRecognition_Finished_callback",
+                        "native_context_candidates": candidates,
+                        "native_progress_evidence": progress_evidence,
+                        "native_slice_candidates": slice_candidates,
+                    }
+                if what:
+                    phase = what
+                    if event.get("details"):
+                        progress_evidence[what] = event["details"]
+                if message in (0, 1, 10_000, 10_004):
+                    return {
+                        "status": "failed",
+                        "candidate": None,
+                        "native_phase": phase,
+                        "native_context_candidates": candidates,
+                        "native_progress_evidence": progress_evidence,
+                        "native_slice_candidates": slice_candidates,
+                        "error": {
+                            "code": "legacy_video_working_set_limit"
+                            if phase == "VideoWorkingSetLimit"
+                            else "legacy_video_context_or_recognition_failed",
+                            "message": f"VideoRecognition failed during {phase}; formation/stage and supported visuals are required",
+                        },
+                    }
+            raise NativeError(f"VideoRecognition deadline exceeded during {phase}")
 
         if operation == "connect":
             call_id = self.lib.AsstAsyncConnect(
@@ -302,7 +396,7 @@ class NativeCore:
                 "BattleControl command submission",
             )
             callback_timeout = payload["timeout_ms"] / 1000
-            if payload["action"] in ("step", "inspect_preparation"):
+            if payload["action"] in ("step", "inspect_preparation", "record"):
                 callback_timeout += 10
             return self._wait(
                 "BattleControlResult",
@@ -366,7 +460,7 @@ def _worker() -> None:
                         and payload.get("command_id")
                         == active_payload.get("command_id")
                         and active_payload.get("action")
-                        in ("step", "inspect_preparation")
+                        in ("step", "inspect_preparation", "record")
                     ):
                         cancellation.set()
                     else:

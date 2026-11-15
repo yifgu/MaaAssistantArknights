@@ -19,6 +19,34 @@ order: 20
 - 전투 전 레벨은 양성 LV 표식 바로 아래의 중앙 영역에서 읽으며 오른쪽 정예 아이콘 영역으로 이동하지 않습니다. 낮은 점수·불완전·범위 밖 숫자는 미확인입니다. 편성 식별은 공간 일대일 대응으로 같은 행 Y 흔들림을 허용합니다. 선택 스킬은 별도 증거 fingerprint를 보존하며 편성 이름 불변이 스킬 불변을 증명하지 않습니다. `effective_configuration`은 전투 전/사용자 증거와 미해결 충돌을 유지하고 정적 최대 육성치를 선택하지 않습니다.
 - 오퍼레이터 지식은 기존 `battle_get_unit_info` 또는 설정된 `intel_query`로만 조회합니다. `knowledge_refs`는 게임/스킬 ID 참조만 제공하며 자동 조회나 정적 공식으로 런타임 관측을 대신하지 않습니다. 합성 Debug 테스트는 원본 이미지, Windows 실기기 또는 전체 전투 검증이 아닙니다.
 
+## 전투 전 인식 대안과 호스트 검토
+
+편성 이름의 정상 인식 경로를 유지하며 실패할 때만 편성 전용 이름 ROI에서 OperBox 하위 `OperNameAnalyzer`의 분할을 재사용합니다. 원시 후보, 점수, 식별 매핑 근거를 보존합니다. OperBox 탐색이나 14/16장 배치는 사용하지 않으며 기본 레벨 1·정예 0·잠재 1을 관측값으로 가져오지 않습니다.
+
+전투 전 결과의 `host_fallback.required`와 슬롯/필드별 `items`는 이유, 사용 가능한 원시 후보, ROI, 증거 및 `retrieval` 참조를 제공합니다. 미확인 스킬·레벨·식별은 그대로 미확인입니다. 멀티모달 호스트 검토용일 뿐 해석을 네이티브 사실로 자동 승격하거나 안전 잠금 변경·추가 탐색을 수행하지 않습니다.
+
+`battle_get_evidence_frame(session_id, operation_id, observation_id)`는 기록된 작업의 원본 PNG 한 장을 ImageContent로 반환합니다. 편성 복귀 이미지뿐 아니라 과거 전투 전 상세 프레임도 조회합니다. 기록된 작업 ID만 허용하며 미등록/모호한 프레임, 다른 세션 경로, 심볼릭 링크 이탈 및 16 MiB 초과 이미지는 거부합니다. 종료 후에도 기록과 파일이 남으면 조회할 수 있습니다. 새 캡처나 장치 입력 없이 `frame_is_live=false`를 반환합니다.
+
+네이티브 `suspected_defeat`는 중복 제거된 **호스트 검토 단서**이며 엔진의 격퇴 이벤트가 아닙니다. 현재 세션에 퇴각 입력 기록이 없고 유일한 일반 비대체 종류의 배치 기록이 쿨다운이면 소유 관계/이탈 미검증 상태에서도 제시할 수 있습니다. `departure_verified=false`, 원인 미상, 신뢰도 null, `record_coverage="this_session_only"` 및 다른 가능성을 명시합니다. 중복/소환/대체 모호함이나 종료 정리는 단서를 만들지 않습니다. 존재 상태 변경·타일 해제·입력 허가에 사용하지 않으며 외부/세션 이전 입력과 기믹도 가능한 원인입니다.
+
+## 로컬 미디어와 실험적 동영상 후보
+
+`battle_record_clip(request)`는 전투 `session_id`, 영구 `operation_id`, `duration_ms`(100–8000, 기본 2000), `interval_ms`(200–2000, 기본 500), `max_frames`(2–24, 기본 24), 일반 `timeout_ms`를 받습니다. 불가능한 시간/간격/프레임 조합은 사전 거부합니다. **입력을 보내지 않고** 정지/재개하지 않습니다. 실행 중 게임은 계속 진행되며 마지막 스냅샷/PNG는 실제 획득 프레임과 대응합니다.
+
+명시적으로 허용한 `battle_step(action="wait", duration_ms=2000, ...)`에만 `recording: {"interval_ms": 500, "max_frames": 8}`을 추가합니다. 기존 대기 캡처를 재사용하며 PNG/동영상 인코딩은 정지 정리 후 실행합니다. 미디어 실패가 정리를 생략하거나 입력을 허용하지 않습니다. 취소/닫기는 부분/불명 결과를 명시하며 필요하면 자신의 worker만 종료합니다. 같은 작업 ID는 원래 artifact 의도/결과를 재사용하고 부분/만료 미디어도 다시 녹화하지 않습니다.
+
+저장 공간 예약 실패는 장치 명령 전송 전에 `media_preflight_failed`로 거부하며, 녹화 옵션을 버리고 전투를 진행하지 않습니다. 동작 시작 후 미디어 저장에 실패해도 안전한 마무리를 유지한 뒤 완전한 성공 대신 `media_unavailable`/`media_incomplete`를 반환합니다. 입력과 일시 정지 결과는 별도로 보존하므로 무조건 재실행하지 마세요.
+
+`media`에는 `artifact_id`, 상태, 원본 PNG 참조/해시, `video` 메타데이터가 있습니다. 네이티브 OpenCV는 **AVI/MJPEG**만 시도하며 디코딩 재검증 후에만 재생 가능으로 표시합니다. MP4 인코더나 Python Pillow/OpenCV 런타임은 필요하지 않습니다. 희소 샘플이므로 연속 애니메이션을 보장하지 않고 `rendered_fps`는 표시용이며 게임 속도/시뮬레이션 시간이 아닙니다. 라이브 프레임의 근거는 `captured_at_ms`와 획득 시작 `offset_monotonic_ms`입니다. 가져온 프레임은 `media_pts_ms`(디코더 PTS 또는 명시한 프레임 번호/FPS 계산)만 가지며 라이브 획득 시간을 만들지 않습니다.
+
+`battle_get_media(artifact_id)`는 현재 보관/리소스 가용성을, `battle_get_media_frames(artifact_id, frame_ids=[...])`는 최대 4장·합계 16 MiB의 PNG ImageContent를 반환합니다. 새 캡처, 지식 조회, 과거 이미지에 의한 현장 상태 변경/격리 해제는 없습니다. SDK에는 VideoContent가 없으므로 작은 AVI는 `battle-media://<id>/video.avi` 바이너리 리소스로 읽으며 리소스 응답에 실제 동영상 MIME을, manifest에 codec을 제공합니다. 가져온 동영상은 해당 형식의 확장자를 사용합니다. 바이너리 읽기는 16 MiB 한도입니다. 큰 원본은 `resource_retrievable=false`이고 읽을 수 없는 URI를 제시하지 않지만 키프레임과 네이티브 분석은 유지합니다. 영구 작업 결과는 당시 가용성이므로 옛 링크를 쓰기 전에 `battle_get_media`로 확인하세요. 만료는 명시적으로 실패하고 다시 만들지 않습니다.
+
+녹화 원시 프레임 버퍼는 64 MiB, 게시 파일은 32 MiB, 보관은 8개 artifact/256 MiB 한도이며 프로세스 간 읽기/분석 중에는 pin합니다. 로그/작업 기록과 일반/중요 전투 이미지는 기존의 별도 규칙을 따릅니다. `--media-import-dir /safe/local/imports`(기본 `<user-dir>/media-import`)에 직접 놓은 파일을 `battle_import_video(request={"operation_id": "...", "import_name": "full.avi", "declared_context": "full_battle", "timeout_ms": 30000})`로 가져옵니다. basename과 AVI/MP4/MOV/MKV 서명만 허용하며 링크, 경로 이탈, 장치, 재생 목록, URL은 거부하고 소유한 불변 복사본/해시를 만듭니다. 연결 없는 별도 Core가 전투 잠금을 오래 잡지 않고 실제 크기/프레임 수/기한을 확인합니다. 한도는 128 MiB, 10분, 1920×1080, 18000프레임, 보고 FPS 240입니다. 미지원 디코더/부분 I/O 실패를 명시하며 모든 패키지의 codec 지원을 가정하지 않습니다.
+
+`battle_analyze_video(request={"operation_id": "...", "artifact_id": "...", "timeout_ms": 120000})`의 범위는 **experimental_video_to_copilot**이며 일반 전장 인식/실행이 아닙니다. 완전히 디코딩되고 호출자가 전체 문맥을 선언한 가져오기만 기존 `VideoRecognition`으로 넘기되 선언을 사실로 여기지 않고 Core가 편성/스테이지를 확인합니다. 짧은 전투 클립은 동영상/키프레임으로 호스트에게 유용하며 누락 문맥을 지원한다고 꾸미지 않습니다. 별도 무연결 worker/handle과 격리 출력 디렉터리가 입력 ID/해시, 진단/경고가 있는 읽기 전용 copilot 후보를 반환합니다. 식별을 추측하거나 사라짐을 Retreat로 바꾸는 근사이며 후보 실행/현장 상태 변경은 없습니다. 무거운 오프라인 작업은 프로세스 전체에서 하나만 허용하고 자신의 worker만 종료합니다. 최대 10 clip·clip당 3 방향 샘플 및 완료 샘플 해제로 정규화 이미지 버퍼를 128 MiB 이내(로드된 모델 제외)로 제한하며 watchdog은 최대 120초입니다.
+
+네이티브 프로토콜 1에 `BattleControl` 읽기 전용 `record`, 대기 `recording`, 서버가 발급한 32자리 hex artifact ID를 추가합니다. 일반 빌드의 `BattleMedia` Core task는 격리 사용자 디렉터리에 생성한 `input.avi|mp4|mov|mkv`만 디코딩하고 `BattleMediaResult`를 반환합니다. DebugTask 전용이 아닙니다. Debug 합성 codec/전송 테스트는 Windows·실기기·원본 동영상 검증이 아닙니다.
+
 ## 빌드 및 설치
 
 저장소 루트에서 실행합니다. [Linux 빌드 가이드](./linux-tutorial.md) 또는 해당 플랫폼 가이드에 따라 컴파일러와 CMake를 준비하세요. Windows에서는 Visual Studio 개발자 터미널을 사용합니다.

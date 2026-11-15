@@ -27,6 +27,13 @@ bool asst::VideoRecognitionTask::set_params(const json::value& params)
 
     auto export_task_ptr = std::make_shared<CombatRecordRecognitionTask>(m_callback, m_inst, TaskType);
     export_task_ptr->set_retry_times(0);
+    if (params.get("bounded_media", false)) {
+        const auto timeout = params.find<int>("timeout_ms");
+        if (!timeout || *timeout < 1 || *timeout > 120'000) {
+            return false;
+        }
+        export_task_ptr->set_bounded_media(*timeout);
+    }
     bool ret = export_task_ptr->set_video_path(utils::path(*filename_opt));
     if (!ret) {
         return false;

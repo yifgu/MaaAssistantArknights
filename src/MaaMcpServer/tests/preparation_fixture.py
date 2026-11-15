@@ -91,6 +91,11 @@ def prepare(root, tasks, variant):
     }
     if variant == "ambiguous":
         chars["char_fixture_duplicate"] = chars["char_fixture_fang"]
+    if variant == "segmented_ambiguous_name":
+        chars["char_fixture_expanded_name"] = {
+            **chars["char_fixture_fang"],
+            "name": "Fang the Fixture",
+        }
     if variant == "same_name_device":
         for game_id, profession in (
             ("trap_fixture_fang", "TRAP"),
@@ -130,6 +135,8 @@ def prepare(root, tasks, variant):
             font=small,
             fill="white",
         )
+        if variant in ("segmented_name", "segmented_ambiguous_name"):
+            draw.text((x + 80, y + 34), "#", font=small, fill="white")
         if variant != "unknown_level":
             draw.text(
                 (

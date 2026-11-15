@@ -40,6 +40,28 @@ bool asst::BattleControlTask::validate_command(const json::value& params) const
         return false;
     }
     const auto& args = params.at("args");
+    auto valid_recording = [](const json::value& options) {
+        if (!options.is_object()) {
+            return false;
+        }
+        const auto id = options.find<std::string>("artifact_id");
+        const auto interval = options.find<int>("interval_ms");
+        const auto count = options.find<int>("max_frames");
+        return id && id->size() == 32 &&
+               std::ranges::all_of(*id, [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); }) &&
+               interval && *interval >= 200 && *interval <= 2000 && count && *count >= 2 && *count <= 24;
+    };
+    if (args.contains("recording") &&
+        (action != "step" || args.get("action", "") != "wait" || !valid_recording(args.at("recording")))) {
+        return false;
+    }
+    if (action == "record") {
+        const auto duration = args.find<int>("duration_ms");
+        return valid_recording(args) && duration && *duration >= 100 && *duration <= 8000 &&
+               *duration + 1000 <= timeout.as_integer() &&
+               (*duration + args.get("interval_ms", 500) - 1) / args.get("interval_ms", 500) + 1 <=
+                   args.get("max_frames", 24);
+    }
     if (args.contains("card_id") && !args.find<std::string>("card_id")) {
         return false;
     }
@@ -69,6 +91,8 @@ bool asst::BattleControlTask::validate_command(const json::value& params) const
         if (step_action == "wait") {
             const auto duration = args.find<int>("duration_ms");
             return duration && *duration >= 100 && *duration <= 8000 && *duration + 1000 <= timeout.as_integer() &&
+                   (!args.contains("recording") || *duration / args.at("recording").get("interval_ms", 500) + 2 <=
+                                                       args.at("recording").get("max_frames", 24)) &&
                    !args.contains("unit_id") && !args.contains("location") && !args.contains("direction");
         }
         if (step_action != "deploy" && step_action != "retreat" && step_action != "skill") {
@@ -1148,7 +1172,7 @@ json::value asst::BattleControlTask::preparation(const CapturedFrame& frame)
         return failure("screenshot_failed", "Preparation screenshot is empty");
     }
     BattleFormationAnalyzer analyzer(frame.image);
-    const auto formation = analyzer.analyze();
+    const auto formation = analyzer.analyze_slots();
     json::value snapshot = json::object {
         { "observation_id", std::to_string(++m_observation_id) },
         { "captured_at_ms",
@@ -1159,6 +1183,7 @@ json::value asst::BattleControlTask::preparation(const CapturedFrame& frame)
         { "input_sent", false }
     };
     if (formation) {
+        size_t slot = 0;
         for (const auto& oper : *formation) {
             json::array ids;
             for (const auto& id : BattleData.get_ids(battle::Role::Unknown, oper.name)) {
@@ -1166,14 +1191,21 @@ json::value asst::BattleControlTask::preparation(const CapturedFrame& frame)
             }
             snapshot["operators"].as_array().emplace_back(
                 json::object {
-                    { "name", oper.name },
+                    { "slot", slot++ },
+                    { "name", oper.name.empty() ? json::value(nullptr) : json::value(oper.name) },
+                    { "name_source", oper.name_source },
+                    { "name_candidates", oper.name_candidates },
+                    { "flag_rect",
+                      json::array { oper.flag_rect.x, oper.flag_rect.y, oper.flag_rect.width, oper.flag_rect.height } },
                     { "game_ids", std::move(ids) },
                     { "name_rect", json::array { oper.rect.x, oper.rect.y, oper.rect.width, oper.rect.height } },
                     { "support", nullptr },
                     { "equipped_skill_id", nullptr },
                     { "actual_elite", nullptr },
                     { "actual_level", nullptr },
-                    { "verification", "name_observed_configuration_unknown" } });
+                    { "verification",
+                      oper.name.empty() ? "identity_unknown_configuration_unknown"
+                                        : "name_observed_configuration_unknown" } });
         }
     }
     auto result = save_evidence(frame, std::move(snapshot), true);
@@ -1265,10 +1297,15 @@ json::value asst::BattleControlTask::execute_wait(const Command& command, Captur
         resumed_at = command.started;
     }
     const auto reserve = std::max(std::chrono::milliseconds(1000), m_frame_cost * 2);
+    auto recording = recording_options(command.args.get("recording", json::value(nullptr)));
+    recording.reserve_frames = 5;
     std::deque<std::pair<CapturedFrame, json::value>> recent;
     auto remember = [&] {
+        if (resumed) {
+            sample_recording(recording, frame);
+        }
         recent.emplace_back(frame, snapshot);
-        if (recent.size() > 8) {
+        if (recent.size() > (recording.id.empty() ? 8u : 2u)) {
             recent.pop_front();
         }
     };
@@ -1349,6 +1386,7 @@ json::value asst::BattleControlTask::execute_wait(const Command& command, Captur
         collect_safety_evidence(command, frame, snapshot, std::chrono::seconds(1));
     }
     const auto settled_at = std::chrono::steady_clock::now();
+    sample_recording(recording, frame, true);
     complete_runtime_evidence(command, boundary_frame, boundary_snapshot);
     if (snapshot.at("observation_id") == boundary_snapshot.at("observation_id")) {
         snapshot = boundary_snapshot;
@@ -1385,6 +1423,7 @@ json::value asst::BattleControlTask::execute_wait(const Command& command, Captur
     }
     const auto boundary_path = save(boundary_frame, boundary_snapshot);
     const auto return_path = save(frame, snapshot);
+    const auto media = finish_recording(command, recording);
     if (cancelled()) {
         error = "cancelled";
     }
@@ -1398,6 +1437,7 @@ json::value asst::BattleControlTask::execute_wait(const Command& command, Captur
           : safe && evidence_errors.empty() ? "succeeded"
                                             : "outcome_unknown" },
         { "requested_duration_ms", duration.count() },
+        { "media", media },
         { "duration_basis", "host_monotonic_not_game_simulation_time" },
         { "actual_observed_envelope_ms",
           std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count() },
@@ -1846,7 +1886,10 @@ json::value asst::BattleControlTask::execute(const Command& command)
     }
     const bool already_blocked = input_blocked();
     auto frame = capture_frame();
-    auto snapshot = observe(frame, false, command.action != "step");
+    auto snapshot = observe(frame, false, command.action != "step" && command.action != "record");
+    if (command.action == "record") {
+        return execute_record(command, std::move(frame), std::move(snapshot));
+    }
     if (command.action == "map" || command.action == "capture" || command.action == "observe") {
         complete_runtime_evidence(command, frame, snapshot);
     }
