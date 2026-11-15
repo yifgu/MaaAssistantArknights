@@ -1,6 +1,6 @@
 add_executable(MaaMcpPauseEvidenceTest test_pause_evidence.cpp)
 target_include_directories(MaaMcpPauseEvidenceTest PRIVATE ${PROJECT_SOURCE_DIR}/src/MaaCore)
-target_link_libraries(MaaMcpPauseEvidenceTest PRIVATE HeaderOnlyLibraries)
+target_link_libraries(MaaMcpPauseEvidenceTest PRIVATE HeaderOnlyLibraries ${OpenCV_LIBS})
 add_test(NAME MaaMcpPauseEvidenceTest COMMAND MaaMcpPauseEvidenceTest)
 
 add_executable(MaaMcpBattleStateTest test_battle_state.cpp)

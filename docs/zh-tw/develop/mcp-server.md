@@ -318,7 +318,13 @@ minimal 使用 `battle_observe(duration_ms=..., ...)` 進行有界唯讀恢復�
 
 暫停識別先完整匹配 `PAUSE`；未達到 0.9 時，在 `[560,350,160,70]` 區域檢查國服的 `暂停中`。中文既支援單框整詞，也支援同一次 OCR 中按空間順序排列的兩至三個同行片段，每片段均須至少 0.9；僅允許有限的鄰接間隙和框重疊，拒絕缺字、額外前後綴、異行、異常重疊及區域外文字，不跨影格拼接。整詞來源為 `BattleControlPausedLocalized`，分框來源為 `BattleControlPausedLocalizedSplit`。`pause_evidence` 保留 `fragments`、完整文字、片段最低分 `score`、合併框、影格 ID／時間及 `accepted`／`rejection_reason`。`PAUSEX` 不是替代證據；執行按鈕和終局判定仍優先，解除隔離仍須連續兩影格，不自動接管暫停。
 
-暫停識別失敗時，`pause_diagnostics` 保留同影格 ID／時間、設定 ROI、要求分數、前處理設定和可空匹配結果。`localized.candidates` 與正式中文規則共用一次取消目標文字篩選的 OCR 採集，`candidate_source=same_frame_localized_pause_rule_ocr`；`localized.fragment_rule` 記錄規則是否接受及拒絕原因，只有規則接受後才形成暫停證據，不能把單個候選直接升級為證據。英文診斷候選仍來自獨立的無目標文字篩選採集，不替代正式匹配。匹配為 null 不等於測得低分。原生幾何迴歸涵蓋報告中的重疊框，合成文字迴歸走正式 OCR 鏈路，但均不證明遊戲字型、特效遮擋或外服適配；部署後的真實 OCR、1x／2x 和完整戰鬥驗收仍須本機裝置複驗，速度閾值不變。
+原始規則拒絕後，只有限定 ROI 內的單個候選恰由 `暂停中` 與每側最多兩個橫線字元構成時，才可能觸發**一次同影格重新識別**，並非清洗文字或降低分數。必須同時具有正向 HUD／繼續三角形佐證，且沒有執行／終局衝突。搜尋縱向使用偵測候選框外加至多兩像素擴邊，並裁限在正式 ROI 內；橫向保留正式 ROI 全寬，以保留有意義的前後綴，其他行不會合併其欄投影。在設定的二值化閾值下，僅排除由空白欄分離的外側細橫條（寬至少為高的四倍、高不超過最高條帶的四分之一、與其垂直置中且不接觸搜尋區上下邊緣）。從外側連續移除符合條件的橫條，遇到非裝飾條帶即停止；掃描由固定 ROI 寬度限制，不依 OCR 橫線字元數限制。同一搜尋行的其餘前景全部留在一個裁切框內，擴邊不重新包含已排除橫條；與本行重疊的其他前景不擦除，仍可能阻止識別。
+
+原像素走 Core 無偵測 OCR，不替換文字、不依期望文字改寫。新結果仍須獨立完整匹配 `暂停中` 且 ≥ 0.9，不適用另設的缺 ｢中｣ 例外。來源為 `BattleControlPausedLocalizedDecorationRetry`，矩形是識別 ROI 而非文字偵測框。原 `localized.candidates`／`fragment_rule` 不變；`localized.decoration_retry` 保留是否重試、閾值／擴邊、全寬 `search_roi`、有限 `vertical_padding`、排除橫條、最終裁切框、原始新候選、結果／拒絕原因及同影格 ID／時間。HUD／繼續按鈕或原始低分本身均不構成暫停證據。連續兩次新影格、不重放輸入、不隱式接管和硬隔離規則不變。異行前景與多條實際橫線迴歸使用合成像素；此次缺少報告的 obs60 PNG，測試不能證明該實機原影格已通過。
+
+暫停識別失敗時，`pause_diagnostics` 保留同影格 ID／時間、設定 ROI、要求分數、前處理設定和可空匹配結果。`localized.candidates` 與正式中文規則共用一次取消目標文字篩選的 OCR 採集，`candidate_source=same_frame_localized_pause_rule_ocr`；`localized.fragment_rule` 記錄規則是否接受及拒絕原因，只有原始規則或重試規則接受後才形成暫停證據，不能把單個候選直接升級為證據。英文診斷候選仍來自獨立的無目標文字篩選採集，不替代正式匹配。匹配為 null 不等於測得低分。原生幾何迴歸涵蓋報告中的重疊框，合成文字迴歸走正式 OCR 鏈路，但均不證明遊戲字型、特效遮擋或外服適配；部署後的真實 OCR、1x／2x 和完整戰鬥驗收仍須本機裝置複驗，速度閾值不變。
+
+重試門控只允許 `- – — ― − －` 作為橫線字元，允許每側橫線與標籤間有一個 ASCII 空格，對應原生合成 OCR 的實際輸出；不允許標籤內部空格、額外詞語或具有文字含義的漢字 `一`。此資格檢查不提供最終接受的文字。
 
 `skill_ready` 是 true 或 null，分類器否定不再冒充已確認冷卻。`skill_evidence` 保留同影格 ID、時間、ROI、基點、類別分數和機率。`probabilities` 順序為 `c, n, y`，`score` 是勝出類別的分數，不一定是就緒類別 `y` 的分數；僅 `y` 勝出且分數至少 0.9 才報告 true。技能階段／彈藥／冷卻仍可未知，分數並非校準後正確率。請保留 `asst.log` 的 `Battle frame` / `Battle command result`、`battle-control/<session>/` 的 PNG 與 `operations.sqlite3`。合成回歸不證明真實 OCR、ROI 或按鈕適配；仍須本機複驗，不要求本機圖片作為雲端開發輸入。
 

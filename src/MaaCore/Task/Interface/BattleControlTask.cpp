@@ -15,6 +15,7 @@
 #include "Vision/Battle/BattleControlVision.h"
 #include "Vision/Battle/BattleFormationAnalyzer.h"
 #include "Vision/Battle/BattlePauseEvidence.h"
+#include "Vision/Battle/BattlePauseRetry.h"
 #include "Vision/Battle/BattlefieldMatcher.h"
 #include "Vision/Miscellaneous/PipelineAnalyzer.h"
 #include "Vision/RegionOCRer.h"
@@ -1090,21 +1091,62 @@ json::value asst::BattleControlTask::pause_analysis(
             }
         }
         const auto terminal = snapshot.get("terminal", json::object());
-        auto rule = battle::localized_pause_evidence(
-            std::move(candidates),
-            roi,
-            { positive_hud,
-              continuation.get("accepted", false),
-              snapshot.get("running_button_visible", false),
-              terminal.get("result_source", "") == "conflicting_titles" ||
-                  terminal.get("terminal_state", "") == "victory" || terminal.get("terminal_state", "") == "defeat" ||
-                  !snapshot.get("in_battle", false) });
+        const battle::PauseCorroboration corroboration { positive_hud,
+                                                         continuation.get("accepted", false),
+                                                         snapshot.get("running_button_visible", false),
+                                                         terminal.get("result_source", "") == "conflicting_titles" ||
+                                                             terminal.get("terminal_state", "") == "victory" ||
+                                                             terminal.get("terminal_state", "") == "defeat" ||
+                                                             !snapshot.get("in_battle", false) };
+        auto rule = battle::localized_pause_evidence(candidates, roi, corroboration);
         rule["continue_button_evidence"] = std::move(continuation);
         rule["battle_hud_evidence"] = std::move(hud);
         rule["observation_id"] = snapshot.at("observation_id");
         rule["captured_at_ms"] = snapshot.at("captured_at_ms");
         diagnostic["candidate_source"] = "same_frame_localized_pause_rule_ocr";
         diagnostic["match"] = rule.get("accepted", false) ? rule : json::value(nullptr);
+        if (!rule.get("accepted", false)) {
+            auto retry = battle::localized_pause_decoration_crop(
+                frame.image,
+                candidates,
+                roi,
+                corroboration,
+                ocr->bin_threshold[0],
+                ocr->bin_threshold[1],
+                OCRerConfig::Params().bin_expansion);
+            retry.evidence["observation_id"] = snapshot.at("observation_id");
+            retry.evidence["captured_at_ms"] = snapshot.at("captured_at_ms");
+            retry.evidence["use_char_model"] = ocr->is_ascii;
+            retry.evidence["candidate_source"] = "same_frame_raw_ocr_without_detection_or_text_rewrite";
+            if (retry.roi) {
+                OCRer analyzer(frame.image, *retry.roi);
+                analyzer.set_task_info(ocr);
+                analyzer.set_roi(*retry.roi);
+                analyzer.set_required({});
+                analyzer.set_replace({});
+                analyzer.set_without_det(true);
+                analyzer.set_use_raw(true);
+                std::vector<TextRect> retried;
+                if (auto detected = analyzer.analyze()) {
+                    retried = std::move(*detected);
+                }
+                for (const auto& candidate : retried) {
+                    retry.evidence["candidates"].as_array().emplace_back(candidate.to_json());
+                }
+                auto retried_rule =
+                    battle::localized_pause_decoration_result(std::move(retried), *retry.roi, corroboration);
+                retried_rule["observation_id"] = snapshot.at("observation_id");
+                retried_rule["captured_at_ms"] = snapshot.at("captured_at_ms");
+                retry.evidence["attempted"] = true;
+                retry.evidence["accepted"] = retried_rule.at("accepted");
+                retry.evidence["rejection_reason"] = retried_rule.at("rejection_reason");
+                if (retried_rule.get("accepted", false)) {
+                    diagnostic["match"] = retried_rule;
+                }
+                retry.evidence["result"] = std::move(retried_rule);
+            }
+            diagnostic["decoration_retry"] = std::move(retry.evidence);
+        }
         diagnostic["fragment_rule"] = std::move(rule);
     }
     return diagnostic;

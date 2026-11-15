@@ -97,6 +97,17 @@ MARKERS.update(
     {mode: (80 + index, 110, 160) for index, mode in enumerate(SPLIT_PAUSE_MODES)}
 )
 
+DECORATED_PAUSE_MODES = (
+    "paused_decorated",
+    "decorated_no_continue",
+    "decorated_negative",
+    "running_decorated",
+    "victory_decorated",
+)
+MARKERS.update(
+    {mode: (90 + index, 120, 170) for index, mode in enumerate(DECORATED_PAUSE_MODES)}
+)
+
 
 def prepare(settings, known):
     summon_variants = {
@@ -220,6 +231,17 @@ def prepare(settings, known):
         "running_localized": ("pausex", "paused-zh-cn"),
         "victory_localized": ("pausex", "paused-zh-cn"),
     }
+    ocr_labels.update(
+        {
+            mode: (
+                "pausex",
+                "paused-zh-cn-suffix"
+                if mode == "decorated_negative"
+                else "paused-zh-cn",
+            )
+            for mode in DECORATED_PAUSE_MODES
+        }
+    )
     if known in ("localized_ocr", "localized_split_ocr"):
         from PIL import Image
 
@@ -287,6 +309,8 @@ def prepare(settings, known):
             json.dumps(data), encoding="utf-8"
         )
     for mode, marker in MARKERS.items():
+        if mode in DECORATED_PAUSE_MODES and known != "localized_ocr":
+            continue
         if mode in ocr_labels and known not in ("localized_ocr", "localized_split_ocr"):
             continue
         if mode in SPLIT_PAUSE_MODES and known != "localized_split_ocr":
@@ -323,6 +347,7 @@ def prepare(settings, known):
                     "conflict",
                     "victory_localized",
                     "victory_split",
+                    "victory_decorated",
                     "split_and_full",
                 ):
                     continue
@@ -381,6 +406,7 @@ def prepare(settings, known):
                     "running",
                     "running_localized",
                     "running_split",
+                    "running_decorated",
                     "split_running",
                 ):
                     continue
@@ -411,11 +437,28 @@ def prepare(settings, known):
                         continue
                     if name == "paused-zh-cn" and mode == "misplaced_localized":
                         x, y = 200, 450
+                    if name == "paused-zh-cn-suffix" and mode == "decorated_negative":
+                        x = 580
                 for row in range(height):
                     start = ((y + row) * 1280 + x) * 3
                     image[start : start + width * 3] = pixels[
                         row * width * 3 : (row + 1) * width * 3
                     ]
+            if known == "localized_ocr" and mode in DECORATED_PAUSE_MODES:
+                from PIL import Image, ImageDraw
+
+                rendered = Image.frombytes("RGB", (1280, 720), bytes(image))
+                draw = ImageDraw.Draw(rendered)
+                # Synthetic side bands and a continue shape, not measurements from obs60.
+                if mode == "decorated_negative":
+                    draw.rectangle((564, 383, 575, 385), fill="white")
+                    draw.rectangle((710, 383, 719, 385), fill="white")
+                else:
+                    for x in (564, 575, 700, 711):
+                        draw.rectangle((x, 384, x + 7, 385), fill="white")
+                if mode != "decorated_no_continue":
+                    draw.polygon(((1200, 30), (1200, 60), (1225, 45)), fill="white")
+                image = rendered.tobytes()
             if known == "terminal_ocr" and mode in SPLIT_MODES:
                 rendered = Image.frombytes("RGB", (1280, 720), bytes(image))
                 draw = ImageDraw.Draw(rendered)

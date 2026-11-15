@@ -3,6 +3,7 @@
 #include <limits>
 
 #include "Vision/Battle/BattlePauseEvidence.h"
+#include "Vision/Battle/BattlePauseRetry.h"
 
 using asst::Rect;
 using asst::TextRect;
@@ -117,5 +118,116 @@ int main()
              .at("accepted")
              .as_boolean(),
         "corroboration never reduces OCR confidence");
+    // The reported text/score is a supplied regression value, not a replay of the unavailable obs60 image.
+    const asst::battle::PauseCorroboration context { true, true, false, false };
+    const std::vector<TextRect> decorated { TextRect({ 568, 365, 140, 32 }, 0.885374, "--暂停中") };
+    const auto original = asst::battle::localized_pause_evidence(decorated, roi, context);
+    expect(!original.get("accepted", false), "reported low score remains rejected");
+    expect(original.get("rejection_reason", "") == "low_confidence", "original rejection unchanged");
+    expect(original.at("fragments")[0].get("score", 0.0) == 0.885374, "original score unchanged");
+    for (const auto& text : { "--暂停中", "—暂停中—", "暂停中--", "-- 暂停中 --" }) {
+        expect(asst::battle::decorated_pause_label(text), "bounded horizontal decoration may trigger re-recognition");
+    }
+    for (const auto& text : { "暂停中",
+                              "--暂停",
+                              "--未暂停中",
+                              "--暂停中止",
+                              "a暂停中",
+                              "---暂停中",
+                              "--  暂停中",
+                              "--暂 停中--",
+                              "一暂停中一" }) {
+        expect(
+            !asst::battle::decorated_pause_label(text),
+            "meaningful prefixes and incomplete labels never trigger retry");
+    }
+    cv::Mat image(720, 1280, CV_8UC3, cv::Scalar());
+    // Deliberately artificial glyph blocks; these check cropping, not OCR recognition.
+    for (int x : { 595, 625, 655 }) {
+        cv::rectangle(image, cv::Rect(x, 366, 24, 32), cv::Scalar::all(255), -1);
+    }
+    cv::rectangle(image, cv::Rect(568, 381, 18, 2), cv::Scalar::all(255), -1);
+    cv::rectangle(image, cv::Rect(688, 381, 20, 2), cv::Scalar::all(255), -1);
+    const auto crop = asst::battle::localized_pause_decoration_crop(image, decorated, roi, context, 140, 255, 2);
+    expect(crop.roi.has_value(), "measured isolated decoration supplies one crop");
+    expect(crop.evidence.at("removed_bands").as_array().size() == 2, "both measured bands recorded");
+    expect(crop.roi->include(Rect(595, 366, 84, 32)), "all non-decoration foreground retained");
+    expect(crop.roi->x > 586 && crop.roi->x + crop.roi->width <= 688, "crop excludes decoration");
+    // Foreign-row foreground is synthetic, not a reconstruction of obs60 or a native OCR measurement.
+    auto other_rows = image.clone();
+    cv::rectangle(other_rows, cv::Rect(roi.x, roi.y, roi.width, 6), cv::Scalar::all(255), -1);
+    cv::rectangle(other_rows, cv::Rect(roi.x, roi.y + roi.height - 6, roi.width, 6), cv::Scalar::all(255), -1);
+    const auto isolated =
+        asst::battle::localized_pause_decoration_crop(other_rows, decorated, roi, context, 140, 255, 2);
+    expect(isolated.roi == crop.roi, "foreground above and below the detected row cannot merge dash columns");
+    expect(
+        isolated.evidence.at("search_roi").as_array() == json::array({ roi.x, 363, roi.width, 36 }),
+        "audit records full-width detected row plus bounded padding");
+    const auto padded =
+        asst::battle::localized_pause_decoration_crop(other_rows, decorated, roi, context, 140, 255, 70);
+    expect(
+        padded.evidence.at("search_roi").as_array() == isolated.evidence.at("search_roi").as_array() && padded.roi &&
+            padded.roi->y >= 363 && padded.roi->y + padded.roi->height <= 399,
+        "excessive expansion cannot reintroduce the foreign rows");
+    auto many_dashes = image.clone();
+    many_dashes(asst::make_rect<cv::Rect>(roi)).setTo(cv::Scalar());
+    for (int x : { 595, 625, 655 }) {
+        cv::rectangle(many_dashes, cv::Rect(x, 366, 24, 32), cv::Scalar::all(255), -1);
+    }
+    for (int x : { 563, 573, 583, 689, 699, 709 }) {
+        cv::rectangle(many_dashes, cv::Rect(x, 381, 6, 1), cv::Scalar::all(255), -1);
+    }
+    const auto multiple =
+        asst::battle::localized_pause_decoration_crop(many_dashes, decorated, roi, context, 140, 255, 2);
+    expect(multiple.roi == crop.roi, "rendered dash count does not follow the two OCR dash characters");
+    expect(multiple.evidence.at("removed_bands").as_array().size() == 6, "every measured outer dash retained in audit");
+    auto outside_affixes = other_rows.clone();
+    cv::rectangle(outside_affixes, cv::Rect(560, 366, 4, 32), cv::Scalar::all(255), -1);
+    cv::rectangle(outside_affixes, cv::Rect(714, 366, 4, 32), cv::Scalar::all(255), -1);
+    expect(
+        !asst::battle::localized_pause_decoration_crop(outside_affixes, decorated, roi, context, 140, 255, 2).roi,
+        "meaningful affixes beyond the detected horizontal box prevent trimming past them");
+    for (const auto& unsafe : {
+             asst::battle::PauseCorroboration { false, true, false, false },
+             { true, false, false, false },
+             { true, true, true, false },
+             { true, true, false, true },
+         }) {
+        expect(
+            !asst::battle::localized_pause_decoration_crop(image, decorated, roi, unsafe, 140, 255, 2).roi,
+            "retry requires positive non-contradictory corroboration");
+    }
+    auto outside = decorated;
+    outside.front().rect.x = 100;
+    expect(
+        !asst::battle::localized_pause_decoration_crop(image, outside, roi, context, 140, 255, 2).roi,
+        "wrong-position original cannot trigger retry");
+    // An unrecognized meaningful leading glyph must remain, not be stripped with the dash.
+    cv::rectangle(image, cv::Rect(588, 366, 4, 32), cv::Scalar::all(255), -1);
+    cv::rectangle(image, cv::Rect(681, 366, 4, 32), cv::Scalar::all(255), -1);
+    const auto extra = asst::battle::localized_pause_decoration_crop(image, decorated, roi, context, 140, 255, 2);
+    expect(extra.roi && extra.roi->include(Rect(588, 366, 4, 32)), "non-horizontal prefix pixels preserved");
+    expect(extra.roi && extra.roi->include(Rect(681, 366, 4, 32)), "non-horizontal suffix pixels preserved");
+    cv::rectangle(image, cv::Rect(568, 366, 18, 32), cv::Scalar::all(255), -1);
+    cv::rectangle(image, cv::Rect(688, 366, 20, 32), cv::Scalar::all(255), -1);
+    expect(
+        !asst::battle::localized_pause_decoration_crop(image, decorated, roi, context, 140, 255, 2).roi,
+        "OCR dashes without pixel decoration are insufficient");
+    const auto retried =
+        asst::battle::localized_pause_decoration_result({ TextRect(*crop.roi, 0.97, "暂停中") }, *crop.roi, context);
+    expect(retried.get("accepted", false), "independent exact high-confidence retry can be accepted");
+    expect(retried.get("score", 0.0) == 0.97, "retry score comes only from new OCR result");
+    for (const auto& rejected : {
+             std::vector<TextRect> {},
+             { TextRect(*crop.roi, 0.885374, "暂停中") },
+             { TextRect(*crop.roi, 0.99, "暂停") },
+             { TextRect(*crop.roi, 0.99, "--暂停中") },
+             { TextRect(*crop.roi, 0.99, "未暂停中") },
+             { TextRect(*crop.roi, 0.99, "暂停中止") },
+         }) {
+        expect(
+            !asst::battle::localized_pause_decoration_result(rejected, *crop.roi, context).get("accepted", false),
+            "retry must independently recognize the full exact label above the unchanged threshold");
+    }
     std::cout << "Native localized pause evidence regressions passed\n";
 }
