@@ -3,6 +3,11 @@ target_include_directories(MaaMcpPauseEvidenceTest PRIVATE ${PROJECT_SOURCE_DIR}
 target_link_libraries(MaaMcpPauseEvidenceTest PRIVATE HeaderOnlyLibraries)
 add_test(NAME MaaMcpPauseEvidenceTest COMMAND MaaMcpPauseEvidenceTest)
 
+add_executable(MaaMcpBattleStateTest test_battle_state.cpp)
+target_include_directories(MaaMcpBattleStateTest PRIVATE ${PROJECT_SOURCE_DIR}/src/MaaCore)
+target_link_libraries(MaaMcpBattleStateTest PRIVATE HeaderOnlyLibraries ${OpenCV_LIBS})
+add_test(NAME MaaMcpBattleStateTest COMMAND MaaMcpBattleStateTest)
+
 add_executable(MaaMcpResourceLoadingTest
     test_resource_loading.cpp
     ${PROJECT_SOURCE_DIR}/src/MaaCore/Config/TemplResource.cpp
@@ -17,7 +22,7 @@ if(WIN32)
 endif()
 add_test(NAME MaaMcpResourceLoadingTest COMMAND MaaMcpResourceLoadingTest)
 
-add_custom_target(MaaMcpNativeTests DEPENDS MaaMcpPauseEvidenceTest MaaMcpResourceLoadingTest)
+add_custom_target(MaaMcpNativeTests DEPENDS MaaMcpPauseEvidenceTest MaaMcpBattleStateTest MaaMcpResourceLoadingTest)
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     add_executable(MaaMcpAdbScreencapTransportTest test_adb_screencap_transport.cpp)

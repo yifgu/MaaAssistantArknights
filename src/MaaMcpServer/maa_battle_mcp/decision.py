@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 from .models import BattleMode, LoadoutConfig, Placement, Settings
+from .runtime import enrich_battle_decision
 
 CLIENT_REGIONS = {
     "Official": "cn",
@@ -84,7 +85,7 @@ class DecisionContext:
             return resolved
         return None
 
-    def enrich_snapshot(self, snapshot: dict) -> None:
+    def enrich_snapshot(self, snapshot: dict, map_info: dict | None = None) -> None:
         configured = (
             {}
             if self.config is None
@@ -203,6 +204,7 @@ class DecisionContext:
                             and observed.get(field, {}).get("value") is not None
                             and fields[field]["value"] != observed[field]["value"]
                         }
+        enrich_battle_decision(snapshot, map_info)
 
     def evaluate(self, map_info: dict, placements: list[Placement]) -> dict:
         path = self.settings.resource_dir / "resource/battle_data.json"

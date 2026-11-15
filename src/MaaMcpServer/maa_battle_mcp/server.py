@@ -93,6 +93,9 @@ def create_server(
             "Controls a real Arknights device. Attach only to a manually started, fixed-map battle. "
             "Verify the supplied stage against screenshot evidence; map binding is not recognized. "
             "Observe before acting. Unknown identities and enemy state are not empty state. "
+            "Use battle_decision domains, provenance, missing prerequisites and deduplicated event IDs "
+            "to consume structured native evidence. Full combat state is not available; readiness is not "
+            "activation, phase, SP, HP, ammo or healing. Use paired PNGs for unknowns, anomalies and audit. "
             "Mutations may return outcome_unknown even if input succeeded: capture evidence, "
             "never blindly retry. Reuse an operation_id only for the identical request. "
             "Prefer battle_step for one action or bounded wait followed by verified pause or terminal evidence. "
@@ -125,6 +128,16 @@ def create_server(
                 "intelligence_configured": intelligence is not None,
                 "loadout_configured": service.decision.config is not None,
                 "mode": service.mode,
+                "battle_decision_schema_version": 1,
+                "runtime_capabilities": {
+                    "hud": "native_life_cost_kills_speed_scene",
+                    "changes": "bounded_native_observation_events_with_stable_ids",
+                    "hp": "unassociated_health_bar_rectangles_not_fill_measurement",
+                    "owned_skill_ready": "requires_identity_bound_verified_tile_anchor",
+                    "cooling_departure": "separate_observed_card_and_conservative_owned_instance_evidence",
+                    "full_combat_state": False,
+                    "sp_hp_fraction_ammo_phase_live_enemies": "unavailable",
+                },
                 "limitations": [
                     "Only a single caller-supplied fixed map; no camera movement or stage recognition.",
                     "Battlefield positions are unverified action history; no mid-battle reconstruction.",
@@ -132,7 +145,9 @@ def create_server(
                     "Instance presence and requested location are separate. Selected-name evidence alone never verifies a tile or authorizes retreat.",
                     "Retreat requires a positive selected identity/button and a verified tile anchor; no production tile-anchor adapter is available yet.",
                     "TL/act55side uses per-tile deployment invariants: supported fixed ground and ranged operators on trenches; other dynamic interactions are refused. Live tile pixel changes are not board/snow/occupancy recognition.",
-                    "Mutations are not automatically confirmed; inspect evidence after each action.",
+                    "Mutations are not automatically confirmed. Consume structured evidence/events; paired PNGs remain necessary for unresolved state and anomalies.",
+                    "Life differences and cooling/departure alerts are observation-derived, never a native defeat/leak/mechanic cause classification.",
+                    "Explicit and implicit ordinary cards share identity/layout/avatar/freshness preflight; duplicates and summons still require concrete card_id.",
                     "battle_step bounds one action or host-time wait; pause and terminal evidence are returned separately.",
                     "Terminal OCR currently recognizes configured CN/English titles only; other screens remain unknown.",
                     "Placement evaluation checks base geometry, not current skill effects or live occupancy.",
@@ -286,8 +301,10 @@ def create_server(
     @server.tool(annotations=MUTATING)
     async def battle_use_skill(request: UnitRequest) -> CallToolResult:
         """Attempt the equipped skill once at a tracked position; never waits indefinitely for readiness."""
-        return tool_result(
-            await service.command("skill", request, {"unit_id": request.unit_id})
+        return evidence_result(
+            await service.command("skill", request, {"unit_id": request.unit_id}),
+            "return_image_path",
+            "capture_image_path",
         )
 
     @server.tool(annotations=MUTATING)

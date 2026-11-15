@@ -11,6 +11,7 @@
 #include "Controller/Controller.h"
 #include "MaaUtils/ImageIo.h"
 #include "Utils/Logger.hpp"
+#include "Vision/Battle/BattleControlVision.h"
 #include "Vision/Battle/BattleFormationAnalyzer.h"
 #include "Vision/Battle/BattlePauseEvidence.h"
 #include "Vision/Battle/BattlefieldClassifier.h"
@@ -312,6 +313,10 @@ json::value asst::BattleControlTask::instance_info(const Instance& instance) con
               ? json::value(true)
               : json::value(nullptr) },
         { "skill_ready", nullptr },
+        { "observed_card_cooling", instance.observed_card_cooling },
+        { "owned_instance_departure_evidence", instance.departure_evidence },
+        { "departed_reason", instance.presence == Presence::Gone ? json::value("unknown") : json::value(nullptr) },
+        { "runtime", instance.runtime },
         { "entity", entity_summary({ instance.game_id }) },
     };
 }
@@ -402,6 +407,7 @@ bool asst::BattleControlTask::inspect_instance_selection(
     if (verified) {
         if (instance.location_evidence == LocationEvidence::VerifiedTileAnchor) {
             instance.presence = Presence::Present;
+            instance.owned_presence_verified = true;
             instance.presence_source = "verified_anchor_and_two_selected_kind_frames";
         }
         else {
@@ -495,6 +501,11 @@ json::value
         { "cost", nullptr },
         { "kills", nullptr },
         { "total_kills", nullptr },
+        { "life", nullptr },
+        { "life_evidence", nullptr },
+        { "life_delta", nullptr },
+        { "life_delta_evidence", nullptr },
+        { "field_units", nullptr },
         { "identified_count", 0 },
         { "unresolved_count", 0 },
         { "ambiguous_count", 0 },
@@ -503,6 +514,11 @@ json::value
         { "enemies", nullptr },
     };
     if (image.empty()) {
+        for (auto& [id, instance] : m_instances) {
+            instance.cooling_confirmations = 0;
+            instance.cooling_evidence.clear();
+            instance.last_cooling_break_capture = frame.started;
+        }
         snapshot["error"] = "empty_screenshot";
         snapshot["scene"] = "unknown";
         m_terrain_observation = observe_terrain(frame, snapshot);
@@ -539,6 +555,13 @@ json::value
         diagnostic["localized"] = std::move(localized_pause_analysis);
         snapshot["pause_diagnostics"] = std::move(diagnostic);
     }
+    else if (check_paused) {
+        snapshot["pause_diagnostics"] = json::object {
+            { "source", "same_frame_positive_pause_evidence" },   { "observation_id", snapshot.at("observation_id") },
+            { "captured_at_ms", snapshot.at("captured_at_ms") },  { "match", pause_evidence },
+            { "localized", std::move(localized_pause_analysis) },
+        };
+    }
     snapshot["scene"] = terminal                                                                   ? "terminal"
                         : snapshot.at("terminal").get("result_source", "") == "conflicting_titles" ? "unknown"
                         : !result                                                                  ? "unknown"
@@ -559,10 +582,11 @@ json::value
         m_pause_confirmations = 0;
     }
     else if (scene == "paused" && m_pause_unverified && !m_terminal_seen) {
-        if (++m_pause_confirmations >= 2) {
+        if (frame.started > m_last_pause_capture && ++m_pause_confirmations >= 2) {
             m_pause_unverified = false;
             LogInfo << __FUNCTION__ << "Pause verified by consecutive fresh captures; no input replayed";
         }
+        m_last_pause_capture = frame.started;
     }
     else {
         m_pause_confirmations = 0;
@@ -603,6 +627,21 @@ json::value
     auto finish = [&]() {
         m_terrain_observation = observe_terrain(frame, snapshot);
         snapshot["dynamic_overlay"] = m_terrain_observation;
+        for (auto& [id, instance] : m_instances) {
+            const auto& cards = snapshot.at("deployment").as_array();
+            const auto matching = std::ranges::find_if(cards, [&](const auto& card) {
+                return card.get("game_id", "") == instance.game_id;
+            });
+            if ((scene != "running" && scene != "paused") || matching == cards.end() ||
+                !matching->get("cooling", false) || matching->get("available", true) ||
+                std::ranges::count_if(cards, [&](const auto& card) {
+                    return card.get("game_id", "") == instance.game_id;
+                }) != 1) {
+                instance.cooling_confirmations = 0;
+                instance.cooling_evidence.clear();
+                instance.last_cooling_break_capture = frame.started;
+            }
+        }
         if (include_battlefield) {
             for (auto& [id, instance] : m_instances) {
                 if (m_terminal_result.get("terminal_state", "") == "victory" ||
@@ -610,8 +649,17 @@ json::value
                     instance.presence = Presence::Gone;
                     instance.presence_source = "verified_terminal_screen";
                 }
-                snapshot["battlefield"].as_array().emplace_back(instance_info(instance));
+                auto info = instance_info(instance);
+                if (instance.runtime.contains("skill_ready")) {
+                    info["skill_ready"] = instance.runtime.at("skill_ready").get("value", json::value(nullptr));
+                    info["skill_evidence"] = instance.runtime.at("skill_ready");
+                }
+                snapshot["battlefield"].as_array().emplace_back(std::move(info));
             }
+            snapshot["state_events"] = json::array(m_state_events);
+            snapshot["event_cursor"] = m_state_event_sequence;
+            snapshot["events_retained_from"] = m_state_events.empty() ? json::value(m_state_event_sequence + 1)
+                                                                      : m_state_events.front().at("sequence");
         }
         m_frame_cost = std::max(
             m_frame_cost,
@@ -628,11 +676,11 @@ json::value
     update_deployment_(deployment, old_deployment, false, false, false);
     if (include_battlefield) {
         matcher.set_object_of_interest({ .costs = true });
-        if (auto cost = matcher.analyze()) {
+        if (auto cost = matcher.analyze(); cost && cost->costs.status != BattlefieldMatcher::Invalid) {
             snapshot["cost"] = cost->costs.value;
         }
         matcher.set_object_of_interest({ .kills = true });
-        if (auto kills = matcher.analyze()) {
+        if (auto kills = matcher.analyze(); kills && kills->kills.status != BattlefieldMatcher::Invalid) {
             snapshot["kills"] = kills->kills.value.first;
             snapshot["total_kills"] = kills->kills.value.second;
         }
@@ -645,6 +693,15 @@ json::value
         if (!oper.name.empty()) {
             ++identity_counts[unit_id(oper.role, oper.name)];
         }
+    }
+    m_card_layout = json::array();
+    for (const auto& oper : m_cur_deployment_opers) {
+        m_card_layout.as_array().emplace_back(
+            json::object {
+                { "index", oper.index },
+                { "role", static_cast<int>(oper.role) },
+                { "rect", json::array { oper.rect.x, oper.rect.y, oper.rect.width, oper.rect.height } },
+            });
     }
     for (const auto& oper : m_cur_deployment_opers) {
         json::array ids;
@@ -680,7 +737,8 @@ json::value
                        oper.index,
                        frame.started,
                        BattleData.get_ids(oper.role, oper.name),
-                       oper.avatar.clone() });
+                       oper.avatar.clone(),
+                       m_card_layout });
         }
         snapshot["deployment"].as_array().emplace_back(
             json::object {
@@ -1007,7 +1065,28 @@ json::value asst::BattleControlTask::pause_analysis(
         diagnostic["candidates"].as_array().emplace_back(candidate.to_json());
     }
     if (task_name == "BattleControlPausedLocalized") {
-        auto rule = battle::localized_pause_evidence(std::move(candidates), roi);
+        auto continuation = battle::continue_button_evidence(frame.image, Task.get("BattlePauseCancelCheck")->roi);
+        json::array hud;
+        bool positive_hud = false;
+        for (const auto& anchor : { "BattleHpFlag", "BattleHpFlag2", "BattleKillsFlag" }) {
+            const auto evidence = match_evidence(frame.image, anchor);
+            if (evidence.is_object()) {
+                hud.emplace_back(evidence);
+                positive_hud = positive_hud || evidence.get("score", 0.0) >= 0.9;
+            }
+        }
+        const auto terminal = snapshot.get("terminal", json::object());
+        auto rule = battle::localized_pause_evidence(
+            std::move(candidates),
+            roi,
+            { positive_hud,
+              continuation.get("accepted", false),
+              snapshot.get("running_button_visible", false),
+              terminal.get("result_source", "") == "conflicting_titles" ||
+                  terminal.get("terminal_state", "") == "victory" || terminal.get("terminal_state", "") == "defeat" ||
+                  !snapshot.get("in_battle", false) });
+        rule["continue_button_evidence"] = std::move(continuation);
+        rule["battle_hud_evidence"] = std::move(hud);
         rule["observation_id"] = snapshot.at("observation_id");
         rule["captured_at_ms"] = snapshot.at("captured_at_ms");
         diagnostic["candidate_source"] = "same_frame_localized_pause_rule_ocr";
@@ -1035,7 +1114,7 @@ bool asst::BattleControlTask::settle_pause(const Command& command, CapturedFrame
         ++attempts;
         pause();
         frame = capture_frame();
-        snapshot = observe(frame);
+        snapshot = observe(frame, false, false);
     }
 }
 
@@ -1059,7 +1138,7 @@ void asst::BattleControlTask::collect_safety_evidence(
             break;
         }
         frame = capture_frame();
-        snapshot = observe(frame);
+        snapshot = observe(frame, false, false);
     }
 }
 
@@ -1264,12 +1343,19 @@ json::value asst::BattleControlTask::execute_wait(const Command& command, Captur
     }
 
     const auto boundary_frame = frame;
-    const auto boundary_snapshot = snapshot;
+    auto boundary_snapshot = snapshot;
     pause_verified = settle_pause(command, frame, snapshot);
     if (m_terminal_seen) {
         collect_safety_evidence(command, frame, snapshot, std::chrono::seconds(1));
     }
     const auto settled_at = std::chrono::steady_clock::now();
+    complete_runtime_evidence(command, boundary_frame, boundary_snapshot);
+    if (snapshot.at("observation_id") == boundary_snapshot.at("observation_id")) {
+        snapshot = boundary_snapshot;
+    }
+    else {
+        complete_runtime_evidence(command, frame, snapshot);
+    }
     pause_verified = snapshot.get("scene", "") == "paused" && !m_pause_unverified;
     // Refusing manual adoption must not grant ownership as a side effect.
     m_pause_requested = pause_verified && !input_blocked() && error != "pause_state_unknown";
@@ -1353,6 +1439,32 @@ json::value asst::BattleControlTask::execute_wait(const Command& command, Captur
     return result;
 }
 
+json::value
+    asst::BattleControlTask::evaluate_card_binding(const Card& bound, const battle::DeploymentOper& current) const
+{
+    auto appearance = battle::card_appearance_evidence(bound.avatar, current.avatar);
+    const auto age =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - bound.seen);
+    const bool fresh = age >= std::chrono::milliseconds(0) && age <= std::chrono::seconds(30);
+    const bool identity = bound.tag.role == current.role && bound.tag.name == current.name &&
+                          bound.game_ids == BattleData.get_ids(current.role, current.name);
+    const bool layout = bound.index == current.index && bound.rect == current.rect && bound.layout == m_card_layout;
+    return json::object {
+        { "source", "same_capture_bound_card_identity_geometry_and_avatar" },
+        { "accepted", fresh && identity && layout && appearance.get("accepted", false) },
+        { "fresh", fresh },
+        { "age_ms", age.count() },
+        { "freshness_limit_ms", 30'000 },
+        { "identity_matches", identity },
+        { "layout_matches", layout },
+        { "bound_index", bound.index },
+        { "current_index", current.index },
+        { "bound_layout", bound.layout },
+        { "current_layout", m_card_layout },
+        { "appearance", std::move(appearance) },
+    };
+}
+
 json::value asst::BattleControlTask::execute_step(const Command& command, json::value snapshot)
 {
     const auto& args = command.args;
@@ -1366,9 +1478,11 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
     battle::DeployDirection direction = battle::DeployDirection::None;
     std::string summon_game_id;
     std::optional<Card> selected_card;
+    json::value card_binding = nullptr;
     const bool may_own_pause = m_pause_requested || adopt_manual_pause || snapshot.get("scene", "") == "running";
     auto reject_preflight = [&](const std::string& code, const std::string& message) {
         json::value result = failure(code, message);
+        result["card_binding_evidence"] = card_binding;
         CapturedFrame final_frame;
         json::value final_snapshot;
         final_frame = capture_frame();
@@ -1397,6 +1511,12 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
                 return reject_preflight("stale_card", "Card is stale or unknown; capture fresh evidence");
             }
             selected_card = card->second;
+            card_binding = json::object {
+                { "entry", "explicit_card_id" },
+                { "bound_card_id", args.at("card_id") },
+                { "bound_index", selected_card->index },
+                { "layout_matches", selected_card->layout == m_card_layout },
+            };
             if (unit_id(selected_card->tag.role, selected_card->tag.name) != target) {
                 return reject_preflight("card_identity_mismatch", "card_id and unit_id refer to different identities");
             }
@@ -1414,9 +1534,29 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
                 }) != 1) {
                 return reject_preflight("unit_not_unique", "Use a concrete card_id for duplicate cards");
             }
+            if (deployment_oper != m_cur_deployment_opers.end()) {
+                const auto id =
+                    snapshot.at("observation_id").as_string() + ":" + std::to_string(deployment_oper->index);
+                if (const auto card = m_cards.find(id); card != m_cards.end()) {
+                    selected_card = card->second;
+                }
+                card_binding = json::object {
+                    { "entry", "implicit_unique_card" },
+                    { "bound_observation_id", snapshot.at("observation_id") },
+                    { "bound_index", deployment_oper->index },
+                    { "layout_matches", true },
+                };
+            }
         }
         if (deployment_oper == m_cur_deployment_opers.end()) {
             return reject_preflight("stale_card", "Card layout or identity changed; identify again");
+        }
+        if (!selected_card) {
+            return reject_preflight("stale_card", "No capture-bound card evidence; identify again");
+        }
+        card_binding["pre_resume"] = evaluate_card_binding(*selected_card, *deployment_oper);
+        if (!card_binding.at("pre_resume").get("accepted", false)) {
+            return reject_preflight("stale_card", "Bound card evidence failed before resume; no action sent");
         }
         const auto ids = BattleData.get_ids(deployment_oper->role, deployment_oper->name);
         if (ids.size() != 1) {
@@ -1430,7 +1570,7 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
                     "summon_restricted",
                     "The explicit legacy startup restriction excludes this game ID");
             }
-            if (!selected_card) {
+            if (!args.contains("card_id")) {
                 return reject_preflight("stale_card", "Summon card is stale or changed; capture fresh evidence");
             }
         }
@@ -1550,15 +1690,20 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
                 (!selected_card && std::ranges::count_if(m_cur_deployment_opers, [&](const auto& oper) {
                                        return unit_id(oper.role, oper.name) == target;
                                    }) != 1)) {
+                card_binding["post_resume"] = json::object {
+                    { "accepted", false },
+                    { "reason",
+                      deployment_oper == m_cur_deployment_opers.end()
+                          ? "no_current_card_matching_bound_identity_and_geometry"
+                          : "current_card_unavailable_or_ambiguous" },
+                    { "bound_layout", selected_card->layout },
+                    { "current_layout", m_card_layout },
+                };
                 return reject_preflight("unit_unavailable", "Deployment card changed after resume");
             }
-            if (selected_card &&
-                (selected_card->game_ids != BattleData.get_ids(deployment_oper->role, deployment_oper->name) ||
-                 selected_card->avatar.size() != deployment_oper->avatar.size() ||
-                 selected_card->avatar.type() != deployment_oper->avatar.type() || selected_card->avatar.empty() ||
-                 cv::norm(selected_card->avatar, deployment_oper->avatar, cv::NORM_INF) > 0 ||
-                 std::chrono::steady_clock::now() - selected_card->seen > std::chrono::seconds(30))) {
-                return reject_preflight("stale_card", "Card appearance or identity changed after resume");
+            card_binding["post_resume"] = evaluate_card_binding(*selected_card, *deployment_oper);
+            if (!card_binding.at("post_resume").get("accepted", false)) {
+                return reject_preflight("stale_card", "Bound card evidence no longer verifies the current card");
             }
             const auto role = deployment_oper->role;
             const auto name = deployment_oper->name;
@@ -1627,10 +1772,17 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
     }
 
     const auto boundary_frame = capture_frame();
-    auto capture_snapshot = observe(boundary_frame);
+    auto capture_snapshot = observe(boundary_frame, false, false);
     auto return_frame = boundary_frame;
     auto return_snapshot = capture_snapshot;
     const bool pause_verified = settle_pause(command, return_frame, return_snapshot);
+    complete_runtime_evidence(command, boundary_frame, capture_snapshot);
+    if (return_snapshot.at("observation_id") == capture_snapshot.at("observation_id")) {
+        return_snapshot = capture_snapshot;
+    }
+    else {
+        complete_runtime_evidence(command, return_frame, return_snapshot);
+    }
     m_pause_requested = pause_verified && !input_blocked();
     capture_snapshot["pause_requested"] = false;
     auto capture_result = save_evidence(boundary_frame, capture_snapshot);
@@ -1648,6 +1800,7 @@ json::value asst::BattleControlTask::execute_step(const Command& command, json::
         { "status", "outcome_unknown" },
         { "error", action_error },
         { "action_returned", action_returned },
+        { "card_binding_evidence", card_binding },
         { "message", "Action input may have occurred. Inspect both captures; never blindly retry." },
         { "capture_time_snapshot", capture_snapshot },
         { "return_time_snapshot", std::move(return_snapshot) },
@@ -1694,6 +1847,9 @@ json::value asst::BattleControlTask::execute(const Command& command)
     const bool already_blocked = input_blocked();
     auto frame = capture_frame();
     auto snapshot = observe(frame, false, command.action != "step");
+    if (command.action == "map" || command.action == "capture" || command.action == "observe") {
+        complete_runtime_evidence(command, frame, snapshot);
+    }
     if (command.action == "map") {
         auto result = save_evidence(frame, snapshot);
         result["map"] = map_info();
@@ -1717,6 +1873,7 @@ json::value asst::BattleControlTask::execute(const Command& command)
             frame,
             snapshot,
             std::chrono::milliseconds(command.args.at("duration_ms").as_integer()));
+        complete_runtime_evidence(command, frame, snapshot);
         auto result = save_evidence(frame, snapshot, true);
         result["terminal"] = m_terminal_result;
         result["session_input_blocked"] = input_blocked();

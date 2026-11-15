@@ -19,6 +19,8 @@ public:
         Rect rect;
         Rect flag_rect;
         Rect avatar_rect;
+        std::optional<TextRect> name_evidence;
+        double flag_score = 0;
     };
 
     using ResultsVec = std::vector<Result>;
